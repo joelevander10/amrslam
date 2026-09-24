@@ -298,7 +298,7 @@ class FakeBus:
         # left wheel: FWD coil 4 / REV 5, ch left; right: FWD 1 / REV 2, mirrored (invert_right).
         # Integrated over the REAL elapsed time: a fixed dt drifts from the wall clock the
         # node's encoder speed is measured against as soon as sleep() runs long (slow VM).
-        k = 330.0 * 2 * math.pi / 60 / 30
+        k = 1000.0 * 2 * math.pi / 60 / 30  # the AMR QR motor: ~970 r/min per V (ff, 2026-09-24)
         t_last = time.monotonic()
         t_tpdo = t_last
         while True:
@@ -308,7 +308,7 @@ class FakeBus:
             with lock:
                 for i, (f, r, drv) in enumerate(((4, 5, 1.0), (1, 2, -1.0))):
                     d = 1 if state["do"][f] else -1 if state["do"][r] else 0
-                    ss = drv * d * max(0.0, state["volts"][i] - 0.45) * k
+                    ss = drv * d * max(0.0, state["volts"][i] - 0.22) * k
                     state["w"][i] += (ss - state["w"][i]) * min(1.0, dt / 0.15)
                     # encoder raw counts as mounted: a mirrored unit (enc_invert_*) counts
                     # backwards for vehicle-forward - the real right one does
