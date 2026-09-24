@@ -217,7 +217,7 @@
     "enc_event_ms": 20,
     "enc_timeout_s": 0.2,
     "imu_port": "/dev/amr_imu",
-    "imu_baud": 9600,
+    "imu_baud": 115200,
     "imu_timeout_s": 0.5,
     "imu_gyro_sign": 1.0,
     "ff_motor_rpm_per_volt": 300.0,
