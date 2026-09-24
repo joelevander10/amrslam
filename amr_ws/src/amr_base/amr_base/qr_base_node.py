@@ -407,7 +407,11 @@ class QrBaseNode(Node):
                 out = self.logic.tick(self._inputs(now, snap, frame))
                 if out.event:
                     lvl = Event.ERROR if "FAULT" in out.event else Event.INFO
-                    (self.get_logger().error if lvl == Event.ERROR else self.get_logger().info)(out.event)
+                    # one severity per call site: rclpy refuses to change it between calls
+                    if lvl == Event.ERROR:
+                        self.get_logger().error(out.event)
+                    else:
+                        self.get_logger().info(out.event)
                     self.event(lvl, "DRIVES", out.event)
                 self._apply(out)
                 self._last_out = out
