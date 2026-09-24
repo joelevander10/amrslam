@@ -1,14 +1,14 @@
 # sick_safetyscanners2 for the AMR QR's nanoScan3 (profile amr-qr-01).
 #
-# VERIFY every address: the QR controller ran the ROS 1 sick_safetyscanners driver and
-# the vehicle's lidar subnet is not documented here. The GLS621 sits on 192.168.3.1 on
-# the QR, so keep the scanner and the host off that address. See nanoscan3.yaml (gvievo-01)
-# for what each key does; only the values that are vehicle-specific differ.
+# The scanner shares the I/O network with the DIO (192.168.1.40) and the analog module
+# (192.168.1.30). host_ip "auto": scanner.launch.py puts in this PC's address on the
+# route to sensor_ip, which is where the scanner must send its UDP data. See
+# nanoscan3.yaml (gvievo-01) for what each key does; only vehicle-specific values differ.
 sick_safetyscanners2_node:
   ros__parameters:
     frame_id: "laser_frame"
-    sensor_ip: "192.168.3.10"        # VERIFY (SICK Safety Designer / the QR's ROS 1 launch)
-    host_ip: "192.168.3.2"           # VERIFY: this PC's address on the lidar port
+    sensor_ip: "192.168.1.2"         # set on the scanner (SICK Safety Designer), 2026-09-24
+    host_ip: "auto"                  # or this PC's 192.168.1.x address
     interface_ip: "0.0.0.0"
     host_udp_port: 6060
     channel: 0
