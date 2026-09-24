@@ -46,6 +46,7 @@ def make_node(steps, passes=1):
     n.start_gate_m, n.start_gate_rad = 0.1, math.radians(5)
     n.w_eps, n.wheels_age, n.panel_age, n.loc_age = 0.02, 0.1, 0.2, 1.5
     n.scan_age, n._scan_t = float("inf"), 100.0  # freshness is exercised where a test sets scan_age
+    n.obstruction_min_range = 0.0
     n.centre_drift_m, n.turn_tol, n.wrong_way = 0.05, math.radians(2), math.radians(5)
     n.entry_corr_max, n.clear_stable_s = math.radians(10), 1.0
     n.goal_accept_timeout, n.goal_cancel_timeout = 5.0, 5.0

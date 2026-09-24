@@ -56,8 +56,17 @@ def executor_overrides() -> dict:
         # use_protective_field false: the QR's nanoScan3 reported its protective field violated
         # with the area empty (2026-09-24, run held on "lidar stop"). The old QR controller never
         # used the scanner outputs either; the executor's own scan check still stops the run.
-        return {"start_gate_m": 0.20, "start_gate_deg": 10.0, "use_protective_field": False}
+        return {
+            "start_gate_m": 0.20,
+            "start_gate_deg": 10.0,
+            "use_protective_field": False,
+            # the scratched window's phantoms (see _costmap_footprint_file)
+            "obstruction_min_range_m": QR_OBSTACLE_MIN_RANGE_M,
+        }
     return {}
+
+
+QR_OBSTACLE_MIN_RANGE_M = 0.5
 
 
 def _costmap_footprint_file(footprint: str, generation: int) -> str:
@@ -65,7 +74,17 @@ def _costmap_footprint_file(footprint: str, generation: int) -> str:
     state_dir = os.environ.get("AMR_STATE_DIR", os.path.expanduser("~/.amr"))
     os.makedirs(state_dir, exist_ok=True)
     path = os.path.join(state_dir, f"costmap_footprint_gen{generation}.yaml")
-    doc = {"local_costmap": {"local_costmap": {"ros__parameters": {"footprint": footprint}}}}
+    params = {"footprint": footprint}
+    from amr_base.agv_repo import config  # noqa: PLC0415 - the vehicle profile (AGV_PROFILE)
+
+    if config.PLATFORM == config.PLATFORM_QR:
+        # The QR scanner's scratched window returns phantoms 0.1-0.45 m out that move with the
+        # vehicle (2026-09-24): in the costmap they sat in the path and RPP aborted every
+        # FollowPath ("controller stop"). Returns closer than this are not MARKED (clearing
+        # is unchanged); an obstacle approached from farther away was marked before it got
+        # this close and stays marked. Keep it above the phantom range, and slow.
+        params["obstacle_layer"] = {"scan": {"obstacle_min_range": QR_OBSTACLE_MIN_RANGE_M}}
+    doc = {"local_costmap": {"local_costmap": {"ros__parameters": params}}}
     with open(path, "w") as fh:
         yaml.safe_dump(doc, fh)
     return path

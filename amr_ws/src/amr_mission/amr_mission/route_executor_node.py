@@ -170,6 +170,9 @@ class RouteExecutor(Node):
         self.declare_parameter("wrong_way_deg", 5.0)
         self.declare_parameter("wheels_age_limit_s", 0.10)
         self.declare_parameter("scan_age_limit_s", 0.5)  # /scan_gated is <= 10 Hz; 0.5 s = gate hold_max
+        # returns closer than this to the scanner never count as an obstruction (0 = all count).
+        # The AMR QR: its scratched window's phantoms, 0.1-0.45 m out, move with the vehicle.
+        self.declare_parameter("obstruction_min_range_m", 0.0)
         # Part B2: the FollowPath goal sits this far past the endpoint (0 = aim at the endpoint,
         # the rollback). Tune on the vehicle so the mean stop error is ~0; never above the
         # route's position_tolerance_m (clamped).
@@ -235,6 +238,7 @@ class RouteExecutor(Node):
             p("loc_age_limit_s").value,
         )
         self.scan_age = p("scan_age_limit_s").value
+        self.obstruction_min_range = float(p("obstruction_min_range_m").value)
         self.goal_overshoot_m = float(p("goal_overshoot_m").value)
         self.obstacle_points = int(p("obstacle_points").value)
         self.obstacle_map_tol_m = float(p("obstacle_map_tol_m").value)
@@ -762,7 +766,7 @@ class RouteExecutor(Node):
         yaw = _yaw(tr.transform.rotation)
         r = np.asarray(scan.ranges, dtype=np.float64)
         ang = scan.angle_min + np.arange(len(r)) * scan.angle_increment + yaw
-        ok = np.isfinite(r) & (r > scan.range_min) & (r < scan.range_max)
+        ok = np.isfinite(r) & (r > max(scan.range_min, self.obstruction_min_range)) & (r < scan.range_max)
         ex = tr.transform.translation.x + r[ok] * np.cos(ang[ok])
         ey = tr.transform.translation.y + r[ok] * np.sin(ang[ok])
         g = self.grid.meta

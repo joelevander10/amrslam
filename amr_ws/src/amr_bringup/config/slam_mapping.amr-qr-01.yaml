@@ -10,3 +10,7 @@ slam_toolbox:
   ros__parameters:
     occupancy_threshold: 0.25
     min_pass_through: 3
+    # Phantom returns from the scratched scanner window, 0.1-0.45 m out, move with the
+    # vehicle and draw a trail of dots along the survey path; nothing that close to the
+    # scanner is needed for the map (it is seen from farther away first).
+    min_laser_range: 0.5
