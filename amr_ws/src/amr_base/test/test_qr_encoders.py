@@ -31,14 +31,42 @@ def test_unwrap_forward_and_back_through_the_24_bit_wrap():
     assert u.rejected == 0
 
 
-def test_unwrap_rejects_out_of_range_and_half_range_steps():
+def test_unwrap_rejects_half_range_steps():
     u = Unwrapper(RANGE)
-    assert u.update(RANGE) is None  # out of range
     assert u.update(0) == 0
     assert u.update(RANGE // 2) is None  # ambiguous direction
-    assert u.rejected == 2
+    assert u.rejected == 1
     # chain continues from the rejected reading as the new reference
     assert u.update(RANGE // 2 + 10) == 10
+
+
+def test_unwrap_grows_the_range_for_a_reading_above_it():
+    # the AMR QR right encoder: 6002h said 24 bits, the unit sent 27 601 874
+    u = Unwrapper(RANGE, max_step=819_200)
+    assert u.update(27_601_874) == 0
+    assert u.range == 1 << 25 and u.rejected == 0
+    assert u.update(27_601_874 + 8192) == 8192
+    # crossing 2^24 mid-run keeps the chain too
+    u = Unwrapper(RANGE, max_step=819_200)
+    assert u.update(RANGE - 50) == 0
+    assert u.update(RANGE + 50) == 100
+    assert u.range == 1 << 25 and len(u.range_changes) == 1
+
+
+def test_unwrap_learns_the_wrap_from_a_32_bit_guess():
+    u = Unwrapper(1 << 32, max_step=819_200)
+    assert u.update((1 << 25) - 50) == 0
+    assert u.update(30) == 80  # wrapped at 2^25, not a 33 M step backwards
+    assert u.range == 1 << 25
+    assert u.update((1 << 25) - 20) == 30  # and back through it
+    assert u.rejected == 0
+
+
+def test_unwrap_still_rejects_a_glitch():
+    u = Unwrapper(1 << 25, max_step=819_200)
+    assert u.update(1000) == 0
+    assert u.update(5_000_000) is None  # no power-of-two wrap makes this a small step
+    assert u.rejected == 1 and u.range == 1 << 25
 
 
 def test_speed_estimator_window():
@@ -175,3 +203,19 @@ def test_auto_range_per_encoder_from_6002_and_32_bit_fallback():
         bus.rx.append(can.Message(arbitration_id=0x181, data=struct.pack("<I", raw)))
     pair.router.pump(0.01)
     assert pair.left.counts == 150
+
+
+def test_a_6002_that_understates_the_range_is_corrected_by_the_readings():
+    bus = ScriptedBus(objects={(1, 0x6002): 0xFFFFFF, (2, 0x6002): 0xFFFFFF})
+    pair = EncoderPair(
+        canopen.Router(bus), 1, 2, CPR, 0, False, True, "tpdo", 20, log=lambda s: None, clock=lambda: 0.0
+    )
+    pair.start()
+    assert pair.right.range_counts == 1 << 24
+    for raw in (27_601_874, 27_601_874 - 8192):
+        bus.rx.append(can.Message(arbitration_id=0x182, data=struct.pack("<I", raw)))
+    pair.router.pump(0.01)
+    assert pair.right.counts == 8192  # inverted wheel, one turn forward
+    changes = pair.drain_range_changes(pair.right)
+    assert [c[:2] for c in changes] == [(1 << 24, 1 << 25)]
+    assert pair.right.range_counts == 1 << 25 and pair.drain_range_changes(pair.right) == []

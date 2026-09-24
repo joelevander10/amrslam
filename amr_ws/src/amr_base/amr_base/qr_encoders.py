@@ -20,8 +20,8 @@ Units and signs are applied ONCE, here:
     * the position is unwrapped (delta modulo the wrap range, trusted only below half a
       range) - the QR controller subtracted raw values, which jumps by a whole range at the
       wrap. The range is read from each encoder's 6002h at start when qr_base.enc_range_counts
-      is 0 (auto): on the AMR QR the two units report different ranges (the right one sat
-      at 27.6 M, beyond the 24 bits the EDS default suggests);
+      is 0 (auto), and corrected from the readings themselves (Unwrapper): on the AMR QR the
+      right unit sent 27.6 M, beyond the 24 bits its 6002h suggested;
     * qr_base.enc_invert_* flips a wheel so that vehicle-forward is positive;
     * counts -> wheel radians with enc_counts_per_rev (on the axle: no gearbox term).
 """
@@ -54,40 +54,75 @@ TPDO, SDO = "tpdo", "sdo"
 
 
 class Unwrapper:
-    """Raw modulo-range position -> continuous counts. Pure."""
+    """Raw modulo-range position -> continuous counts. Pure.
 
-    def __init__(self, range_counts: int) -> None:
+    The range an encoder reports in 6002h is not always the range it wraps at (the AMR QR
+    right unit said 24 bits and sent 27.6 M). So the range is treated as a first guess:
+
+      * a reading at or above the range GROWS it to the next power of two (the chain
+        continues - no wrap can have happened below a value never seen);
+      * with max_step set, a step larger than max_step is tried against every power-of-two
+        range the readings fit in; if exactly that wrap explains it as a small step, that
+        range is ADOPTED (the encoder just showed where it wraps). Otherwise the reading is
+        rejected and becomes the new reference.
+    """
+
+    def __init__(self, range_counts: int, max_step: int | None = None) -> None:
         if range_counts < 2:
             raise ValueError("range_counts must be >= 2")
         self.range = int(range_counts)
+        self.max_step = int(max_step) if max_step else None
         self.last_raw: int | None = None
         self.total = 0
         self.rejected = 0
+        self.range_changes: list[tuple[int, int, str]] = []  # (old, new, why)
 
     def reset(self) -> None:
         self.last_raw = None
         self.total = 0
 
+    def _limit(self, rng: int) -> int:
+        half = rng // 2 - 1
+        return half if self.max_step is None else min(half, self.max_step)
+
+    @staticmethod
+    def _step(a: int, b: int, rng: int) -> int:
+        d = (b - a) % rng
+        return d - rng if d > rng // 2 else d
+
+    def _set_range(self, new: int, why: str) -> None:
+        self.range_changes.append((self.range, new, why))
+        self.range = new
+
     def update(self, raw: int) -> int | None:
         """Continuous count for this raw reading, or None if the reading is not usable.
 
-        The first reading is the baseline (continuous 0). A step of half a range or more
-        cannot be told apart from a step the other way round, so it is rejected and the
-        chain restarts from this reading (the caller sees None once and a new baseline).
-        """
-        if not 0 <= raw < self.range:
+        The first reading is the baseline (continuous 0)."""
+        raw = int(raw)
+        if not 0 <= raw < FALLBACK_RANGE:
             self.rejected += 1
             return None
+        if raw >= self.range:
+            self._set_range(1 << raw.bit_length(), f"reading {raw} above the range")
         if self.last_raw is None:
             self.last_raw = raw
             return self.total
-        d = (raw - self.last_raw) % self.range
-        if d > self.range // 2:
-            d -= self.range
-        if abs(d) >= self.range // 2:
-            self.rejected += 1
-            self.last_raw = raw
-            return None
+        d = self._step(self.last_raw, raw, self.range)
+        if abs(d) > self._limit(self.range):
+            learnt = None
+            if self.max_step is not None:
+                for bits in range(max(raw, self.last_raw).bit_length(), 33):
+                    r = 1 << bits
+                    d2 = self._step(self.last_raw, raw, r)
+                    if abs(d2) <= self._limit(r):
+                        learnt, d = r, d2
+                        break
+            if learnt is None:
+                self.rejected += 1
+                self.last_raw = raw
+                return None
+            if learnt != self.range:
+                self._set_range(learnt, f"wrapped {self.last_raw} -> {raw}")
         self.last_raw = raw
         self.total += d
         return self.total
@@ -127,6 +162,7 @@ class WheelEncoder:
     range_counts: int
     invert: bool = False
     window_s: float = 0.06
+    max_step_revs: float = 100.0  # a bigger step between two readings is not believed
     unwrap: Unwrapper = field(init=False)
     speed: SpeedEstimator = field(init=False)
     t: float | None = None  # monotonic time of the last accepted reading
@@ -137,13 +173,16 @@ class WheelEncoder:
     frames: int = 0
 
     def __post_init__(self) -> None:
-        self.unwrap = Unwrapper(self.range_counts)
+        self.unwrap = self._new_unwrapper()
         self.speed = SpeedEstimator(self.window_s)
+
+    def _new_unwrapper(self) -> Unwrapper:
+        return Unwrapper(self.range_counts, int(self.max_step_revs * self.counts_per_rev))
 
     def set_range(self, range_counts: int) -> None:
         """New wrap range: the continuous count restarts from the next reading."""
         self.range_counts = int(range_counts)
-        self.unwrap = Unwrapper(self.range_counts)
+        self.unwrap = self._new_unwrapper()
         self.speed.reset()
         self.counts = None
 
@@ -313,6 +352,14 @@ class EncoderPair:
                 return False
         self.log(f"encoder node {node}: TPDO1 every {self.event_ms} ms")
         return True
+
+    @staticmethod
+    def drain_range_changes(enc: WheelEncoder) -> list[tuple[int, int, str]]:
+        """Wrap-range changes the unwrapper made since the last call (for logging)."""
+        out, enc.unwrap.range_changes = enc.unwrap.range_changes, []
+        if out:
+            enc.range_counts = enc.unwrap.range
+        return out
 
     # ---- per tick ----
 

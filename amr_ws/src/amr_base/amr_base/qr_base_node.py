@@ -320,6 +320,10 @@ class QrBaseNode(Node):
             snap = {}
             for name, enc in (("left", encs.left), ("right", encs.right)):
                 snap[name] = None if enc.counts is None else (enc.t, enc.counts, enc.rad, enc.rad_s)
+                for old, new, why in encs.drain_range_changes(enc):
+                    self.get_logger().warning(
+                        f"encoder {name} (node {enc.node}): wrap range {old} -> {new} ({why})"
+                    )
             with self._enc_lock:
                 self._enc = snap
             self._can_state.update(

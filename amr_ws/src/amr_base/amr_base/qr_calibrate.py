@@ -138,6 +138,8 @@ def cmd_enc(_args) -> int:
             _pump(router, encs, 0.2)
             cols = []
             for name, e in zip(SIDES, encs.wheels, strict=True):
+                for old, new, why in encs.drain_range_changes(e):
+                    print(f"  {name}: wrap range {old} -> {new} ({why})")
                 sp = e.rad_s
                 speed = "" if sp is None else f"{sp:+7.3f} rad/s {sp * config.WHEEL_DIA_M / 2:+6.3f} m/s"
                 bad = f" REJECTED {e.unwrap.rejected}" if e.unwrap.rejected else ""
