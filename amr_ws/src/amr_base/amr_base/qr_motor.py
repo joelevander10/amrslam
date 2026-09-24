@@ -27,7 +27,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-REST, DWELL, DRIVE = "rest", "dwell", "drive"
+REST, DWELL, DRIVE, COAST = "rest", "dwell", "drive", "coast"
 DISARMED, ARMED, FAULT = "disarmed", "armed", "fault"
 
 
@@ -47,6 +47,12 @@ class LoopParams:
     stall_s: float
     brake_on_stop: bool = True
     rest_motion_s: float = 1.0  # moving above runaway_rad_s this long while at rest = fault
+    # A zero command while driving first COASTS: direction coil kept, 0 V, brake off, for up
+    # to coast_s or until the wheel has stopped. A command back in the same direction then
+    # continues with no dwell and no brake. The path follower asks a wheel for ~0 during a
+    # steering correction; dropping the coil + braking + 0.1 s dwell each time was the jerk
+    # felt on the AMR QR (2026-09-24). 0 = brake at once, as before.
+    coast_s: float = 0.3
 
 
 @dataclass(frozen=True)
@@ -81,6 +87,7 @@ class WheelLoop:
         self._runaway_since: float | None = None
         self._stall_since: float | None = None
         self._rest_motion_since: float | None = None
+        self._coast_since: float | None = None
         self.volts = 0.0
 
     def reset(self, now: float | None = None) -> None:
@@ -91,6 +98,7 @@ class WheelLoop:
         self._integ = 0.0
         self._t_last = None
         self._runaway_since = self._stall_since = self._rest_motion_since = None
+        self._coast_since = None
         self.volts = 0.0
 
     def _rest(self, brake: bool) -> WheelOut:
@@ -118,6 +126,21 @@ class WheelLoop:
         t_drv = target * self.sign
         m_drv = None if measured is None else measured * self.sign
         want = 0 if abs(t_drv) < p.zero_rad_s else (1 if t_drv > 0 else -1)
+
+        # -- coast through a brief zero command ---------------------------------
+        if want == 0 and self.dir != 0 and p.coast_s > 0:
+            if self._coast_since is None:
+                self._coast_since = now
+            along = None if m_drv is None else m_drv * self.dir
+            still_moving = along is not None and along >= p.zero_rad_s
+            if still_moving and now - self._coast_since < p.coast_s:
+                self.phase = COAST
+                self.volts = 0.0
+                self._stall_since = self._runaway_since = None
+                return WheelOut(self.dir > 0, self.dir < 0, False, 0.0, COAST)
+            # stopped, unknown speed or coasted long enough: a real stop (below)
+        if want != 0:
+            self._coast_since = None
 
         # -- direction interlock ------------------------------------------------
         if want != self.dir:

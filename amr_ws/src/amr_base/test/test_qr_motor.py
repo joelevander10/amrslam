@@ -171,3 +171,50 @@ def test_a_driver_stopped_from_outside_faults_below_the_voltage_cap():
     # a slow creep command (below 4 x zero_rad_s) never trips it
     wl.reset(-1.0)
     assert all(wl.step(i * 0.02, 0.15, 0.0, True).fault is None for i in range(300))
+
+
+def _driving(invert=False):
+    wl = qm.WheelLoop(P, invert=invert, name="left")
+    wl.reset(-1.0)
+    out = wl.step(0.0, 1.0, 1.0, True)
+    assert out.phase == qm.DRIVE
+    return wl
+
+
+def test_brief_zero_coasts_and_resumes_without_dwell_or_brake():
+    wl = _driving()
+    wl._integ = 0.2
+    out = wl.step(0.02, 0.0, 0.9, None)  # the path follower asks ~0 for a moment
+    assert out.phase == qm.COAST and out.fwd and not out.rev and not out.brake and out.volts == 0.0
+    out = wl.step(0.10, 0.0, 0.7, None)
+    assert out.phase == qm.COAST
+    out = wl.step(0.12, 1.0, 0.6, None)  # back in the same direction: straight to DRIVE
+    assert out.phase == qm.DRIVE and out.fwd and not out.brake and out.volts > 0.0
+    assert wl._integ != 0.0  # the trim was kept
+
+
+def test_zero_held_past_coast_s_brakes():
+    wl = _driving()
+    t, out = 0.0, None
+    while t < 1.0:
+        t += 0.02
+        out = wl.step(t, 0.0, 0.8, True)  # still rolling, zero kept
+        if out.brake:
+            break
+    assert out.phase == qm.REST and out.brake and not out.fwd
+    assert P.coast_s <= t <= P.coast_s + 0.05
+
+
+def test_zero_with_the_wheel_stopped_or_unknown_brakes_at_once():
+    for measured in (0.0, None):
+        wl = _driving()
+        out = wl.step(0.02, 0.0, measured, True)
+        assert out.phase == qm.REST and out.brake and not out.fwd
+
+
+def test_reversal_during_a_coast_still_goes_through_the_interlock():
+    wl = _driving()
+    assert wl.step(0.02, 0.0, 0.9, None).phase == qm.COAST
+    out = wl.step(0.04, -1.0, 0.8, False)
+    assert (out.fwd, out.rev, out.volts) == (False, False, 0.0)  # both coils low first
+    assert out.phase == qm.DWELL

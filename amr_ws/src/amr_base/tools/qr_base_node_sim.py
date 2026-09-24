@@ -427,7 +427,7 @@ with lock:
     w = list(state["w"])
 check("reversal reaches -1 rad/s", abs(w[0] + 1.0) < 0.15 and abs(w[1] + 1.0) < 0.15, f"{w}")
 
-time.sleep(0.5)  # watchdog: command stops -> rest with brake
+time.sleep(1.0)  # watchdog: command stops -> coast (<= coast_s) -> rest with brake
 with lock:
     do, v = list(state["do"]), list(state["volts"])
 check("command timeout -> 0 V, both brakes", v == [0.0, 0.0] and do[6] and do[3], f"{v} {do[:7]}")
