@@ -194,7 +194,14 @@ def _compose(context):
     # transform exists, so their tf2 MessageFilters take the synchronous path
     # (the asynchronous one hung slam_toolbox on the vehicle, 2026-09-17).
     actions += required(
-        Node(package="amr_localization", executable="scan_gate_node", name="scan_gate", output="screen"),
+        Node(
+            package="amr_localization",
+            executable="scan_gate_node",
+            name="scan_gate",
+            output="screen",
+            # the AMR QR's nanoScan3 leaves lone returns in open space (2026-09-24 surveys)
+            parameters=[{"despeckle": config.PLATFORM == config.PLATFORM_QR}],
+        ),
         "scan_gate",
     )
     if supervised:  # the /blind replacement (unified plan §7.2); an exclusive IDLE substate
