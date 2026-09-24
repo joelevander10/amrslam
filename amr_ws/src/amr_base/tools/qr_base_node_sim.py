@@ -298,8 +298,10 @@ class FakeBus:
                     d = 1 if state["do"][f] else -1 if state["do"][r] else 0
                     ss = drv * d * max(0.0, state["volts"][i] - 0.45) * k
                     state["w"][i] += (ss - state["w"][i]) * min(1.0, dt / 0.15)
-                    # encoder: left counts forward positive; right encoder raw counts forward too
-                    state["pos"][i] += state["w"][i] * dt * 8192 / (2 * math.pi)
+                    # encoder raw counts as mounted: a mirrored unit (enc_invert_*) counts
+                    # backwards for vehicle-forward - the real right one does
+                    sign = -1.0 if (config.QR_ENC_INVERT_LEFT, config.QR_ENC_INVERT_RIGHT)[i] else 1.0
+                    state["pos"][i] += sign * state["w"][i] * dt * 8192 / (2 * math.pi)
                 if now - t_tpdo >= 0.02:  # TPDO1 event timer
                     t_tpdo = now
                     for node, i in ((1, 0), (2, 1)):
