@@ -3,6 +3,9 @@
     ros2 run amr_base qr_calibrate io                 DI/DO image, prints on change (read-only)
     ros2 run amr_base qr_calibrate enc                encoder counts, wheel speed, source (read-only)
     ros2 run amr_base qr_calibrate imu                WitMotion frame types, rates, yaw rate (read-only)
+    ros2 run amr_base qr_calibrate imu-setup --rate 50 --baud 115200 --go
+                                                      configure the WitMotion unit: output rate,
+                                                      content (acc+gyro+angle) and baud, saved in it
     ros2 run amr_base qr_calibrate breakaway --wheel left --go
                                                       ramp 0 -> v until the wheel turns: ff_offset_v
     ros2 run amr_base qr_calibrate ff --wheel both --volts 0.8,1.2,1.6,2.0 --go
@@ -27,7 +30,7 @@ import sys
 import time
 
 import amr_base.agv_repo  # noqa: F401
-from amr_base import canopen
+from amr_base import canopen, wit_imu
 from amr_base.agv_repo import config
 from amr_base.qr_analog import AnalogOut
 from amr_base.qr_encoders import EncoderPair
@@ -169,6 +172,96 @@ def cmd_imu(_args) -> int:
         return 0
     finally:
         port.close()
+
+
+def _imu_rates(port, seconds: float = 2.0) -> dict[int, float]:
+    """Frames per second by type over `seconds` on an open port."""
+    parser, counts = WitParser(), {}
+    port.reset_input_buffer()
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < seconds:
+        for f in parser.feed(port.read(max(1, port.in_waiting)), time.monotonic()):
+            counts[f.kind] = counts.get(f.kind, 0) + 1
+    dt = time.monotonic() - t0
+    return {k: v / dt for k, v in counts.items()}
+
+
+def _fmt_rates(r: dict[int, float]) -> str:
+    return "  ".join(f"0x{k:02X}:{v:5.1f} Hz" for k, v in sorted(r.items())) or "no frames"
+
+
+def cmd_imu_setup(args) -> int:
+    """Write output rate, content and baud to the WitMotion unit and save them in it.
+
+    Nothing moves; the change persists in the IMU. Sequence (WitMotion standard protocol,
+    ~0.1 s between frames): at the CURRENT baud unlock, content, rate, save; then, if the
+    baud changes, unlock + baud, reopen at the new baud, unlock + save. Verified by
+    counting frames at the new settings; a unit that ignored the commands is reported,
+    not assumed.
+    """
+    import serial  # noqa: PLC0415
+
+    if not args.go:
+        sys.exit("refusing to reconfigure the IMU without --go")
+    if args.rate not in wit_imu.RATE_CODES:
+        sys.exit(f"--rate must be one of {sorted(wit_imu.RATE_CODES)}")
+    if args.baud not in wit_imu.BAUD_CODES:
+        sys.exit(f"--baud must be one of {sorted(wit_imu.BAUD_CODES)}")
+    need = wit_imu.frame_bytes_per_s(args.rate)
+    if need > 0.8 * args.baud:
+        sys.exit(f"{args.rate} Hz x 3 frames needs {need} bit/s - too much for {args.baud} baud")
+
+    dev = config.QR_IMU_PORT
+    cur = None
+    for baud in [config.QR_IMU_BAUD] + [b for b in (9600, 115200) if b != config.QR_IMU_BAUD]:
+        with serial.Serial(dev, baud, timeout=0.05) as p:
+            r = _imu_rates(p, 1.5)
+        print(f"  {dev} @ {baud}: {_fmt_rates(r)}")
+        if r.get(GYRO) or r.get(ANGLE):
+            cur = baud
+            break
+    if cur is None:
+        sys.exit("no WitMotion frames at 9600 or 115200 - check the cable, or use the vendor tool")
+
+    def send(p, frame: bytes, what: str) -> None:
+        p.write(frame)
+        p.flush()
+        print(f"  -> {frame.hex(' ').upper():15s} {what}")
+        time.sleep(0.15)
+
+    content = wit_imu.RSW_ACC | wit_imu.RSW_GYRO | wit_imu.RSW_ANGLE
+    with serial.Serial(dev, cur, timeout=0.05) as p:
+        send(p, wit_imu.UNLOCK, "unlock")
+        send(p, wit_imu.command(wit_imu.REG_RSW, content), "content: acc + gyro + angle")
+        send(p, wit_imu.UNLOCK, "unlock")
+        send(p, wit_imu.command(wit_imu.REG_RRATE, wit_imu.RATE_CODES[args.rate]), f"rate {args.rate} Hz")
+        send(p, wit_imu.SAVE, "save")
+        if args.baud != cur:
+            send(p, wit_imu.UNLOCK, "unlock")
+            send(p, wit_imu.command(wit_imu.REG_BAUD, wit_imu.BAUD_CODES[args.baud]), f"baud {args.baud}")
+    if args.baud != cur:
+        time.sleep(0.3)
+        with serial.Serial(dev, args.baud, timeout=0.05) as p:
+            send(p, wit_imu.UNLOCK, "unlock (new baud)")
+            send(p, wit_imu.SAVE, "save (new baud)")
+    time.sleep(0.5)
+
+    with serial.Serial(dev, args.baud, timeout=0.05) as p:
+        r = _imu_rates(p, 2.0)
+    print(f"\nnow {dev} @ {args.baud}: {_fmt_rates(r)}")
+    got = r.get(GYRO, 0.0)
+    if got >= 0.8 * args.rate:
+        print(f'OK. Set in profiles/amr-qr-01.json:  "imu_baud": {args.baud}')
+        print("Then power-cycle the IMU once and run `qr_calibrate imu` to confirm the setting was saved.")
+        return 0
+    with serial.Serial(dev, cur, timeout=0.05) as p:
+        back = _imu_rates(p, 1.5)
+    print(f"still at {cur}? {_fmt_rates(back)}")
+    print(
+        "The unit did not take the settings. Its firmware may use another command set: "
+        "configure it with the WitMotion PC software (rate, content, baud, save) instead."
+    )
+    return 1
 
 
 # ------------------------------------------------------------------ motion (on blocks)
@@ -399,6 +492,10 @@ def main(argv=None) -> int:
     sub.add_parser("io")
     sub.add_parser("enc")
     sub.add_parser("imu")
+    ims = sub.add_parser("imu-setup")
+    ims.add_argument("--rate", type=int, default=50, help="Hz: 10, 20, 50, 100, 200")
+    ims.add_argument("--baud", type=int, default=115200)
+    ims.add_argument("--go", action="store_true")
     b = sub.add_parser("breakaway")
     b.add_argument("--wheel", choices=("left", "right", "both"), default="both")
     b.add_argument("--step-v", type=float, default=0.05)
@@ -421,13 +518,18 @@ def main(argv=None) -> int:
             locks.append(ownerlock.acquire("dio", f"qr_calibrate {args.cmd}"))
         if args.cmd in ("enc", "breakaway", "ff"):
             locks.append(ownerlock.acquire("can", f"qr_calibrate {args.cmd}"))
-        if args.cmd == "imu":
-            locks.append(ownerlock.acquire("imu", "qr_calibrate imu"))
+        if args.cmd in ("imu", "imu-setup"):
+            locks.append(ownerlock.acquire("imu", f"qr_calibrate {args.cmd}"))
     except ownerlock.OwnerBusy as e:
         sys.exit(f"{e} - stop amr.service / qr_base_node first")
-    handler = {"io": cmd_io, "enc": cmd_enc, "imu": cmd_imu, "breakaway": cmd_breakaway, "ff": cmd_ff}[
-        args.cmd
-    ]
+    handler = {
+        "io": cmd_io,
+        "enc": cmd_enc,
+        "imu": cmd_imu,
+        "imu-setup": cmd_imu_setup,
+        "breakaway": cmd_breakaway,
+        "ff": cmd_ff,
+    }[args.cmd]
     return handler(args)
 
 

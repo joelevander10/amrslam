@@ -5,6 +5,7 @@ import struct
 
 import pytest
 
+from amr_base import wit_imu
 from amr_base.wit_imu import ANGLE, ANGLE_DIFF_MODE, GYRO, GYRO_MODE, WitParser, YawRateSource
 
 
@@ -65,3 +66,16 @@ def test_angle_difference_fallback_is_wrap_safe_and_survives_batched_frames():
     nxt = src2.offer(p2.feed(yaw(3.0), 0.2)[0])
     integrated = (batch[0].wz_rad_s + nxt.wz_rad_s) * 0.1
     assert integrated == pytest.approx(math.radians(3.0), rel=0.02)  # 0 -> 3 deg, nothing lost
+
+
+def test_configuration_frames():
+    assert wit_imu.UNLOCK == bytes([0xFF, 0xAA, 0x69, 0x88, 0xB5])
+    assert wit_imu.SAVE == bytes([0xFF, 0xAA, 0x00, 0x00, 0x00])
+    rate50 = wit_imu.command(wit_imu.REG_RRATE, wit_imu.RATE_CODES[50])
+    baud115k = wit_imu.command(wit_imu.REG_BAUD, wit_imu.BAUD_CODES[115200])
+    assert rate50 == bytes([0xFF, 0xAA, 0x03, 0x08, 0x00])
+    assert baud115k == bytes([0xFF, 0xAA, 0x04, 0x06, 0x00])
+    assert wit_imu.command(wit_imu.REG_RSW, 0x0E) == bytes([0xFF, 0xAA, 0x02, 0x0E, 0x00])
+    # why the AMR QR runs at 10 Hz: three frames at 9600 baud cannot go past ~29 Hz
+    assert wit_imu.frame_bytes_per_s(50) > 9600
+    assert wit_imu.frame_bytes_per_s(100) < 0.8 * 115200

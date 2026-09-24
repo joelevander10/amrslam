@@ -165,12 +165,19 @@ ros2 run amr_base qr_calibrate enc
 ```
 
 c. IMU: spin the vehicle LEFT (counter-clockwise). The output must show frame `0x52`, and
-`wz` must be **positive**; if it is negative, set `"imu_gyro_sign": -1.0`. If only `0x53`
-appears, or the rate is under ~40 Hz, set the unit to 115200 baud and 50-100 Hz with gyro
-output using the WitMotion PC tool, then update `imu_baud`.
+`wz` must be **positive**; if it is negative, set `"imu_gyro_sign": -1.0`. The absolute
+`yaw` value does not matter (it is wherever the unit powered up; only the yaw RATE is
+used).
 ```bash
 ros2 run amr_base qr_calibrate imu
 ```
+If the rate is under ~40 Hz (the AMR QR's unit shipped at 9600 baud / 10 Hz), reconfigure
+it, then set `"imu_baud": 115200` in the profile, power-cycle the IMU and run
+`qr_calibrate imu` again:
+```bash
+ros2 run amr_base qr_calibrate imu-setup --rate 50 --baud 115200 --go
+```
+If the unit ignores the commands, the tool says so: use the WitMotion PC software instead.
 
 ## Part E — First motion (ON BLOCKS)
 

@@ -139,3 +139,26 @@ class YawRateSource:
         self.mode = ANGLE_DIFF_MODE
         self.samples += 1
         return YawRate(f.t, self.sign * math.radians(d / dt), ANGLE_DIFF_MODE, yaw)
+
+
+# ---- configuration commands (WitMotion standard protocol: FF AA <reg> <lo> <hi>) ----
+# Registers as documented for the WT901/JY901 family. A unit on the NEW protocol only
+# accepts writes after UNLOCK; an older one ignores the unlock frame, so it is always sent.
+UNLOCK = bytes.fromhex("FFAA6988B5")
+SAVE = bytes.fromhex("FFAA000000")
+REG_RSW, REG_RRATE, REG_BAUD = 0x02, 0x03, 0x04
+RATE_CODES = {10: 0x06, 20: 0x07, 50: 0x08, 100: 0x09, 200: 0x0B}  # Hz -> RRATE value
+BAUD_CODES = {4800: 0x01, 9600: 0x02, 19200: 0x03, 38400: 0x04, 57600: 0x05, 115200: 0x06, 230400: 0x07}
+RSW_ACC, RSW_GYRO, RSW_ANGLE = 0x02, 0x04, 0x08  # output-content bits (TIME=0x01, MAG=0x10, ...)
+
+
+def command(reg: int, value: int) -> bytes:
+    """One register write frame: FF AA reg low high."""
+    if not (0 <= reg <= 0xFF and 0 <= value <= 0xFFFF):
+        raise ValueError(f"register 0x{reg:02X} value {value}")
+    return bytes([0xFF, 0xAA, reg, value & 0xFF, value >> 8])
+
+
+def frame_bytes_per_s(rate_hz: int, frames_per_sample: int = 3) -> int:
+    """Serial load of the stream: 11-byte frames, 10 bits per byte on the wire."""
+    return rate_hz * frames_per_sample * FRAME_LEN * 10
