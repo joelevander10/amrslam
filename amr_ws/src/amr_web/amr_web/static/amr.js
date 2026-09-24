@@ -73,10 +73,17 @@ function rail(st) {
   tile('tel-loc', l ? l.state_name : '–', st.localization_stale ? 'stale (replaced layer)' : (l ? '—' : 'no layer'),
        l ? LOC_LEVEL[l.state_name] : '', st.localization_stale);
   const r = st.run;
+  // the run's own reason (Start refused / ignored, hold, fault) also lands in the log box on
+  // every page, where operators look after pressing START (2026-09-24: "no error" while the
+  // refusal was only on the Run page)
+  const why = r && !st.run_stale ? (r.reason || '') : '';
+  if (why && why !== railRunReason) log(`run ${r.state_name}: ${why}`, ['FAULT', 'BLOCKED'].includes(r.state_name) || /refus|ignor/i.test(why) ? 'bad' : '');
+  railRunReason = why;
   tile('tel-run', r ? r.state_name : '–', st.run_stale ? 'stale (replaced layer)' : (r ? (r.step_id || '—') : 'no executor'),
        r ? RUN_LEVEL[r.state_name] : '', st.run_stale);
   tile('tel-gen', m ? String(m.generation) : '–', st.lease ? 'lease' : 'no lease', st.lease ? '' : 'warn');
 }
+let railRunReason = null;
 function railStale(on) { const e = document.getElementById('telemetry'); if (e) e.classList.toggle('stale', on); }
 
 async function poll() {
