@@ -1,0 +1,11 @@
+# AMR QR: stable device names, so a replug or boot order cannot swap the IMU and the
+# CAN adapter (the QR controller hard-coded /dev/ttyUSB0 and /dev/ttyACM0).
+#
+# Fill in the serials from `udevadm info -a -n /dev/ttyUSB0 | grep -m1 serial` (and the
+# same for ttyACM0), copy to /etc/udev/rules.d/, `sudo udevadm control --reload && sudo
+# udevadm trigger`, then set qr_base.imu_port to /dev/amr_imu in profiles/amr-qr-01.json.
+#
+# WitMotion (usually a CH340 1a86:7523 or CP210x 10c4:ea60 USB-serial)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", SYMLINK+="amr_imu", MODE="0660", GROUP="dialout"
+# CANable / slcan adapter (usually 16d0:117e); add ATTRS{serial}=="..." if there are two
+SUBSYSTEM=="tty", ATTRS{idVendor}=="16d0", ATTRS{idProduct}=="117e", SYMLINK+="amr_can", MODE="0660", GROUP="dialout", TAG+="systemd"

@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}AGV — parameters{% endblock %}
+{% block body %}
+
+{# Identity first. Two vehicles are worked on from the same shell and the
+   profile is chosen by an environment variable, so "which vehicle is this"
+   is the first question this page has to answer. #}
+<section class="sensor">
+  <h2>Profile <small>{{ env_var }} · loaded at start-up</small></h2>
+  <div class="pm-id">
+    <div class="pm-id-name">{{ profile }}</div>
+    <div class="pm-id-path"><code>{{ path }}</code></div>
+  </div>
+  <div class="chips">
+    {# dry_run is not a subsystem, but it is the one flag that decides whether
+       an auto run can produce motion at all, so it leads. #}
+    <span class="chip {{ 'warn' if dry_run }}">dry run {{ 'ON' if dry_run else 'off' }}</span>
+    {% for name, on in enabled %}
+    <span class="chip">{{ name }} {{ 'on' if on else 'OFF' }}</span>
+    {% endfor %}
+    <span class="chip">predicted ζ {{ zeta }}</span>
+  </div>
+  <p class="mon-note">
+    A profile that fails any check is refused at import with the failing check
+    named, so a running vehicle is a validated one — see
+    <code>config._validate()</code> for the pairings it enforces between keys
+    (the software ramp must stay under the driver's, the driver timeout above
+    the telemetry period, the heartbeat under half the timeout).
+  </p>
+</section>
+
+{# Filters, not controls — the same idiom as /alarms. This changes what the
+   page shows and touches nothing on the vehicle. #}
+<div class="al-filters">
+  <label>Find
+    <input type="search" id="pm-find" placeholder="watchdog, ramp, lidar…"
+           autocomplete="off" spellcheck="false">
+  </label>
+  <label><input type="checkbox" id="pm-notes"> expand all notes</label>
+  <span class="al-count" id="pm-count">—</span>
+</div>
+
+{% for sec in sections %}
+<section class="sensor pm-sec" data-sec="{{ sec.name }}">
+  <h2>{{ sec.name }}
+    <small>{{ sec.rows | length }} value{{ '' if sec.rows | length == 1 else 's' }}</small></h2>
+  {% if sec.note %}<p class="mon-note pm-secnote">{{ sec.note }}</p>{% endif %}
+
+  <div class="pm-list">
+    {% for r in sec.rows %}
+    <div class="pm-row" data-find="{{ (r.key ~ ' ' ~ r.const ~ ' ' ~ r.value ~ ' ' ~ sec.name) | lower }}">
+      <div class="pm-key">
+        {{ r.key }}
+        {# The exported name, because the two people reading this page are
+           somebody editing the JSON and somebody reading a traceback. #}
+        {% if r.const %}<i>config.{{ r.const }}</i>{% endif %}
+        {% if r.get('from') %}<i>{{ r['from'] }}</i>{% endif %}
+      </div>
+      <div class="pm-val">{{ r.value }}{% if r.unit %}<i>{{ r.unit }}</i>{% endif %}</div>
+      {% if r.note %}
+      {# The note is config.py's own paragraph about this key, parsed out of the
+         module docstring rather than restated here - one explanation, so it
+         cannot go stale on the screen while staying right in the source. #}
+      <details class="pm-note">
+        <summary>why</summary>
+        <pre>{{ r.note }}</pre>
+      </details>
+      {% else %}
+      <span class="pm-nonote"></span>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endfor %}
+
+<p class="mon-note">
+  The sections above are generated from the profile schema itself
+  (<code>config.describe()</code>), so a key added to a profile appears here
+  without anyone having to remember this page exists. Derived values are shown
+  apart because they cannot be edited: they are computed from the primitives
+  above, which is what stops a profile carrying a geometry that disagrees with
+  itself.
+</p>
+
+{% endblock %}
+
+{% block script %}
+<script src="{{ url_for('static', filename='params.js') }}"></script>
+{% endblock %}

@@ -1,0 +1,27 @@
+# AMR QR: bring the USB CAN adapter of the wheel encoders up as SocketCAN can0.
+#
+# The QR controller opened it as python-can "slcan" on /dev/ttyACM0 at 125 kbit/s.
+# drivers/canbus/verify_drivers.open_bus() still falls back to slcan on its own, but
+# amr.service BindsTo can0 (and candump/cansniffer only see SocketCAN), so make it
+# a real interface. /dev/amr_can comes from 99-amr-qr.rules.
+#
+#   sudo cp slcan-can0.service /etc/systemd/system/ && sudo systemctl enable --now slcan-can0
+#
+# -s4 = 125 kbit/s (the encoders' node_BPS 2003h default 4). If the adapter runs
+# candleLight / gs_usb firmware instead of slcan it is already a SocketCAN device:
+# use `ip link set can0 up type can bitrate 125000` and not this unit.
+[Unit]
+Description=slcan can0 for the AMR QR wheel encoders (125 kbit/s)
+After=dev-amr_can.device
+BindsTo=dev-amr_can.device
+
+[Service]
+Type=forking
+ExecStart=/usr/bin/slcand -o -c -s4 /dev/amr_can can0
+ExecStartPost=/usr/sbin/ip link set can0 txqueuelen 1000 up
+ExecStop=/usr/sbin/ip link set can0 down
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

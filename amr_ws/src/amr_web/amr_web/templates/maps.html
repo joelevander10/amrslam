@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}AMR — maps{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block body %}
+<section class="maps-cols">
+  <div class="panel">
+    <h2>Survey session <small>session coordinator</small></h2>
+    <p class="note">Drive the area manually, return to the same physical mark and heading, review, save. The buttons here only talk to the session coordinator; <b>nothing on this page moves the vehicle</b> except the jog pad and the preset moves.</p>
+    <div id="survey-state" class="tel-grid" style="margin-top:12px"></div>
+    <p id="survey-msg" class="note"></p>
+    <label class="field">Map id <input id="survey-map-id" placeholder="line_section"></label>
+    <label class="field">Start mark description <input id="survey-desc" placeholder="floor mark A, facing the rack ends"></label>
+    <div class="bar">
+      <button id="btn-survey-start" class="big">New map (start survey)</button>
+      <button id="btn-survey-returned" class="big">Returned to start</button>
+    </div>
+    <div class="sep"></div>
+    <h3>Closure <small>as estimated · review seams before saving</small></h3>
+    <div id="closure" class="tel-grid"><div class="none">available after "Returned to start"</div></div>
+    <label class="field">Review note <input id="survey-note" placeholder="seams ok, span 12.00 m measured 11.96"></label>
+    <div class="bar">
+      <button id="btn-survey-save" class="big run">Save map revision</button>
+      <button id="btn-survey-abort" class="danger">Abort survey</button>
+    </div>
+    <div class="sep"></div>
+    <h3>Preset moves <small>press once · 0.30 m/s · 0.20 rad/s · MANUAL</small></h3>
+    <p class="note">The vehicle drives the whole move by itself. Any pendant button, the E-stop, the selector, the jog pad or <b>Stop</b> ends it. After each move the map is checked against it.</p>
+    <label class="field">Distance m <span class="inline"><input id="sm-dist" type="number" step="0.1" min="0.05" max="10" value="1.0" title="0.05 to 10 m"><button id="sm-fwd" class="tool">Forward</button><button id="sm-rev" class="tool">Reverse</button></span></label>
+    <div class="bar" id="sm-spins">
+      <button class="tool" data-deg="45">Left 45°</button><button class="tool" data-deg="90">Left 90°</button><button class="tool" data-deg="135">Left 135°</button><button class="tool" data-deg="180">Left 180°</button>
+    </div>
+    <div class="bar" id="sm-spins-cw">
+      <button class="tool" data-deg="-45">Right 45°</button><button class="tool" data-deg="-90">Right 90°</button><button class="tool" data-deg="-135">Right 135°</button><button class="tool" data-deg="-180">Right 180°</button>
+    </div>
+    <div class="bar"><button id="sm-stop" class="danger">Stop move</button></div>
+    <p id="sm-status" class="note">available while surveying</p>
+    <div class="sep"></div>
+    <h3>Jog <small>survey spin cap 0.27 rad/s</small></h3>
+    <div id="jog-maps"></div>
+  </div>
+  <div class="panel">
+    <h2>Live map <small>/map · 1 Hz</small></h2>
+    <div class="canvas-wrap live"><canvas id="live-canvas" width="800" height="480"></canvas>
+      <div class="hint">Grows while surveying · green = vehicle · red = current scan · wheel = zoom · drag = pan · double-click = fit</div></div>
+  </div>
+</section>
+<section>
+  <h2>Saved map revisions <small>~/amr_maps</small></h2>
+  <div id="maps-list"><div class="none">loading…</div></div>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/mapview.js"></script><script src="/static/liveview.js"></script><script src="/static/jogpad.js"></script><script src="/static/maps.js"></script>{% endblock %}

@@ -1,0 +1,59 @@
+# robot_localization ekf_node: wheel odometry twist + gyro yaw rate (spec §4.1,
+# reconciliation D-3). Publishes odom->base_footprint (see amr_ws/README.md,
+# TF tree) and /odometry/filtered.
+#
+# Yaw rate only from the IMU: the MLS gyro drifts 3.4 deg/min in absolute yaw
+# (D-3), so orientation is deliberately NOT fused. Bias is removed upstream by
+# imu_bias_node; its covariance is the measured sigma 0.0291 deg/s.
+ekf_local:
+  ros__parameters:
+    frequency: 50.0
+    sensor_timeout: 0.2
+    two_d_mode: true
+    publish_tf: true
+    publish_acceleration: false
+    print_diagnostics: true
+    map_frame: map
+    odom_frame: odom
+    base_link_frame: base_footprint
+    world_frame: odom
+
+    odom0: /odom_raw
+    odom0_config: [false, false, false,   # x y z
+                   false, false, false,   # roll pitch yaw
+                   true,  false, false,   # vx vy vz
+                   false, false, true,    # vroll vpitch vyaw
+                   false, false, false]   # ax ay az
+    odom0_differential: false
+    odom0_queue_size: 10
+    odom0_nodelay: true
+
+    imu0: /imu/data
+    imu0_config: [false, false, false,
+                  false, false, false,
+                  false, false, false,
+                  false, false, true,     # yaw rate only
+                  false, false, false]
+    imu0_differential: false
+    imu0_remove_gravitational_acceleration: true
+    imu0_queue_size: 10
+    imu0_nodelay: true
+
+    # Diagonal, 15 states. Defaults from robot_localization, with vx/vyaw
+    # process noise lowered: the wheel and gyro measurements are frequent and
+    # honest about their covariance, so the filter should trust them.
+    process_noise_covariance: [0.05, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                               0.0,  0.05, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                               0.0,  0.0,  0.06, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                               0.0,  0.0,  0.0,  0.03, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                               0.0,  0.0,  0.0,  0.0,  0.03, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                               0.0,  0.0,  0.0,  0.0,  0.0,  0.06, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                               0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.01, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                               0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.025, 0.0, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                               0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.04, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                               0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.01, 0.0,  0.0,  0.0,  0.0,  0.0,
+                               0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.01, 0.0,  0.0,  0.0,  0.0,
+                               0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.005, 0.0, 0.0,  0.0,
+                               0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.01, 0.0,  0.0,
+                               0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.01, 0.0,
+                               0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.015]

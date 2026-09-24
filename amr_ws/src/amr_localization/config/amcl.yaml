@@ -1,0 +1,65 @@
+# nav2_amcl on a saved bundle (spec §4.2). Frames are the resolved T3 tree; the
+# EKF supplies odom->base_footprint and AMCL publishes map->odom.
+#
+# likelihood_field_prob is chosen because Humble's plain likelihood_field
+# ignores do_beamskip; beam skipping is what makes clutter that is not in the
+# reference map tolerable (spec §4.2).
+amcl:
+  ros__parameters:
+    use_sim_time: false
+    global_frame_id: map
+    odom_frame_id: odom
+    base_frame_id: base_footprint
+    scan_topic: /scan_gated             # amr_localization scan_gate_node: see scan_gate.py
+    tf_broadcast: true
+    transform_tolerance: 0.3
+    set_initial_pose: false        # the operator gives /initialpose explicitly (spec §4.2)
+    always_reset_initial_pose: false
+    first_map_only: true
+    save_pose_rate: 0.5
+
+    robot_model_type: nav2_amcl::DifferentialMotionModel
+    alpha1: 0.1   # rot -> rot
+    alpha2: 0.1   # trans -> rot
+    alpha3: 0.1   # trans -> trans
+    alpha4: 0.1   # rot -> trans
+    alpha5: 0.1
+
+    laser_model_type: likelihood_field_prob
+    do_beamskip: true
+    beam_skip_distance: 0.5
+    beam_skip_threshold: 0.3
+    beam_skip_error_threshold: 0.9
+    laser_likelihood_max_dist: 2.0
+    laser_max_range: 30.0
+    laser_min_range: -1.0
+    max_beams: 180                 # of 551 (sim) / 1652 (wire); N97 budget
+    sigma_hit: 0.1                 # tight: far-wall beams must constrain position ALONG an aisle
+    z_hit: 0.7
+    z_rand: 0.25
+    z_short: 0.025
+    z_max: 0.025
+    lambda_short: 0.1
+
+    min_particles: 500
+    max_particles: 2000
+    pf_err: 0.05
+    pf_z: 0.99
+    update_min_d: 0.05
+    update_min_a: 0.03
+    resample_interval: 2
+    recovery_alpha_slow: 0.0       # no random-particle recovery: a lost robot STOPS (spec §4.3)
+    recovery_alpha_fast: 0.0
+
+map_server:
+  ros__parameters:
+    use_sim_time: false
+    topic_name: map
+    frame_id: map
+
+lifecycle_manager_localization:
+  ros__parameters:
+    use_sim_time: false
+    autostart: true
+    node_names: [map_server, amcl]
+    bond_timeout: 20.0     # startup load on the N97: the whole launch dies if a bond is missed

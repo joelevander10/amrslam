@@ -1,0 +1,19 @@
+# Collision footprint of the vehicle in base_footprint (axle centre, x forward), metres.
+# ONE source of truth: route validation (amr_navigation.footprint) and the Nav2
+# local costmap (injected by nav.launch.py) both read this file.
+#
+# MEASURE: these are placeholders derived from the URDF chassis box (1.0 x 0.6 m,
+# centred on the axle) plus the front overhang the lidar mount implies (the
+# scanner sits 0.964 m ahead of the axle). Measure body, protrusions and load
+# before physical route validation (spec §0.1 "Collision footprint").
+polygon:
+  - [-0.50, -0.35]
+  - [ 1.10, -0.35]
+  - [ 1.10,  0.35]
+  - [-0.50,  0.35]
+margin_m: 0.05          # route validation + obstruction checks, grown around the polygon.
+                        # One grid cell. 0.20 -> 0.10 -> 0.05 on 2026-09-17 (operator request).
+                        # DECOUPLED from the cross-track fault limit (route limits, 0.10 m):
+                        # the executor may permit twice the lateral error validation cleared.
+                        # A route that validates here can still brush a wall at the fault limit;
+                        # clearance is the operator's judgement when drawing, not this number.

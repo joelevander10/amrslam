@@ -1,0 +1,7 @@
+# Begin a new survey (spec §6.1 step 1). The vehicle must be stopped in MANUAL with
+# a calibrated IMU and a live scan; the current map pose becomes the start reference.
+string map_id          # e.g. "line_section"; becomes the bundle directory name
+string description     # where the physical start mark is
+---
+bool accepted
+string message

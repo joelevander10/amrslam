@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}AGV — alarms{% endblock %}
+{% block body %}
+
+<section class="sensor">
+  <h2>Standing <small>what is wrong right now</small></h2>
+  <div id="al-standing" class="mon-alarms">
+    <div class="mon-none">nothing outstanding</div>
+  </div>
+</section>
+
+<section class="sensor">
+  <h2>Log <small>newest first · {{ max_events }} retained</small></h2>
+
+  {# Filters, not controls: they change what this page shows and touch nothing
+     on the vehicle. Errors cannot be filtered out - hiding the reason the AGV
+     stopped is the one thing this page must never help you do. #}
+  <div class="al-filters">
+    <label><input type="checkbox" id="f-info" checked> info</label>
+    <label><input type="checkbox" id="f-warn" checked> warn</label>
+    <label class="fixed"><input type="checkbox" checked disabled> error
+      <i>always shown</i></label>
+    <span class="al-count" id="al-count">—</span>
+  </div>
+
+  <div id="al-log" class="al-log">
+    <div class="mon-none">waiting for the first poll…</div>
+  </div>
+</section>
+
+{# Deliberately the LAST section, and deliberately not next to the log. This is
+   the one control on an otherwise read-only page, and it does not touch an
+   alarm: it restarts the controller process. Reloading a changed profile is
+   what it is for - a parameter is edited in the JSON and picked up on the next
+   start, and until now that meant a shell. #}
+<section class="sensor">
+  <h2>Service <small>{{ unit }}</small></h2>
+  <p class="mon-note">
+    Restarting <b>de-energises the drives</b> and drops the event log above —
+    the ring buffer lives in the process. It is refused while the vehicle is
+    armed. Allow about 15 seconds: the controller waits for the wheels to reach
+    zero, disarms, exits, and systemd starts it again.
+  </p>
+  <div class="al-filters">
+    <button id="rs-btn" class="danger">Restart controller</button>
+    <span class="al-count" id="rs-note">reloads the profile from disk</span>
+  </div>
+</section>
+
+{% endblock %}
+
+{% block script %}
+<script src="{{ url_for('static', filename='alarms.js') }}"></script>
+{% endblock %}

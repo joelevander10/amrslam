@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}AMR — manual{% endblock %}
+{% block body %}
+<div class="warn-box"><b>Arming is the physical panel's job</b>: the selector resting in MANUAL energises the drives at zero. This page cannot arm, clear a drive alarm or change the operating mode. The drives de-energise on a service stop; nothing here does that.</div>
+<section>
+  <h2>Vehicle <small>supervisor · mux</small></h2>
+  <div id="manual-state" class="tel-grid"></div>
+  <p id="manual-reason" class="note"></p>
+</section>
+<section>
+  <h2>Manual jog <small>/amr/manual_command · held</small></h2>
+  <div id="jog"></div>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/jogpad.js"></script>
+<script>
+jogpad(document.getElementById('jog'));
+onState(st => {
+  const m = st.mode, mx = st.mux, l = st.lease;
+  tiles('manual-state', [
+    ['Mode', m ? m.mode_name : '–', m ? (m.phase || '—') : 'no supervisor', m ? MODE_LEVEL[m.mode_name] : 'bad'],
+    ['Manual allowed', yesno(m && m.manual_available), 'by supervisor', m && m.manual_available ? '' : 'warn'],
+    ['Command source', mx ? mx.source : '–', mx ? (mx.inhibited ? 'inhibited' : '—') : 'no mux state', mx && mx.inhibited ? 'warn' : ''],
+    ['Generation', l ? String(l.generation) : '–', l ? 'lease' : 'no lease', l ? '' : 'warn'],
+  ]);
+  document.getElementById('manual-reason').textContent = [mx && mx.reason ? `mux: ${mx.reason}` : '', m && m.reason ? m.reason : ''].filter(Boolean).join(' · ');
+});
+</script>{% endblock %}

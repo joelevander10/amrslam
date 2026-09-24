@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}AMR — parameters{% endblock %}
+{% block body %}
+<section>
+  <div id="pm-id" class="pm-id"><span class="pm-id-name">–</span><span class="pm-id-path">loading…</span></div>
+  <p class="note">Read-only. <b>Profile</b> rows are the strict vehicle profile the controller loaded; <b>runtime</b> rows are what the owning nodes report they are using. A profile value does not prove the node uses it — compare.</p>
+  <div class="al-filters"><input id="find" type="search" placeholder="filter…"></div>
+</section>
+<section id="params"></section>
+{% endblock %}
+{% block scripts %}<script>
+let cfg = null;
+function render() {
+  if (!cfg) return;
+  const q = document.getElementById('find').value.toLowerCase();
+  document.querySelector('#pm-id .pm-id-name').textContent = cfg.profile;
+  document.querySelector('#pm-id .pm-id-path').textContent = cfg.profile_path;
+  const rt = Object.entries(cfg.runtime).map(([n, v]) => {
+    const rows = Object.entries(v).filter(([k, x]) => !q || (k + x).toLowerCase().includes(q));
+    if (!rows.length) return '';
+    return `<h2>${esc(n)} <small>runtime</small></h2><div class="list">${rows.map(([k, x]) =>
+      `<div class="row"><span class="k">${esc(k)}</span><span class="v">${esc(x)}</span></div>`).join('')}</div>`;
+  }).join('');
+  const sec = cfg.sections.map(s => {
+    const rows = s.rows.filter(r => !q || (`${s.name}.${r.key} ${r.value} ${r.note || ''}`).toLowerCase().includes(q));
+    if (!rows.length) return '';
+    return `<h2>${esc(s.name)} <small>profile</small></h2><div class="list">${rows.map(r =>
+      `<div class="row"><span class="k">${esc(r.key)}${r.note ? `<details class="pm-note"><summary>note</summary><pre>${esc(r.note)}</pre></details>` : ''}</span>` +
+      `<span class="v">${esc(r.value)}${r.unit ? `<i>${esc(r.unit)}</i>` : ''}</span></div>`).join('')}</div>`;
+  }).join('');
+  document.getElementById('params').innerHTML = (rt + sec) || '<div class="none">nothing matches</div>';
+}
+document.getElementById('find').oninput = render;
+let cfgJson = '';
+// re-render only on a real change: a periodic rebuild would close the note someone is reading
+async function load() {
+  const { status, data } = await apiGet('/api/config');
+  if (status === 200 && JSON.stringify(data) !== cfgJson) { cfgJson = JSON.stringify(data); cfg = data; render(); }
+  setTimeout(load, 5000);
+}
+load();
+</script>{% endblock %}

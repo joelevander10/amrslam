@@ -1,0 +1,210 @@
+RFID READER LINK (LAN1) - AS-BUILT AND HARDENING NOTES
+======================================================
+Written 2026-08-31. Vehicle profile agv-01.
+
+The RFID reader determines the ROUTE: which tag is seen decides stop, start and
+branch. Magnet tape is the road; RFID is the signage. It carries no safety
+function - that belongs to the safety lidar, the safety controller and STO - but
+a reader that goes silent without being NOTICED means the vehicle drives past its
+branch point and never arrives. Everything below exists to make loss of the
+reader a fast, LOUD, controlled stop rather than a silent wrong turn.
+
+
+1. AS-BUILT
+-----------
+Interface   enp2s0 (LAN1), Intel i225/i226, driver igc, MAC 00:10:f3:b6:f8:01
+Host IP     192.168.1.10/24, static
+Reader      192.168.1.200, MAC 8c:4b:41:3b:cc:a4, TCP port 2022 open
+Topology    direct point-to-point, NO switch
+Link        100BASE-TX full duplex, autonegotiated
+
+Config lives in /etc/netplan/60-rfid-lan1.yaml (mode 0600, renderer networkd).
+Backup of the pre-change /etc/netplan is at /root/netplan-backup-*.tar.gz.
+
+NOTE on why this is netplan and not nmcli. NetworkManager on this box is
+restricted to wifi by /usr/lib/NetworkManager/conf.d/10-globally-managed-devices
+.conf, which sets unmanaged-devices=*,except:type:wifi,... Every ethernet port is
+therefore invisible to nmcli by design; it belongs to netplan -> systemd-networkd.
+Trying to configure enp2s0 with nmcli will appear to do nothing.
+
+Three deliberate choices in that file:
+
+  no gateway4 / routes   The box already carries two default routes (usb0 via
+                         10.46.252.34, wlp1s0 via 192.168.2.10). A third default
+                         pointing at the reader's subnet would blackhole traffic.
+                         The reader is a direct peer; it needs the /24 and
+                         nothing else.
+
+  no nameservers         Same reasoning. The reader is addressed by IP forever.
+
+  optional: true         Renders as RequiredForOnline=no. Without it, systemd-
+                         networkd-wait-online blocks boot ~2 min whenever the
+                         reader is unplugged for maintenance, which reads to an
+                         operator as a dead controller.
+
+  renderer: networkd     Scoped INSIDE the ethernets: block, not at the top
+                         level. 50-cloud-init.yaml currently declares no global
+                         renderer so this is presently redundant - but if cloud-
+                         init ever regenerates that file with renderer:
+                         NetworkManager, a top-level setting here would fight it
+                         and could take wlp1s0 down. Scoped, it cannot.
+
+
+2. MEASURED BASELINE (2026-08-31, vehicle at standstill)
+--------------------------------------------------------
+ICMP, 50 packets     rtt min/avg/max/mdev = 0.057/0.096/0.123/0.010 ms, 0% loss
+NIC error counters   all zero (no crc, drop, discard, miss, collision)
+EEE / green ethernet already disabled - a known link-flap source on igc
+Coalescing           rx-usecs 3 (already low latency, do not raise)
+TCP connects         30/30 succeed at 0.3 s spacing
+Concurrent sockets   reader accepted 3 simultaneous connections - no single-
+                     client lock, so a diagnostic tool can attach alongside the
+                     controller
+Recovery from RST    immediate; reconnect on attempt 1, 0.00 s. The reader does
+                     NOT hold a dead session open, so a controller crash does
+                     not lock us out.
+Port 2022 on connect sends nothing unsolicited -> command/response reader, NOT
+                     an auto-streaming one. Something must poll it.
+
+Conclusion: the electrical link is massively over-provisioned for sparse tag
+events and is NOT the risk. Do not spend effort on throughput or latency.
+
+
+3. THE GOVERNING NUMBER
+-----------------------
+From agv-profile.json: wheel_dia 0.180 m, gear_ratio 30, auto_rpm 1600
+  -> wheel circumference 0.5655 m
+  -> cruise speed 0.503 m/s (1.81 km/h)
+
+Blind travel at cruise:
+
+  loop tick 20 ms                       0.010 m
+  sensor_timeout_s 0.10                 0.050 m   <- existing budget
+  line_loss_grace_m 0.075               0.075 m   <- existing budget
+  250 ms                                0.126 m
+  1 s                                   0.503 m
+  30 s                                 15.080 m
+  default TCP keepalive 7200 s       3619.115 m
+
+The codebase already budgets blind travel at the 5-7.5 cm scale. A stock TCP
+socket would let the vehicle travel 3.6 km past a branch point while still
+believing it was connected. Closing that gap is the entire job.
+
+
+4. PHYSICAL - THE DOMINANT REMAINING RISK
+-----------------------------------------
+None of this is visible on a bench. Vehicle ethernet fails mechanically.
+
+  * RJ45 latches snap under vibration. Use M12 D-coded if the reader offers it.
+    On RJ45, use a latch-protected boot.
+  * Use STRANDED conductor cable. Solid core work-hardens and fractures at the
+    vibration node.
+  * Service loop and strain relief at BOTH ends so cable motion never loads the
+    connector itself.
+  * Route away from motor power; cross at 90 degrees where unavoidable. This bus
+    already runs CAN at 125 kbps for noise-margin reasons - same environment.
+  * CHECK THE READER'S POWER FEED. If it shares a rail with the drives, an
+    acceleration brownout resets the reader. That failure looks exactly like a
+    comms fault and is cured with a separate fused feed, not with software.
+
+KEEP THE LINK DIRECT. No switch. This is a robustness property worth defending:
+on a point-to-point link, carrier state is a true proxy for "the reader is
+physically there". Insert a switch and a yanked reader-side cable leaves our
+carrier up and lying to us.
+
+
+5. TCP - THE HALF-OPEN PROBLEM
+------------------------------
+The failure that will actually bite: reader loses power, or the cable parts
+mid-run. Our recv() blocks forever. No exception, no error, socket reports
+ESTABLISHED indefinitely. See the 3.6 km figure above.
+
+Never rely on defaults. On EVERY connection to the reader:
+
+    s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY,  1)   # tag events tiny
+    s.setsockopt(socket.SOL_SOCKET,  socket.SO_KEEPALIVE, 1)
+    s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE,  1)  # probe after 1 s
+    s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 1)
+    s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT,   2)  # dead in ~3 s
+    s.setsockopt(socket.IPPROTO_TCP, socket.TCP_USER_TIMEOUT, 300)   # ms
+
+Set these PER SOCKET, never via sysctl - a sysctl would drag the wifi and USB
+tether sockets along with it and is a system-wide change for a one-link problem.
+
+TCP_USER_TIMEOUT is the one that earns its keep: it bounds how long unacked data
+may linger before the socket errors out, regardless of keepalive state.
+300 ms is about 15 cm of travel.
+
+FASTER STILL: WATCH CARRIER DIRECTLY. On a direct link,
+/sys/class/net/enp2s0/carrier drops to 0 within milliseconds of a cable parting -
+far quicker than any TCP mechanism can conclude anything. Treat carrier loss as
+an instant fault; let keepalive and TCP_USER_TIMEOUT catch the subtler case where
+the cable is fine but the reader firmware has wedged.
+
+
+6. APPLICATION - TWO DISTINCT FAULTS, NOT ONE
+---------------------------------------------
+Conflating these two produces a system that either stops constantly or misses
+branches. They have different causes and different evidence.
+
+FAULT A - rfid_comms_lost
+  Poll or heartbeat the reader continuously; absence of a response within budget
+  is a fault. Map it onto the existing sensor_lost path in autopilot.py. The
+  reasoning is identical to the comment already there: we no longer know where
+  the route markers are, so hold straight and stop - the least-bad blind action.
+
+FAULT B - rfid_tag_overdue
+  Comms perfectly healthy, but the reader MISSED a tag - dirt, misalignment, a
+  detuned or damaged tag. Odometry says we should have crossed tag N by now and
+  we have not. Budget this in DISTANCE, not time, exactly as line_loss_grace_m
+  already does, and for the reason given in autopilot.py: distance rescales
+  itself with speed instead of needing re-tuning at every step. Keep a time
+  ceiling too, for the standstill case where no distance ever accrues.
+
+  Fault B needs a route model - expected tag sequence plus inter-tag distances.
+  That is the largest piece of remaining work and it is not a comms problem.
+
+TWO STRUCTURAL RULES, both already established in this codebase for CAN:
+
+  * A DEDICATED RFID THREAD OWNS THE SOCKET. No socket call ever happens on the
+    50 Hz tick. The control loop reads a snapshot plus an age, precisely the way
+    it consumes sensor_age_s today. A blocking read on the tick would blow the
+    20 ms loop budget, and that budget is already tight because of the 125 kbps
+    CAN bus.
+
+  * POLL RATE SETS STOP ACCURACY, NOT JUST LIVENESS. At 0.503 m/s, polling at
+    5 Hz gives +/-10 cm of uncertainty about WHERE a tag physically was; 50 Hz
+    gives +/-1 cm. Because the reader is command/response rather than streaming,
+    its sustainable command rate is a hard constraint on stopping precision.
+    Measure it once the protocol is known.
+
+Follow the events.py contract: these fire ONCE PER EDGE, never once per poll.
+At 50 Hz a per-poll emit flushes the whole 200-entry ring in four seconds and
+destroys the record of why the vehicle stopped.
+
+
+7. OBSERVABILITY
+----------------
+logs/rfid-link-watch.sh samples at 1 Hz, needs no root, and records carrier,
+link speed, ICMP RTT, TCP reachability of :2022 and the summed NIC error
+counters. Transitions are marked *** so a flap is greppable.
+
+    nohup /home/gvipc-evo-01/agv_can/logs/rfid-link-watch.sh >/dev/null 2>&1 &
+    grep '\*\*\*' /home/gvipc-evo-01/agv_can/logs/rfid-link-watch.log
+
+RUN IT DURING REAL DRIVING. Vibration and EMI faults are invisible at standstill,
+and the baseline in section 2 was taken parked - it proves the cable is good, not
+that the installation is. Several hours of MOVING soak with zero *** lines is
+what justifies trusting this link.
+
+
+8. OPEN ITEMS
+-------------
+  * Reader make/model unknown. OUI 8c:4b:41 did not resolve locally. The framing
+    of the protocol on port 2022 blocks all of section 6.
+  * Sustainable command/response rate on :2022 - unmeasured, sets stop accuracy.
+  * Route model (expected tag sequence + distances) for fault B - not started.
+  * Reader power feed - needs checking against section 4.
+  * enp3s0 is the second port and is unconfigured and unused. If a second device
+    is ever added there, give it its own netplan file and the same no-gateway
+    treatment.

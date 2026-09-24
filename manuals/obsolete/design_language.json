@@ -1,0 +1,112 @@
+{
+  "identity": {
+    "name": "AGV control HMI",
+    "vibe": "Industrial control panel written like an engineering document. Quiet, precise, utilitarian, like a technical datasheet or instrument panel. Calm light 'paper' surface where colour only appears when a state needs attention. Nothing decorative; every visual choice has a safety or legibility reason.",
+    "keywords": ["industrial", "instrument panel", "engineering datasheet", "flat", "square", "hairline rules", "monospace telemetry", "uppercase tracked labels", "semantic colour only", "light-only", "no scroll", "arm's-length legibility"],
+    "anti_patterns": ["rounded cards", "drop shadows", "gradients (except one hatch pattern)", "glassmorphism", "dark mode / prefers-color-scheme", "decorative icons or illustrations", "colour-only status (always pair with a text label or left bar)", "animations beyond ~60-80ms state transitions", "external font CDNs (fonts are self-hosted, runs offline)"]
+  },
+
+  "color": {
+    "theme": "Light only, on purpose. The colour meanings must stay the same whatever the OS theme is.",
+    "neutrals": {
+      "paper": "#EFF1F5 (page background, cool grey-blue)",
+      "surface": "#FFFFFF (tiles, panels, header, side rail)",
+      "surface-2": "#E4E8EF (chips, pills, log well, key caps, inactive fills)",
+      "ink": "#14171D (primary text, near-black)",
+      "ink-2": "#3D4553 (secondary text, hints, body copy)",
+      "ink-3": "#666E7F (tertiary: small mono labels, units, eyebrows; tuned for AA at 10-11px)",
+      "rule": "#CBD2DE (1px borders)",
+      "rule-soft": "#DDE2EB (row dividers inside lists)"
+    },
+    "accent": {
+      "accent": "#1B3A5C (deep navy, identity headings, lamp rings)",
+      "accent-2": "#2F5F94 (steel blue, active nav, 'running' buttons, pressed jog buttons, focus outlines, live input lamps, key tiles)",
+      "accent-wash": "#DFE7F1 (active nav ground, key tile ground)"
+    },
+    "semantic": {
+      "ok": { "solid": "#186E42", "wash": "#DDEEE4", "use": "go/enabled, connected pill" },
+      "hazard": { "solid": "#E8B900", "wash": "#FBF2D2", "ink": "#5E4A00", "use": "warnings, advisories, 'unknown', energised outputs. Text on hazard always uses the dark hazard-ink, never the yellow" },
+      "stop": { "solid": "#A32218", "wash": "#F6DEDB", "use": "faults, errors, stop/disarm, stale data, occupied zones" }
+    },
+    "rules": [
+      "Colour appears only when it carries meaning; the resting UI is greyscale plus navy.",
+      "A status is shown as a pale wash background + a 3-4px left bar in the solid colour + a text label. Never a fill alone.",
+      "Filled solid buttons (ok/accent-2/stop) always use white text; hover is brightness(1.12).",
+      "Disabled = opacity .3-.32. Stale data = dimmed + grayscale, or a hatched red pattern / a red banner when 'stale' could be mistaken for 'clear'."
+    ]
+  },
+
+  "typography": {
+    "families": {
+      "display": "Archivo 600/700 (headings, page title). Tight negative tracking",
+      "sans": "IBM Plex Sans 400/500/600 (body copy, hints, notes)",
+      "mono": "IBM Plex Mono 400/500/600 (all labels, nav, buttons, values, units, logs, codes). Mono is the dominant voice of the UI"
+    },
+    "base": "15.5px / 1.62 IBM Plex Sans, antialiased",
+    "scale": {
+      "h1_header": "700 17px Archivo, letter-spacing -.022em",
+      "h2_section": "600 17px Archivo, -.012em",
+      "h3": "600 15px Archivo; on the monitor page, sub-headings are 10.5px mono uppercase instead",
+      "eyebrow_small": "500 11px mono, UPPERCASE, letter-spacing .11em, ink-3. Sits inline after an h2 and carries technical IDs (e.g. 'NODE 10 · TPDO1 0x18A')",
+      "nav_and_buttons": "600 11.5-12px mono, UPPERCASE, letter-spacing .08-.09em",
+      "tile_label": "500 10px mono, UPPERCASE, .11em, ink-3",
+      "tile_value": "600 19px mono, tabular-nums, ink",
+      "tile_value_key": "34px mono (the most important readings)",
+      "tile_value_hero": "44px mono (the single most-copied value on screen)",
+      "tile_unit": "400 11px mono, ink-3, not italic",
+      "hint_note": "12.5-13px sans, ink-2, max-width 74ch",
+      "log": "400 11.5px/1.6 mono",
+      "hero_summary": "clamp(30px,4vw,58px) Archivo for the main status headline"
+    },
+    "habits": ["font-variant-numeric: tabular-nums on every number", "UPPERCASE + wide letter-spacing for all small labels", "middle-dot ' · ' as a separator in metadata strings", "en-dash '–' or em-dash '—' as the placeholder for an empty value", "honest lowercase states like 'connecting…', 'no track', 'no link'"]
+  },
+
+  "shape_and_surface": {
+    "corners": "Square everywhere (border-radius 0). The only exceptions: round status lamps (a lamp is conventionally round, and a square one would read as a button) and 2px on inline <code>.",
+    "borders": "1px solid rule on almost everything. Header has a 2px solid ink bottom border as the single heavy line. Keyboard key caps get a 2px bottom border.",
+    "shadows": "None.",
+    "emphasis_device": "Left bar: border-left 3-4px in a semantic colour, used for callouts, alarm rows, fault chips, warning tiles and the panel strip.",
+    "elevation": "Flat. Layers are shown by paper vs white surface vs surface-2 ground, never by shadow."
+  },
+
+  "layout": {
+    "structure": "App shell with a fixed viewport height; the document itself never scrolls. Top header bar, then a 2-column grid: 300px left telemetry rail + a fluid main column.",
+    "header": "White bar, padding 10px 18px, 2px ink bottom border. Left to right: bold 'AGV control' title, then uppercase mono tab nav (active tab = accent-wash ground + 1px rule border + accent-2 text), then status pill and Wi-Fi bars+dBm pushed right with margin-left:auto.",
+    "left_rail": "White, 1px right border, padding 14px. 2x2 grid of telemetry tiles, a compact lidar zone row (three small lamps), node state chips, then a monospace log well that fills the remaining height and is the only thing that scrolls.",
+    "main": "Padding 18px. Content centred with max-width 900px and stacked sections. Control areas like the jog pad are narrower (520px) and centred.",
+    "section_pattern": "h2 (Archivo) + inline mono eyebrow, then an auto-fit grid of tiles (minmax 110px, gap 8px), then optional short sans notes.",
+    "spacing": "Tight and regular: 4/6/8/10/12/14/16/18/24px. Tile gap 8px, section/bar spacing 16px.",
+    "responsive": "Below 820px the rail stacks above main and the page may scroll ('unreachable controls are worse than a scrollbar'). Jog pad buttons become square. Two-column lists collapse to one."
+  },
+
+  "components": {
+    "telemetry_tile": "White box, 1px rule, padding 8px 12px, stacked vertically: UPPERCASE 10px mono label / big mono value / small mono unit. Variants: .key (accent-wash ground, accent-2 border, 34px value), .tag (44px value), .warn / .bad (wash ground + 3px coloured left bar + coloured value).",
+    "status_pill": "Mono 11.5px uppercase chip on surface-2 with 1px rule; ok/bad variants use the wash ground, solid-colour border and solid-colour text.",
+    "big_button": "Mono 12px uppercase tracked, padding 13px 24px, square, 1px rule on white. Hover changes border and text to accent-2. Semantic filled variants: go=green, run=steel blue, off=red, all with white text. Focus = 2px accent-2 outline, 2px offset.",
+    "danger_button": "Quiet outlined by default; red outline on hover; fully red fill once armed (two-step confirm look).",
+    "jog_pad": "3x3 grid of square white cells, gap 8px. Each cell has a large glyph, an uppercase mono name and a small key hint. Pressed = accent-2 fill, white text, scale(.97). The centre stop cell uses surface-2 and turns red when active.",
+    "callout_warn": "Hazard-wash ground, 1px rule, 4px hazard left bar, hazard-ink text, padding 12px 16px, max 74ch. A second variant uses a stop-red left bar.",
+    "lists_tables": "White bordered container; rows split by rule-soft hairlines; compact 4-6px vertical padding; CSS grid columns; mono channel/key column, sans name column, right-aligned mono value with a muted unit.",
+    "alarm_row": "Grid row with a 4px left bar coloured by level (info=rule, warn=hazard, error=stop) plus a wash ground and an uppercase level text label.",
+    "lamp": "14px circle, 1px rule, surface-2 fill when off. Input on = accent-2 fill. Output on = hazard yellow (inputs and outputs deliberately differ). Zone occupied = stop red. Unknown = hazard. Stale = 45° red/white hatched stripes.",
+    "chip": "600 10px mono uppercase, padding 3px 7px, surface-2 ground; warn/error use the matching wash.",
+    "kbd": "surface-2 ground, 1px rule with a 2px bottom border, 11px mono.",
+    "linear_track": "White 74px strip with a hairline centre line, a thin ink-3 zero marker, small solid blue/green rectangular position markers labelled in 10px mono, and faint full-scale numbers at the corners.",
+    "wifi_indicator": "Four rising 3px bars; unfilled bars stay visible as outlines. Paired with the dBm number in mono. Amber when weak, red when down, never a filled block.",
+    "hero_summary_panel": "2px rule border, generous clamp padding, bold tracked status line, 3-column overview with huge Archivo/mono values, and a sequence of bordered step pills (current = 2px ink border + bold, next = underlined).",
+    "canvas_graphics": "Drawn using the same CSS variables (white surface, rule-soft grid, ink-3 labels, accent-2 points), so charts match the UI."
+  },
+
+  "interaction_and_motion": {
+    "motion": "Minimal and functional: 60-80ms transitions on background, border and position only. No easing flourishes, no entrance animations.",
+    "touch": "touch-action: manipulation; user-select disabled on controls only. Text stays selectable elsewhere so fault codes and IPs can be copied.",
+    "hover": "Text/border shift to accent-2. Filled buttons brighten.",
+    "focus": "Visible 2px solid outline (accent-2, or stop for destructive controls).",
+    "states_philosophy": "When data is unknown or stale, say so loudly. Never let missing data look like a calm or clear state."
+  },
+
+  "voice": {
+    "tone": "Terse, technical, precise. Engineer to operator.",
+    "copy_style": "Short uppercase mono labels (BATTERY, STATE, LEFT, SETPOINT); units spelled the technical way (r/min, mm, rad/s, V); hex/object IDs shown openly (0x18A, 407Ch); plain-sentence hints in sans that explain why, with key words bolded."
+  }
+}

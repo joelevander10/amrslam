@@ -1,0 +1,153 @@
+Update the AGV’s default autonomous route speeds:
+
+- Linear speed: 0.30 m/s -> 0.40 m/s
+- Rotational speed: reduce by 20%, from 0.30 rad/s -> 0.24 rad/s
+
+Implement and verify the changes across the entire repository.
+
+SCOPE
+
+These new limits apply to autonomous route execution only.
+
+Keep these unchanged:
+
+- Manual pendant speed
+- Browser jog speed choices
+- Survey speed cap
+- Commissioning defaults
+- Drive acceleration/deceleration parameters
+- Watchdog and authority timeouts
+- Motor RPM limits
+- Existing immutable saved route revisions
+
+Do not add Reeds-Shepp, Dubins, arcs, reverse autonomous motion, a global planner, or other navigation behavior.
+
+Ignore functional-safety and protective-field work for this task.
+
+REQUIRED CHANGES
+
+1. Change the default route limits in:
+
+   amr_ws/src/amr_navigation/amr_navigation/route.py
+
+   The resulting defaults must be:
+
+   linear_mps = 0.40
+   angular_rad_s = 0.24
+
+2. Update the Nav2 controller configuration in:
+
+   amr_ws/src/amr_navigation/config/nav2_params.yaml
+
+   Set:
+
+   desired_linear_vel: 0.40
+   max_rotational_vel: 0.24
+
+   Do not change controller frequency, lookahead, collision checking, acceleration, or minimum velocity parameters unless an existing test demonstrates that one must change. Avoid speculative controller retuning.
+
+3. Update the route editor so newly created routes default to 0.40 m/s:
+
+   - Change the linear-speed input maximum to 0.40.
+   - Change its initial value to 0.40.
+   - Change JavaScript new-route/reset defaults to 0.40.
+   - Ensure loading an existing route displays that route’s stored speed rather than overwriting it with the new default.
+
+4. The route editor does not currently expose angular speed. Keep it that way unless an angular-speed control already exists elsewhere. Newly created routes should receive the 0.24 rad/s schema default.
+
+5. Verify the complete authority chain:
+
+   Route limits
+       -> compiled/loaded mission
+       -> MotionPermit.v_max / w_max
+       -> command mux
+       -> wheel commands
+
+   The final command mux must enforce:
+
+   - |v| <= 0.40 m/s
+   - |w| <= 0.24 rad/s
+
+   Preserve lower per-route limits. For example, a route capped at 0.15 m/s must remain capped at 0.15 m/s even though Nav2 is configured for 0.40 m/s.
+
+6. Preserve immutable-route behavior:
+
+   - Do not rewrite existing saved route files.
+   - A route already storing 0.30 or another explicit value must retain it when loaded.
+   - Only newly created routes or routes deliberately saved as new revisions should use the new defaults.
+   - If legacy route files omit the limits, apply the new defaults through normal schema loading without mutating the original file.
+
+7. Update documentation and comments that specifically describe the autonomous route defaults as 0.30 m/s or 0.30 rad/s.
+
+   Do not alter text that correctly refers to:
+
+   - Survey speed of 0.30 m/s
+   - Manual/jog speed of 0.30 m/s
+   - Historical test observations at 0.30 m/s
+   - Older saved route examples where the value is intentional
+
+8. Search the full repository for relevant hardcoded values before finishing. Classify every remaining autonomous-looking 0.30, 0.3, or rotational limit as:
+
+   - intentionally unchanged,
+   - test fixture,
+   - historical documentation, or
+   - missed configuration.
+
+TESTS
+
+Add or update meaningful tests covering:
+
+1. A newly parsed route without explicit limits receives:
+
+   linear_mps = 0.40
+   angular_rad_s = 0.24
+
+2. Explicit route limits such as 0.15 m/s and 0.10 rad/s are preserved.
+
+3. The route executor publishes the route limits in MotionPermit.
+
+4. The mux clamps an excessive Nav2 command to 0.40 m/s and 0.24 rad/s.
+
+5. A lower route-specific limit still wins.
+
+6. Linear/angular clamping preserves signs.
+
+7. Existing stored routes retain their explicit values.
+
+8. The browser editor:
+
+   - starts new routes at 0.40 m/s,
+   - resets new drafts to 0.40 m/s,
+   - displays a loaded route’s actual stored speed,
+   - does not change manual or survey jog choices.
+
+9. Rotate-step time allowances and related test expectations are recomputed from 0.24 rad/s rather than retaining hardcoded 0.30 assumptions.
+
+VALIDATION
+
+Run:
+
+cd /home/gvipc-evo-01/agv_can
+python3 tests/run_all.py
+
+cd /home/gvipc-evo-01/agv_can/amr_ws
+env AMR_SIM_TESTS=0 ROS_DOMAIN_ID=89 python3 -m pytest -q src/*/test
+ruff check src
+
+Also run any focused browser/JavaScript harness used by amr_web.
+
+Do not start ROS hardware services, open can0, command the drives, change the nanoScan3 configuration, or perform physical motion.
+
+HANDOFF
+
+Report:
+
+- Files changed
+- Exact autonomous values after the change
+- Confirmation that manual, survey, and commissioning speeds remain unchanged
+- Tests added or updated
+- Validation commands and results
+- Every remaining relevant 0.30 occurrence and why it remains
+- Any pre-existing failures separately from failures introduced by this change
+
+Preserve all unrelated and pre-existing working-tree changes.

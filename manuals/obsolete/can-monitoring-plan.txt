@@ -1,0 +1,525 @@
+================================================================================
+AGV DRIVE MONITORING VIA CANopen  —  BLVD-KRD x2
+Consumer: Ubuntu navigation PC (CAN interface)
+Status:   MONITORING AND DIAGNOSTICS ONLY — NOT A SAFETY PATH
+Date:     2026-09-01
+Source:   opman_can/blvr_canopen.md  (HP-5143-3, CANopen communication profile)
+          opman_fun/blvr_operatingmanual_function.md  (HP-5142-6, Function Edition)
+Related:  motor-drive-compliance-assessment.md  (findings F-01 ... F-18)
+================================================================================
+
+
+0. THE GOLDEN RULE
+--------------------------------------------------------------------------------
+CANopen on this vehicle is a DIAGNOSTIC AND LOGGING CHANNEL. It is not rated,
+not redundant, and not certified. Nothing read over CAN may be used to decide
+whether it is safe to move.
+
+  - The safety chain is:  lidar/encoders -> FX3 -> HWTO1/HWTO2 -> STO,
+    with EDM wired back to the FX3 as a hardware signal.
+  - The CAN chain is:     drivers -> Ubuntu PC -> logs, HMI, health monitoring.
+
+These two must never be confused. In particular, the EDM signal read over CAN
+(403Fh) is NOT the EDM diagnostic that earns the PL d rating — that one is the
+physical wire from CN4 pin 28/14 to the FX3. The CAN copy is a convenience for
+logging and operator display only.
+
+What CAN monitoring IS good for, and why it matters for certification:
+  - Evidence. ISO 3691-4 / ISO 13849-2 validation wants records showing the
+    safety functions actually behaved as specified. CAN logs give you that.
+  - Early warning. The drive detects degradation (temperature, load, voltage,
+    brake circuit) long before it trips. Acting on that keeps the safety
+    functions inside their assumptions.
+  - Fault diagnosis. When the FX3 trips, CAN tells you WHY within milliseconds.
+
+
+1. BUS SETUP — ESTABLISHED FACTS
+--------------------------------------------------------------------------------
+CN4 pinout (per driver):
+    pin 5   CAN_L
+    pin 6   CAN_H
+    pin 7   CAN_GND
+    pin 20  NET-VIN    (power supply for communication)
+    pin 21  NET-GND
+
+Bitrate:      500 kbps default. Options: 1000/800/500/250/125/50/20/10 kbps.
+              Set via support software only (NOT via ID-SEL).
+Bus length:   500 kbps -> 100 m max.  1000 kbps -> 25 m.  Use 500 kbps.
+Node-ID:      1 to 127. Set via support software OR the ID-SEL input.
+              >>> Assign distinct IDs, e.g. LEFT = 1, RIGHT = 2. <<<
+              Record them in the golden parameter file (assessment F-06).
+Termination:  120 ohm, 1/4 W or more, at BOTH ends of the bus.
+              NOT included with the product — you must fit them.
+
+COB-ID layout (Node-ID = n):
+    NMT (broadcast)      000h
+    SYNC (broadcast)     080h
+    EMCY                 080h + n      <-- alarm push messages
+    TPDO1 / RPDO1        180h+n / 200h+n
+    TPDO2 / RPDO2        280h+n / 300h+n
+    TPDO3 / RPDO3        380h+n / 400h+n
+    TPDO4 / RPDO4        480h+n / 500h+n
+    TSDO / RSDO          580h+n / 600h+n
+    NMT error control    700h + n      <-- heartbeat / node guarding
+
+Endianness:   CANopen little-endian (LSB first) for multi-byte values.
+
+
+2. TIER 1 — SAFETY-ADJACENT STATUS  [MUST MONITOR]
+--------------------------------------------------------------------------------
+These tell you what the STO chain is doing. All live in ONE object:
+
+    403Fh sub 00h   Driver output status      UINT32   ro   PDO-mappable
+
+403Fh is the remote-I/O output word. Each bit is whatever signal is assigned to
+R-OUT0..R-OUT31 by the "R-OUTnn output function" parameters.
+
+  *** CRITICAL: THE SIGNALS YOU NEED ARE NOT ASSIGNED BY DEFAULT. ***
+
+Default R-OUT assignment is all operational signals (SON-MON, PLOOP-MON,
+TRQ-LMTD, RDY-*, MOVE, VA, TLC, INFO-*, ...). None of the HWTO/ETO/brake
+monitors are mapped out of the box.
+
+Good news: R-OUT26, 27, 28, 29 default to CONST-OFF (always off) — four free
+bits. Reassign them:
+
+    R-OUT26  ->  252   EDM-MON      ON when BOTH HWTO1 and HWTO2 are OFF
+    R-OUT27  ->  253   HWTOIN-MON   ON when EITHER HWTO1 or HWTO2 is OFF
+    R-OUT28  ->  137   ETO-MON      ON when driver is in ETO status
+    R-OUT29  ->  244   MBC          ON when the brake is RELEASED
+
+That gives you, in bits 26..29 of 403Fh, a complete live picture of the STO
+state and the brake state of each wheel.
+
+How to read the HWTO channel pair (from the EDM/HWTO truth table):
+    HWTOIN-MON=0, EDM-MON=0   -> both channels ON.  Normal running.
+    HWTOIN-MON=1, EDM-MON=1   -> both channels OFF. Normal STO trip. Expected.
+    HWTOIN-MON=1, EDM-MON=0   -> CHANNEL DISCREPANCY. One channel only.
+                                 This is a FAULT: wiring or FX3 output failure.
+                                 Log it loudly. The motor is de-energised, but
+                                 the safety function is degraded and the FX3
+                                 must have latched. Alarm the operator.
+
+Other Tier 1 bits worth mapping if you have spare R-OUT slots (R-OUT30/31
+default to USR-OUT0/USR-OUT1 and can be reused):
+
+    129  ALM-A        Alarm active (normally open)
+    131  SYS-RDY      Main power supply is on
+    133  SON-MON      Motor is excited
+    240  MAIN-PWR     Main power supply ON
+    241  COMM-PWR     Communication power supply ON (BLVD-KRD)
+    134  MOVE         Motor is operating
+    142  ZV           Actual velocity has reached zero
+
+  NOTE on 244 MBC: this reports the driver's brake COMMAND, not the physical
+  brake state. There is no position feedback from the brake. It tells you what
+  the driver intended, which is still useful — a disagreement between MBC and
+  measured wheel motion is a strong degraded-brake signal (assessment F-07).
+
+Also available as a separate object:
+    6041h sub 00h   Statusword                UINT16   ro   PDO-mappable
+        bit 3  FAULT  = alarm occurred
+        bit 7  W      = warning / alarm occurred (0 = none)
+        bit 5  QS     = quick stop active
+        bit 11 ILA    = internal limit active. Set when software limit, FW-LS,
+                        RV-LS, FW-BLK, RV-BLK, STOP, QSTOP or CLR is active.
+                        >>> This is how you see the FX3's QSTOP land. <<<
+        bits 0,1,2,4,6 = CiA-402 state machine (RTSO/SO/OE/VE/SOD)
+
+
+3. TIER 2 — ALARMS VIA EMCY  [MUST MONITOR]
+--------------------------------------------------------------------------------
+EMCY messages are PUSHED on COB-ID 080h + Node-ID. Do not poll for alarms —
+subscribe. One message per error event.
+
+EMCY frame (8 bytes):
+    byte 0-1  Emergency error code (little-endian)
+    byte 2    Error register (mirrors object 1001h)
+    byte 3-7  0
+
+Supporting objects:
+    1001h sub 00h  Error register        UINT8   ro
+                   bit 0 = generic, bit 4 = communication, bit 7 = mfr-specific
+    1003h sub 00h  Number of errors      UINT8   rw   (write 0 to clear)
+          sub 01h  Most recent error     UINT32  ro   (low 16 bits = error code)
+          ...      up to sub 0Ah         10-deep history, oldest = highest sub
+                   NOTE: reading sub 01h with no error present returns SDO
+                   abort 0800 0024h. Handle that, do not treat it as a bus fault.
+    603Fh sub 00h  Error code            UINT16  ro   PDO-mappable
+                   = latest driver alarm code + FF00h
+
+--- COMMUNICATION ERRORS (error register 11h) ---
+  8110h  CAN overrun                          [SHOULD] bus loading too high
+  8120h  CAN in error passive mode            [MUST]   wiring/termination fault
+  8130h  Node guarding or heartbeat error     [MUST]   drive stopped answering
+  8140h  Recovered from Bus-Off state         [MUST]   serious bus fault occurred
+  8210h  PDO not processed due to length err  [SHOULD] mapping mismatch — config bug
+
+--- SAFETY-CHAIN AND BRAKE ALARMS (error register 81h) — HIGHEST VALUE ---
+  FF53h  HWTO input circuit error             [MUST] *** TOP PRIORITY ***
+         The drive has detected a fault in its own STO input circuitry.
+         This is the single most important alarm on the bus. Treat as
+         immediate vehicle-down. Feeds assessment F-09 / F-15 validation.
+  FF68h  HWTO input detection                 [MUST]
+         Raised when HWTO goes OFF, ONLY IF the "Occur alarm at HWTO input OFF"
+         parameter is set to Enable (default = Disable). See section 7.
+         With it enabled you get a timestamped EMCY for EVERY protective stop —
+         excellent evidence for validation and incident reconstruction.
+  FF50h  Electromagnetic brake overcurrent    [MUST]
+         Brake coil drawing too much. Degrading coil or short. Directly relevant
+         to assessment F-07 (no brake wear detection) — this is the ONLY brake
+         circuit diagnostic the drive offers. Use it.
+  FF55h  Electromagnetic brake connection err [MUST]
+         Brake coil open circuit / disconnected. Means the brake may be
+         unpowered (i.e. APPLIED — fail-safe direction) or miswired. Either way
+         the holding function is not in its designed state.
+
+--- POWER AND THERMAL (error register 81h) ---
+  FF22h  Overvoltage                          [MUST]  <- assessment F-05, regen
+         Non-excitation IMMEDIATELY. This is the regen-into-a-full-battery case.
+         If you see this during braking, the BMS is refusing charge current.
+         Log bus voltage (40A4h) alongside it.
+  FF25h  Undervoltage                         [MUST]  <- assessment F-04
+         Non-excitation after deceleration. Battery sag. Stopping distance was
+         already degraded before this fired.
+  FF21h  Main circuit overheat                [MUST]  <- assessment F-08
+  FF26h  Motor overheat                       [MUST]  <- assessment F-08
+         Non-excitation after deceleration.
+  FF20h  Overcurrent                          [MUST]  not resettable; non-excitation
+  FF30h  Overload                             [SHOULD] sustained torque demand
+  FF31h  Overspeed                            [MUST]   cross-check against FX3 SLS
+
+--- DRIVETRAIN / FEEDBACK ---
+  FF10h  Position deviation                   [SHOULD] commanded vs actual diverged.
+         On an AGV this can indicate wheel slip, a dragging brake, or a
+         mechanical problem in the gear train (assessment F-11/F-13).
+  FF28h  Encoder error                        [MUST]
+  FF2Ah  Encoder communication error          [MUST]
+  FF42h  Initial encoder error                [MUST]
+  FF44h  Encoder EEPROM error                 [SHOULD]
+  FF45h  Motor combination error              [MUST]   wrong motor/driver pairing
+                                                       — catches a wrong spare part
+
+--- CONTROLLER / CONFIG ---
+  FFF0h  CPU error                            [MUST]
+  FFF3h  CPU overload                         [MUST]
+  FF41h  EEPROM error                         [MUST]   parameter store corrupt —
+                                                       relevant to F-06 divergence
+  FF70h  Operation data error                 [SHOULD]
+  FF71h  Unit setting error                   [SHOULD]
+  FF8Ch  Outside setting range                [SHOULD]
+  FF81h  Network bus error                    [MUST]
+  FF84h  RS-485 communication error           [USEFUL] only if RS-485 also wired
+  FF85h  RS-485 communication timeout         [USEFUL]
+
+--- LIMIT / HOMING (low relevance on a free-roaming AGV) ---
+  FF66h  Hardware overtravel                  [USEFUL]
+  FF67h  Software overtravel                  [USEFUL]
+  FF60h  +/-LS both sides active              [USEFUL]
+  FF61h  Reverse +/-LS connection             [USEFUL]
+  FF62h  Return-to-home operation error       [USEFUL]
+  FF63h  No HOMES                             [USEFUL]
+  FF64h  Z, SLIT signal error                 [USEFUL]
+  FF4Ah  Return-to-home incomplete            [USEFUL]
+  FF6Ah  Return-to-home additional op error   [USEFUL]
+
+  0000h  Error reset / no error               — sent when all errors clear
+
+
+4. TIER 3 — ANALOGUE HEALTH MONITORS  [SHOULD MONITOR]
+--------------------------------------------------------------------------------
+These are the early-warning channel. Poll by SDO at 1-5 Hz, or map the important
+ones into a TPDO. Trend them; do not just alarm on them.
+
+    40A4h  Main power supply voltage    INT32?  1 = 0.1 V   [MUST]
+           >>> Log continuously. This is the evidence base for assessment
+           F-04 (stopping distance vs battery voltage) and F-05 (regen).
+           Watch for UPWARD spikes during braking — that is regen with nowhere
+           to go. Alarm well before the 63 V overvoltage trip; if you have
+           lowered the user overvoltage threshold below 60 V per F-05, alarm
+           below that.
+    40A3h  Inverter voltage             INT32?  1 = 0.1 V   [SHOULD]
+    409Bh  Main power supply current    INT32   1 = 0.001 A [SHOULD]
+           Negative values = regeneration. Directly measures the F-05 case.
+    407Ch  Driver temperature           INT16   1 = 0.1 C   [MUST]
+           Trips at 85 C. Alarm at 70 C. Feeds F-08 thermal survey.
+    407Dh  Motor temperature            INT16   1 = 0.1 C   [MUST]
+           Trips at 95 C. Alarm at 80 C. Feeds F-08.
+    406Bh  Torque monitor               INT?                [SHOULD]
+    406Ch  Load factor monitor          INT?                [SHOULD]
+           Rising load factor at constant duty = drivetrain drag, a dragging
+           brake, or a failing bearing. Good predictive signal.
+    406Dh  Cumulative load monitor      INT?                [USEFUL]
+    409Ch  Power consumption            INT?                [USEFUL]
+    409Dh  Energy consumption           INT?                [USEFUL]
+    409Eh  User energy consumption      INT?                [USEFUL] clearable
+    409Fh  Total energy consumption     INT?                [USEFUL]
+
+INFORMATION (warning) bits — these fire BEFORE the corresponding alarm:
+    407Bh  Present information / Information status 1   UINT32  ro  PDO-mappable
+Related R-OUT signals, several already assigned by default:
+    264  INFO-DRVTMP    driver temperature warning     (default R-OUT18)
+    265  INFO-MTRTMP    motor temperature warning      (default R-OUT19)
+    266  INFO-LOAD      load warning
+    267  INFO-TRQ       torque warning                 (default R-OUT20)
+    268  INFO-WATT      power warning                  (default R-OUT21)
+    272  INFO-VOLT-H    overvoltage warning            (default R-OUT22)
+    273? INFO-VOLT-L    undervoltage warning           (default R-OUT23)
+    262  INFO-MNT-G     maintenance group warning      (default R-OUT17)
+    135  INFO          any information active          (default R-OUT16)
+
+  >>> INFO-VOLT-H is your regen early warning. INFO-DRVTMP / INFO-MTRTMP are
+      your thermal early warning. These are the ones that let you act before a
+      trip removes the controlled deceleration path.
+
+
+5. TIER 4 — MOTION FEEDBACK  [SHOULD MONITOR]
+--------------------------------------------------------------------------------
+Useful for odometry cross-checks and for detecting wheel slip / brake drag.
+NOTE: this is the drive's own ABZO encoder — NOT safety rated, and it is on the
+motor shaft, upstream of the 1:30 gearhead. Do not confuse it with the SIL 3
+wheel encoders feeding the FX3.
+
+    606Ch  Velocity actual value        INT32   PDO   default in TPDO4
+    6064h  Position actual value        INT32   PDO   default in TPDO3
+    606Bh  Velocity demand value        INT32   PDO
+    6062h  Position demand value        INT32   PDO
+    6077h  Torque actual value          INT16   PDO
+    6074h  Torque demand                INT16   PDO
+    4073h  Position deviation           INT?          [SHOULD]
+    4075h  Speed deviation              INT?          [SHOULD]
+    4050h  Actual velocity (user unit)  INT32
+    404Dh  Actual position (user unit)  INT32
+    6061h  Modes of operation display   INT8    PDO   default in TPDO2
+
+  >>> HIGH-VALUE CROSS-CHECK: compare 606Ch (motor-side, /30 for wheel) against
+      the SIL 3 wheel encoder reading the FX3 sees. A persistent mismatch means
+      wheel slip, a slipping hollow-shaft coupling, or gear-train damage — the
+      exact failure mode assessment F-11 and F-13 require fault exclusion for.
+      This does not replace the fault exclusion, but it makes the failure
+      observable instead of silent. Strongly recommended.
+
+Odometry / life counters:
+    407Eh  Odometer                     UINT32  1 = 0.1 krev  (not clearable)
+    407Fh  Tripmeter 0                  UINT32  1 = 0.1 krev  (clearable, 40D7h)
+    407Ah  Tripmeter 1                  UINT32  1 = 0.1 krev  (clearable, 40D8h)
+    40A1h  Total uptime                 UINT32
+    40A9h  Continuous uptime            UINT32
+    40A2h  Number of boots              UINT32
+
+  >>> Use the odometer to drive the maintenance schedule: gear-train inspection,
+      brake capability test, and the 3-monthly STO verification (assessment
+      section 4.4). Log odometer at each test so the interval is evidenced.
+
+
+6. TIER 5 — COMMUNICATION HEALTH  [MUST MONITOR]
+--------------------------------------------------------------------------------
+    1017h  Producer heartbeat time      UINT16  ms   >>> ENABLE THIS <<<
+           Default is 0 (off). Set to e.g. 100-200 ms on each drive so the
+           Ubuntu PC can detect a dead or unplugged driver. Without it, a driver
+           that stops responding looks identical to one that is idle.
+           Heartbeat arrives on COB-ID 700h + Node-ID.
+
+    Alternative (do not use both): Node Guarding
+    100Ch  Guard time                   UINT16  ms
+    100Dh  Life time factor             UINT8
+           Node life time = guard time x life time factor.
+
+    4056h  Present communication error  — current comms error state
+    40AAh  RS-485 rx byte counter       [USEFUL] only if RS-485 also in use
+    40ABh  RS-485 tx byte counter       [USEFUL]
+
+    1000h  Device type
+    1008h  Manufacturer device name         }
+    1009h  Manufacturer hardware version    }  >>> READ AT STARTUP AND LOG.
+    100Ah  Manufacturer software version    }  Firmware version divergence
+    1018h  Identity object                  }  between the two drives is a real
+                                               risk — see assessment F-06.
+
+    NMT state is reported in the heartbeat/node-guard byte:
+        04h = Stopped, 05h = Operational, 7Fh = Pre-operational
+
+
+7. CONFIGURATION REQUIRED TO MAKE THIS WORK
+--------------------------------------------------------------------------------
+Nothing in Tier 1 works out of the box. Do these, identically on BOTH drives,
+and record them in the golden parameter file (assessment F-06).
+
+(a) Reassign the free remote output bits:
+        R-OUT26 output function = 252  (EDM-MON)
+        R-OUT27 output function = 253  (HWTOIN-MON)
+        R-OUT28 output function = 137  (ETO-MON)
+        R-OUT29 output function = 244  (MBC)
+
+(b) Enable heartbeat:
+        1017h Producer heartbeat time = 100 to 200 ms
+
+(c) Decide on "Occur alarm at HWTO input OFF" (default = 0 / Disable):
+        Set 1 (Enable) -> every protective stop raises alarm FF68h.
+          PRO: timestamped EMCY evidence of every STO event, which is exactly
+               what ISO 13849-2 validation and incident reconstruction want.
+          PRO: forces a deliberate alarm reset before running again, which
+               supports the ISO 3691-4 no-automatic-restart rule (F-17).
+          CON: adds a reset step to every protective-stop recovery. On a busy
+               route with frequent lidar slowdowns this costs throughput.
+        Set 0 (Disable) -> ETO-MON goes ON, no alarm, no EMCY.
+        >>> This is a risk-assessment decision, not a technical one. If your
+            protective stops are rare (true emergency only) enable it. If the
+            lidar trips often in normal operation, leave it disabled and rely
+            on 403Fh bit polling + TPDO event transmission instead.
+
+(d) TPDO mapping. Defaults are:
+        TPDO1 (180h+n): 6041h Statusword
+        TPDO2 (280h+n): 6041h Statusword + 6061h Modes of operation display
+        TPDO3 (380h+n): 6041h Statusword + 6064h Position actual value
+        TPDO4 (480h+n): 6041h Statusword + 606Ch Velocity actual value
+    Each TPDO takes up to 4 mapped objects. Suggested remap — keep TPDO4 for
+    motion, repurpose TPDO2 and TPDO3 for health:
+
+        TPDO2 -> 6041h Statusword (16b)
+               + 403Fh Driver output status (32b)     <-- Tier 1 bits
+               + 603Fh Error code (16b)
+          Transmission: event-driven or 20-50 ms cyclic.
+          This one frame carries the entire safety-adjacent picture.
+
+        TPDO3 -> 40A4h Main power supply voltage (32b)
+               + 407Ch Driver temperature (16b)
+               + 407Dh Motor temperature (16b)
+          Transmission: 200-500 ms cyclic. Slow-moving data.
+
+        TPDO4 -> 6041h Statusword + 606Ch Velocity actual value  (keep default)
+          Transmission: 10-20 ms cyclic for the odometry cross-check.
+
+    Mapping entry format for 1A0xh sub-indices:
+        bits 31..16 = Index,  bits 15..8 = Sub-index,  bits 7..0 = Length in BITS
+        e.g. 403Fh sub 00h, 32 bits  ->  403F 0020h
+             6041h sub 00h, 16 bits  ->  6041 0010h
+             40A4h sub 00h, 32 bits  ->  40A4 0020h
+
+(e) Bus loading sanity check at 500 kbps with 2 nodes: the above is roughly
+    2 x (TPDO2 @ 50ms + TPDO3 @ 500ms + TPDO4 @ 20ms + heartbeat @ 100ms)
+    — comfortably under 10% bus load. Leave headroom; do not poll aggressively
+    by SDO when a TPDO will do.
+
+
+8. *** WHAT THE UBUNTU PC MUST NOT BE ABLE TO DO OVER CAN ***
+--------------------------------------------------------------------------------
+This is the most important section in this file. CANopen is bidirectional. The
+navigation PC has WRITE access to objects that can defeat safety behaviour.
+
+  !!! 403Eh  Driver input command  —  bit 6 is FREE by DEFAULT !!!
+      Remote input default map: R-IN0=S-ON, R-IN1=PLOOP-MODE, R-IN2=TRQ-LMT,
+      R-IN3=CLR, R-IN4=QSTOP, R-IN5=STOP, R-IN6=FREE, R-IN7=ALM-RST, ...
+      Writing bit 6 of 403Eh RELEASES THE HOLDING BRAKE and de-excites the
+      motor. A single CAN write from the navigation PC — a bug, a stale frame,
+      a bad mask — releases the brakes on BOTH drive wheels with 600 kg behind
+      the hitch. See assessment F-03.
+
+      ACTIONS:
+        1. Reassign R-IN6 to an unused function so FREE is not reachable at all.
+           This is the clean fix. Do it.
+        2. Mask bit 6 in the vehicle controller's CAN output path and assert it
+           in code review. Belt and braces.
+        3. Add FREE to the documented forbidden-command list.
+
+  !!! 40D0h  Clear ETO !!!
+      Writing this clears the ETO status and re-excites the motor. If the
+      navigation PC calls it automatically after a protective field clears,
+      you have built an automatic restart — prohibited by ISO 3691-4.
+      See assessment F-17. Drive it only from a deliberate operator
+      acknowledgment, never from an automatic sequence.
+
+  !!! 40C0h  Alarm reset  /  6040h bit 7 (Fault reset) !!!
+      Same hazard. Never auto-reset alarms. An alarm that clears itself is an
+      alarm you never learn about, and repeated auto-reset of e.g. FF22h
+      overvoltage will hide a real regen problem until it becomes a stoppage.
+
+  !!! 1010h  Store parameters  /  1011h  Restore default parameters !!!
+      1011h wipes the configuration back to factory — including the R-OUT
+      assignments above and the safety-relevant stop parameters. Nothing in
+      normal operation should ever write these. Restrict to a maintenance tool.
+
+  !!! 40C6h  Configuration  /  any parameter write !!!
+      Writing Quick stop rate, QSTOP input action, ETO reset action, or the
+      overvoltage user setting from the navigation PC creates exactly the
+      left/right divergence risk in assessment F-06. Parameters are changed by
+      a controlled maintenance procedure, not by the nav stack.
+
+  RECOMMENDED POSTURE:
+      Run the navigation PC's CANopen stack in a READ-MOSTLY mode. Permit only
+      the writes the drive genuinely needs for motion (6040h controlword,
+      target velocity, and the operational objects for your chosen mode).
+      Everything else — 403Eh bit 6, 40D0h, 40C0h, 1010h, 1011h, 40C6h, all
+      parameter indices — goes on an explicit deny-list enforced in code, with
+      a unit test. Document the list; an assessor will ask.
+
+
+9. SUGGESTED LOGGING POLICY
+--------------------------------------------------------------------------------
+For a defensible ISO 3691-4 evidence trail, log with monotonic timestamps:
+
+  ALWAYS, every sample:
+      403Fh bits (EDM-MON, HWTOIN-MON, ETO-MON, MBC, ALM-A, SON-MON)
+      6041h statusword (esp. bit 11 ILA = QSTOP/STOP landed)
+      606Ch velocity actual
+      40A4h bus voltage
+  ON EVENT:
+      every EMCY frame, verbatim, both drives
+      every heartbeat loss
+      every HWTOIN/EDM discrepancy
+  PERIODIC (1 Hz is plenty):
+      407Ch / 407Dh temperatures, 406Ch load factor, 409Bh current
+  AT STARTUP:
+      1008h/1009h/100Ah/1018h identity + firmware, both drives
+      full parameter read-back and compare against golden file (F-06)
+
+  RETENTION: keep enough history to reconstruct any incident — at minimum a
+  rolling window covering the longest plausible gap before someone reports a
+  near-miss. A ring buffer flushed to disk on any EMCY or STO event is the
+  usual pattern and is cheap.
+
+  >>> A logged trace showing "lidar tripped -> ILA set -> velocity ramped down
+      -> HWTOIN/EDM went active -> MBC dropped -> velocity zero" is exactly the
+      evidence an assessor wants for the SS1 function. Build the logging so you
+      can produce that trace on demand. It is worth more than any amount of
+      prose in the technical file.
+
+
+10. CROSS-REFERENCE TO COMPLIANCE FINDINGS
+--------------------------------------------------------------------------------
+  F-03  brake released by FREE          -> section 8, disable R-IN6
+  F-04  stopping distance vs voltage    -> 40A4h logging, INFO-VOLT-L, FF25h
+  F-05  regen / ELV breach              -> 40A4h spikes, 409Bh negative current,
+                                           INFO-VOLT-H, FF22h
+  F-06  left/right config divergence    -> startup parameter read-back compare,
+                                           firmware version check, FF41h
+  F-07  no brake wear detection         -> FF50h, FF55h, MBC vs measured motion
+  F-08  thermal margins                 -> 407Ch, 407Dh, INFO-DRVTMP/MTRTMP,
+                                           FF21h, FF26h
+  F-09  STO wiring integrity            -> FF53h, HWTOIN/EDM discrepancy check
+  F-11  gearbox fault exclusion         -> 606Ch vs SIL3 wheel encoder cross-check,
+                                           FF10h position deviation
+  F-13  single brake, all duties        -> MBC + motion cross-check
+  F-15  ISO 13849-2 validation evidence -> the logging policy in section 9
+  F-17  automatic restart               -> section 8, 40D0h / 40C0h discipline
+
+
+11. OPEN ITEMS TO CONFIRM
+--------------------------------------------------------------------------------
+  - Exact bit positions in 403Fh after you reassign R-OUT26..29. Verify by
+    inspection on the bench, do not assume — read the word with the drive in
+    each of the four HWTO states and record the observed bit pattern.
+  - Data types marked "INT?" above are not stated unambiguously in the extracted
+    manual text. Confirm each against the object dictionary summary table before
+    writing the decoder.
+  - Whether INFO-VOLT-L is signal number 273 (inferred from the R-OUT23 default
+    and the sequence around 272 INFO-VOLT-H). Confirm in the output signals list
+    on p.156-161 of the Function Edition before relying on it.
+  - Whether your CANopen stack (python-canopen, CANopenNode, ROS 2 canopen_core,
+    etc.) handles the SDO abort 0800 0024h from 1003h sub 01h gracefully when no
+    error is present. Test it — it is a common source of spurious bus alarms.
+  - Confirm the EDS/DCF file from Oriental Motor matches this firmware revision.
+
+================================================================================
+END. CAN is for knowing what happened. The FX3 is for making it stop.
+================================================================================

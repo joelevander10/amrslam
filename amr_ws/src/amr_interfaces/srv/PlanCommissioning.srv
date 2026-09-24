@@ -1,0 +1,6 @@
+# Upload (validate and hold) a blind-run plan. Moves nothing (unified plan §7.2).
+string plan_json          # {"segments": [...], "speed": {"speed_mps": 0.1}}
+---
+bool ok
+string message
+string planned_json       # the validated plan with per-wheel count targets

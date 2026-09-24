@@ -1,0 +1,13 @@
+# Ask the supervisor for IDLE or NAVIGATION (unified plan §5.3, §5.6).
+# Immediate accepted/rejected; completion is asynchronous (OperationState).
+# MAPPING is entered through RequestSurvey START, never here.
+string request_id           # client-generated; a duplicate returns the existing operation
+string expected_instance    # must match the running supervisor
+uint32 expected_generation  # must match the current generation
+uint8 target                # ModeState.IDLE or ModeState.NAVIGATION
+string map_id               # NAVIGATION: plain id, validated against the store
+uint32 map_revision         # NAVIGATION: exact revision (>0)
+---
+bool accepted
+string operation_id
+string message

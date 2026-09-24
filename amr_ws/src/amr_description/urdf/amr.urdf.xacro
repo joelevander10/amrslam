@@ -1,0 +1,119 @@
+<?xml version="1.0"?>
+<!--
+  Minimal AMR description: TF tree and footprint, not simulation fidelity
+  (architecture §5, §11). Frame strings are spec §2.3 exactly.
+
+  Conventions: base_link at the centre of the drive axle, x forward, z up
+  (REP 103). base_footprint is base_link projected to the floor.
+
+  Values marked MEASURE are placeholders (spec §0.1): override them with xacro
+  args from launch, and fix the defaults here once measured on the vehicle.
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="amr">
+
+  <!-- Measured, from profiles/agv-01.json (reconciliation §1) -->
+  <xacro:arg name="wheel_radius" default="0.09"/>   <!-- wheel_dia_m 0.18 / 2 -->
+  <xacro:arg name="track_width"  default="0.487"/>  <!-- measured 2026-09-15; profile track_m says 0.486 -->
+  <xacro:arg name="wheel_width"  default="0.05"/>   <!-- MEASURE, visual only -->
+
+  <!-- Chassis box, centred on base_link in y; x offset lets the axle sit off-centre -->
+  <xacro:arg name="chassis_length" default="1.00"/> <!-- MEASURE -->
+  <xacro:arg name="chassis_width"  default="0.60"/> <!-- MEASURE -->
+  <xacro:arg name="chassis_height" default="0.30"/> <!-- MEASURE -->
+  <xacro:arg name="chassis_x"      default="0.00"/> <!-- MEASURE: chassis centre ahead of axle -->
+  <xacro:arg name="chassis_z"      default="0.05"/> <!-- MEASURE: chassis underside above axle -->
+
+  <!-- nanoScan3 optical centre relative to base_link (measured 2026-09-15):
+       0.964 m ahead of the axle, scan plane 0.110 m above the floor, so
+       z = 0.110 - wheel_radius. yaw 0 = scanner forward axis along +x.
+       Verified on the vehicle 2026-09-16 (T10): a box 2.00 m ahead by tape
+       read 2.014 m at 0 deg (std 1.2 mm); a box 1.20 m to the left appeared
+       at +y. No yaw or mirror error at grid resolution; lateral offset taken
+       as 0 (not tape-measured, unobservable below ~5 cm at this range). -->
+  <xacro:arg name="laser_x"   default="0.964"/>
+  <xacro:arg name="laser_y"   default="0.00"/>  <!-- verified on centreline 2026-09-16 -->
+  <xacro:arg name="laser_z"   default="0.020"/>
+  <xacro:arg name="laser_yaw" default="0.0"/>   <!-- verified 2026-09-16, rad -->
+
+  <!-- IMU inside the SICK MLS, 0.092 m ahead of the axle (measured 2026-09-15).
+       Lateral/vertical position inside the MLS housing not confirmed: VERIFY
+       against the SICK MLS documentation (D-3 gives (89.1, 2.5, -9.4) mm from
+       the LED edge) before any accelerometer use. Yaw rate is unaffected. -->
+  <xacro:arg name="imu_x" default="0.092"/>
+  <xacro:arg name="imu_y" default="0.0"/>    <!-- VERIFY -->
+  <xacro:arg name="imu_z" default="0.0"/>    <!-- VERIFY -->
+
+  <xacro:property name="wheel_radius" value="$(arg wheel_radius)"/>
+  <xacro:property name="track_width"  value="$(arg track_width)"/>
+  <xacro:property name="wheel_width"  value="$(arg wheel_width)"/>
+
+  <material name="grey"><color rgba="0.6 0.6 0.6 1"/></material>
+  <material name="dark"><color rgba="0.2 0.2 0.2 1"/></material>
+  <material name="orange"><color rgba="1.0 0.5 0.0 1"/></material>
+
+  <!-- base_footprint: z = 0 projection, parent of base_link (spec §2.3) -->
+  <link name="base_footprint"/>
+
+  <joint name="base_footprint_joint" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+    <origin xyz="0 0 ${wheel_radius}" rpy="0 0 0"/>
+  </joint>
+
+  <link name="base_link">
+    <visual>
+      <origin xyz="$(arg chassis_x) 0 ${$(arg chassis_z) + $(arg chassis_height) / 2}" rpy="0 0 0"/>
+      <geometry>
+        <box size="$(arg chassis_length) $(arg chassis_width) $(arg chassis_height)"/>
+      </geometry>
+      <material name="grey"/>
+    </visual>
+  </link>
+
+  <!-- Wheels: fixed joints, visualisation only (architecture §5). No joint_states needed. -->
+  <xacro:macro name="wheel" params="side y">
+    <link name="wheel_${side}">
+      <visual>
+        <origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
+        <geometry>
+          <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+        </geometry>
+        <material name="dark"/>
+      </visual>
+    </link>
+    <joint name="wheel_${side}_joint" type="fixed">
+      <parent link="base_link"/>
+      <child link="wheel_${side}"/>
+      <origin xyz="0 ${y} 0" rpy="0 0 0"/>
+    </joint>
+  </xacro:macro>
+  <xacro:wheel side="left"  y="${ track_width / 2}"/>
+  <xacro:wheel side="right" y="${-track_width / 2}"/>
+
+  <!-- nanoScan3 -->
+  <link name="laser_frame">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.05" length="0.08"/>
+      </geometry>
+      <material name="orange"/>
+    </visual>
+  </link>
+  <joint name="laser_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="laser_frame"/>
+    <origin xyz="$(arg laser_x) $(arg laser_y) $(arg laser_z)" rpy="0 0 $(arg laser_yaw)"/>
+  </joint>
+
+  <!-- IMU in the MLS -->
+  <link name="imu_frame"/>
+  <joint name="imu_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="imu_frame"/>
+    <origin xyz="$(arg imu_x) $(arg imu_y) $(arg imu_z)" rpy="0 0 0"/>
+  </joint>
+
+  <!-- floor_cam_frame (spec §2.3) is deliberately absent: no camera on this vehicle (D-4). -->
+
+</robot>

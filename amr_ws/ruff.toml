@@ -1,0 +1,15 @@
+line-length = 110
+target-version = "py310"
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[lint.isort]
+known-first-party = ["amr_base", "amr_sim", "amr_interfaces", "amr_description", "amr_bringup"]
+# Repo-root modules (config, drivers/canbus/...) are bare imports that only
+# resolve after amr_base.agv_repo has put the layer dirs on sys.path, so they
+# must sort AFTER the first-party block, never before it.
+section-order = ["future", "standard-library", "third-party", "first-party", "agv-repo", "local-folder"]
+
+[lint.isort.sections]
+"agv-repo" = ["config", "kinematics", "guard", "rpdo", "read_imu", "read_mls", "alarms", "bus_health", "drive_forward", "verify_drivers", "panel", "dio", "events", "health", "rfid", "lidarframe", "canmon", "motion", "ownerlock", "blindrun"]

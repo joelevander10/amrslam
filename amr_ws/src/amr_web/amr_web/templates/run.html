@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}AMR — run{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block body %}
+<section class="editor">
+  <aside class="tools">
+    <h2>Vehicle map <small>navigation layer</small></h2>
+    <div id="active-map" class="tel-grid"></div>
+    <label class="field">View / activate <select id="run-map"></select></label>
+    <div class="bar">
+      <button id="btn-activate" class="big run">Use this map on the vehicle</button>
+      <button id="btn-idle" class="big">Return to idle</button>
+    </div>
+    <p class="note">Selecting only changes the picture. <b>Use this map</b> replaces the navigation software on that exact revision (vehicle stopped, selector MANUAL) and does not move anything.</p>
+    <div class="sep"></div>
+    <h2>Localisation <small>AMCL · monitor</small></h2>
+    <div id="loc-state" class="tel-grid"></div>
+    <div id="loc-detail" class="tel-grid" style="margin-top:8px"></div>
+    <p id="loc-reason" class="note"></p>
+    <div class="bar">
+      <button id="tool-initialpose" class="tool">Set initial pose on map</button>
+      <button id="btn-pose-survey" class="tool" title="Seed the initial pose at the map's survey start mark (position and heading)">Initial pose = survey mark</button>
+    </div>
+    <div class="bar">
+      <button id="btn-loc-confirm" class="big run">Confirm: scans align</button>
+      <button id="btn-loc-reset" class="big">Reset</button>
+    </div>
+    <div class="sep"></div>
+    <h3>Jog <small>selector MANUAL</small></h3>
+    <div id="jog-run"></div>
+    <div class="sep"></div>
+    <h2>Mission <small>route executor</small></h2>
+    <label class="field">Mission <select id="run-mission"></select></label>
+    <div class="bar"><button id="btn-run-load" class="big run">Load (READY)</button></div>
+    <div id="run-state" class="tel-grid" style="margin-top:12px"></div>
+    <p id="run-reason" class="note"></p>
+    <div class="warn-box" style="margin-top:12px"><b>Motion starts only from the physical panel</b>: selector AUTO, then Start. Pause / abort / prepare-resume below; Start confirms a prepared resume.</div>
+    <div class="bar">
+      <button id="btn-run-pause" class="big">Pause</button>
+      <button id="btn-run-resume" class="big">Prepare resume</button>
+      <button id="btn-run-abort" class="danger">Abort</button>
+      <button id="btn-run-ack" class="big">Acknowledge fault</button>
+    </div>
+  </aside>
+  <div class="canvas-wrap">
+    <canvas id="run-canvas" width="900" height="600"></canvas>
+    <div id="run-hint" class="hint">Wheel = zoom, drag = pan, double-click = fit. Initial pose: click the position, drag towards the heading, release.</div>
+  </div>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/mapview.js"></script><script src="/static/liveview.js"></script><script src="/static/jogpad.js"></script><script src="/static/run.js"></script>{% endblock %}

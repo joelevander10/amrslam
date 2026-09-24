@@ -1,0 +1,31 @@
+# sick_safetyscanners2 for the AMR QR's nanoScan3 (profile amr-qr-01).
+#
+# VERIFY every address: the QR controller ran the ROS 1 sick_safetyscanners driver and
+# the vehicle's lidar subnet is not documented here. The GLS621 sits on 192.168.3.1 on
+# the QR, so keep the scanner and the host off that address. See nanoscan3.yaml (gvievo-01)
+# for what each key does; only the values that are vehicle-specific differ.
+sick_safetyscanners2_node:
+  ros__parameters:
+    frame_id: "laser_frame"
+    sensor_ip: "192.168.3.10"        # VERIFY (SICK Safety Designer / the QR's ROS 1 launch)
+    host_ip: "192.168.3.2"           # VERIFY: this PC's address on the lidar port
+    interface_ip: "0.0.0.0"
+    host_udp_port: 6060
+    channel: 0
+    channel_enabled: true
+    skip: 0
+    # VERIFY on the vehicle. The QR controller watched 100..140 deg of the ROS 1 driver's
+    # scan as "ahead", so that driver's angle origin was NOT the scanner's forward axis;
+    # sick_safetyscanners2 publishes 0 = forward (verified on gvievo-01). Start with the
+    # front half-plane and widen only after checking that no beam hits the body:
+    # the lidar is near the front, so beams towards the rear see the vehicle itself.
+    angle_start: -1.658
+    angle_end: 1.658
+    time_offset: 0.0
+    general_system_state: true
+    derived_settings: true
+    measurement_data: true
+    intrusion_data: true
+    application_io_data: true
+    use_persistent_config: false
+    min_intensities: 0.0

@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}AMR — map review{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block body %}
+<section class="editor">
+  <aside class="tools">
+    <h2>Map review <small>dynamic areas · cleanup</small></h2>
+    <label class="field">Map <select id="rv-map"></select></label>
+    <div id="rv-info" class="tel-grid" style="margin-top:8px"></div>
+    <p class="note">Saving creates a <b>new revision</b>; this one stays as it is. Routes are saved per revision: load them in Routes on the new revision and save them again.</p>
+    <div class="sep"></div>
+    <h3>Draw <small>drag a rectangle</small></h3>
+    <div class="bar" style="margin-top:0">
+      <button id="tool-dynamic" class="tool" title="The scan here may change: trolleys, parked forklifts, pallets. Routes may cross it; a return there stops the run.">Dynamic area</button>
+      <button id="tool-undynamic" class="tool" title="Remove the dynamic mark from the cells in the rectangle">Clear dynamic</button>
+    </div>
+    <div class="bar">
+      <button id="tool-unknown" class="tool" title="Safe erase: the cells become unknown, which blocks routes unless they are in a dynamic area">Erase to unknown</button>
+      <button id="tool-free" class="tool" title="Operator assertion: you know this is open floor">Paint free</button>
+    </div>
+    <p id="rv-tool-note" class="note"></p>
+    <div class="bar">
+      <button id="btn-rv-undo" class="tool">Undo</button><button id="btn-rv-redo" class="tool">Redo</button><button id="btn-rv-clear" class="danger">Clear edits</button>
+    </div>
+    <div class="sep"></div>
+    <h3>Pending edits</h3>
+    <div id="rv-ops" class="list"><div class="none">no edits</div></div>
+    <label class="field" style="margin-top:12px">Note <input id="rv-note" placeholder="trolleys along rack C marked dynamic"></label>
+    <div class="bar"><button id="btn-rv-save" class="big run">Save as new revision</button></div>
+    <p id="rv-msg" class="note"></p>
+  </aside>
+  <div class="canvas-wrap">
+    <canvas id="rv-canvas" width="900" height="600"></canvas>
+    <div id="rv-hint" class="hint">Pick a tool, then drag a rectangle with the left button. Right-drag = pan, wheel = zoom, double-click = fit. Hatched yellow = dynamic areas already in this revision.</div>
+  </div>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/mapview.js"></script><script src="/static/review.js"></script>{% endblock %}

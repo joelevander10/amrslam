@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}AMR — I/O{% endblock %}
+{% block body %}
+<p class="note">The DIO island's image as its owner (panel_node) reports it. Outputs show <b>requested</b> (what this software is claiming) and <b>readback</b> (what the module says its coil is) separately. Nothing on this page writes an output.</p>
+<div id="io-lost" class="warn-box stop" hidden><b>COMMS LOST</b> — lamps are last known, not current.</div>
+<section>
+  <h2>Link <small>panel_node · modbus</small></h2>
+  <div id="io-link" class="tel-grid"></div>
+  <p id="io-detail" class="note"></p>
+</section>
+<section id="io-lists" class="cols">
+  <div><h2>Inputs <small>DI</small></h2><div id="di" class="io-list"><div class="none">no I/O image</div></div></div>
+  <div><h2>Outputs <small>DO · req / read</small></h2><div id="do" class="io-list"><div class="none">no I/O image</div></div></div>
+</section>
+{% endblock %}
+{% block scripts %}<script>
+const lamp = (on, cls) => `<span class="lamp ${cls || ''} ${on ? 'on' : ''}" title="${on ? 'on' : 'off'}"></span>`;
+const ch = (p, i) => `${p}${String(i).padStart(2, '0')}`;
+async function tick() {
+  const { status, data } = await apiGet('/api/io');
+  if (status === 200 && data) {
+    const stale = !data.comms_ok || data.age_s > 1.0;
+    document.getElementById('io-lost').hidden = !stale;
+    document.getElementById('io-lists').classList.toggle('stale-block', stale);
+    document.getElementById('di').innerHTML = data.di.map((v, i) =>
+      `<div class="io-row"><span class="io-ch">${ch('DI', i)}</span>${lamp(v)}<span class="io-name">${esc(data.di_names[i])}</span></div>`).join('');
+    document.getElementById('do').innerHTML = '<div class="io-row do head"><span></span><span>req</span><span>read</span><span></span></div>' +
+      data.do_readback.map((v, i) =>
+        `<div class="io-row do"><span class="io-ch">${ch('DO', i)}</span>${lamp(data.do_requested[i], 'do')}${lamp(v, 'do')}<span class="io-name">${esc(data.do_names[i])}</span></div>`).join('');
+    tiles('io-link', [
+      ['Comms', data.comms_ok ? 'OK' : 'LOST', '—', data.comms_ok ? '' : 'bad'],
+      ['Image age', num(data.age_s, 2), 's', data.age_s > 1.0 ? 'bad' : ''],
+      ['Scan age', num(data.rx_age_s, 2), 's'],
+      ['Scans', String(data.scans), 'count'],
+      ['Errors', String(data.errors), 'count', data.errors ? 'warn' : ''],
+      ['Writes', String(data.writes), 'count'],
+    ]);
+    document.getElementById('io-detail').textContent = data.detail || '';
+  } else if (status === 200) {
+    document.getElementById('io-lost').hidden = false;
+    tiles('io-link', [['Comms', '–', 'no I/O image (panel_node not running?)', 'bad']]);
+  }
+  setTimeout(tick, 250);
+}
+tick();
+</script>{% endblock %}

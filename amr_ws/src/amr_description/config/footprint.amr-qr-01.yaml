@@ -1,0 +1,13 @@
+# Collision footprint of the AMR QR (profile amr-qr-01) in base_footprint (axle centre,
+# x forward), metres. Read by route validation and injected into the Nav2 local costmap.
+#
+# 1.18 x 0.675 m body. The axle position along the body is NOT specified: the body is
+# assumed to end 0.05 m ahead of the lidar (0.81 m ahead of the axle), so x runs
+# -0.32 .. +0.86 (MEASURE the real front and rear overhang, protrusions and load,
+# and keep vehicle.amr-qr-01.yaml's chassis_x in step).
+polygon:
+  - [-0.32, -0.3375]
+  - [ 0.86, -0.3375]
+  - [ 0.86,  0.3375]
+  - [-0.32,  0.3375]
+margin_m: 0.05

@@ -1,0 +1,150 @@
+# verify bus
+connected via socketcan:can0
+
+[1] passive listen, 5 s
+    (silent)
+    note: CANopen devices do not send PDOs in Pre-operational,
+          and the drivers have heartbeat disabled (1017h = 0).
+
+[2] scanning Node-IDs 1..127 (SDO read of 1000h)
+    node   1: device type 0x00020192   (2.42 ms) [ok]
+    node   2: device type 0x00020192   (2.35 ms) [ok]
+    node  10: abort 0x05000000   (2.28 ms) [ok]
+
+[3] identity
+  node 1 (left driver):
+    device type   0x00020192  OK (expected 0x00020192)
+    vendor ID     0x000002BE
+    product code  0x000013F7
+    revision      -
+    serial number -
+    device name
+  node 2 (right driver):
+    device type   0x00020192  OK (expected 0x00020192)
+    vendor ID     0x000002BE
+    product code  0x000013F7
+    revision      -
+    serial number -
+    device name
+  node 10 (SICK MLS):
+    vendor ID     0x01000056
+    product code  0x00001100
+    revision      0x00000007
+    serial number 0x018E8F7E
+    device name
+
+[4] verdict
+    node   1  left driver    OK
+    node   2  right driver   OK
+    node  10  SICK MLS       OK
+
+    OK: all three nodes present, no collisions.
+
+# verify drivers
+connected via socketcan:can0
+
+[1] passive listen, 2 s (silence is EXPECTED - heartbeat 1017h defaults to 0)
+    (silent)
+
+[2] scanning Node-IDs 1..16 via SDO read of 1000h
+    node   1: responded  device type 0x00020192   [ok]
+    node   2: responded  device type 0x00020192   [ok]
+    node  10: responded  device type abort 0x05000000   [ok]
+    found: [1, 2, 10]
+
+[3] identity check
+  node 1 (left driver):
+    device type   0x00020192  OK (expected 0x00020192)
+    vendor ID     0x000002BE
+    product code  0x000013F7
+    revision      abort 0x06090011
+    serial number abort 0x06090011
+  node 2 (right driver):
+    device type   0x00020192  OK (expected 0x00020192)
+    vendor ID     0x000002BE
+    product code  0x000013F7
+    revision      abort 0x06090011
+    serial number abort 0x06090011
+
+[4] verdict
+    WARN: unexpected Node-IDs present: [10]
+
+# bus health
+connected via socketcan:can0
+
+[1] driver diagnostics
+  node 1 (left):
+    error register   0x00  OK
+    statusword       0x1A50  (Switch on disabled)
+    current mode     3 (pv)
+    supported modes  0x0000002D -> pp (profile position), pv (profile velocity), tq (torque), hm (homing)
+    heartbeat 1017h  0 ms  (disabled)
+  node 2 (right):
+    error register   0x00  OK
+    statusword       0x1A50  (Switch on disabled)
+    current mode     3 (pv)
+    supported modes  0x0000002D -> pp (profile position), pv (profile velocity), tq (torque), hm (homing)
+    heartbeat 1017h  0 ms  (disabled)
+
+[2] bus integrity soak: 400 SDO reads, alternating nodes
+    completed        400/400  (100.00%) in 5.0s
+    latency  min     2.12 ms
+             median  2.21 ms
+             p95     2.35 ms
+             max     2.44 ms
+
+[3] verdict
+    OK: 400/400 transfers, zero errors. Termination and wiring look sound.
+
+# read mls (no magnetic track present)
+connected via socketcan:can0
+
+[1] identity (node 10)
+    order number   1104468
+    vendor ID      0x01000056
+    product code   0x00001100
+    revision       0x00000007
+    serial number  0x018E8F7E
+
+[2] configuration
+    2006h:01 variant TPDO1   3 (Standard enhanced) -> track data Standard (INT16)
+    2025h min. level         300 digits
+    2026h zero offset        0 mm
+    2027h sensor flipped     0
+    2028h:01 use markers     0
+    2028h:02 marker style    0
+    1800h TPDO1              COB-ID 0x18A OK enabled, type 0xFF, event timer 10 ms
+
+[3] live measurement
+    2024h field level        154 (0.12 mT)   <-- below min. level 300, no track will be reported
+    2021h:0B line level 1       +0 (+0.00 mT)
+    2021h:0C line level 2       +0 (+0.00 mT)
+    2021h:0D line level 3       +0 (+0.00 mT)
+
+    #LCP 0 - no track
+    -- no track --                                 -- lvl 0 north
+
+# drive forward
+
+gvipc-evo-01@gvipc-evo-01:~/agv_can$ python3 drive_forward.py --go
+connected via socketcan:can0
+
+[1] preflight
+    node 1 (left): error reg 0x00, statusword 0x1A50 (Switch on disabled)
+    node 2 (right): error reg 0x00, statusword 0x1A50 (Switch on disabled)
+
+[2] arming (target velocity held at 0)
+    NMT: all nodes -> Operational
+    node 1 (left): 0x1737 (Operation enabled) OK
+    node 2 (right): 0x1737 (Operation enabled) OK
+
+[3] ramping to 160 r/min at 400 (r/min)/s, holding 2 s
+    t=  0.0s   left      3 rpm   right      8 rpm
+    t=  1.1s   left    159 rpm   right    159 rpm
+    t=  2.1s   left    159 rpm   right    162 rpm
+    hold complete (2 s)
+
+[4] OK: run completed normally
+
+[stop] ramping down
+    motors de-energised.

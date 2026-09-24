@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}AMR{% endblock %}</title>
+<link rel="stylesheet" href="/static/amr.css">
+</head>
+<body>
+<header>
+  <h1>AMR control</h1>
+  <nav>
+    <a href="/status" class="{{ 'on' if page == 'status' }}">Status</a>
+    <a href="/manual" class="{{ 'on' if page == 'manual' }}">Manual</a>
+    <a href="/maps"   class="{{ 'on' if page == 'maps' }}">Maps</a>
+    <a href="/editor" class="{{ 'on' if page == 'editor' }}">Routes</a>
+    <a href="/run"    class="{{ 'on' if page == 'run' }}">Run</a>
+    <a href="/monitor" class="{{ 'on' if page == 'monitor' }}">Monitor</a>
+    <a href="/io"     class="{{ 'on' if page == 'io' }}">I/O</a>
+    <a href="/alarms" class="{{ 'on' if page == 'alarms' }}">Alarms</a>
+    <a href="/params" class="{{ 'on' if page == 'params' }}">Params</a>
+    <a href="/commissioning" class="{{ 'on' if page == 'commissioning' }}">Commission</a>
+  </nav>
+  <span id="pill-link" class="pill">connecting…</span>
+  <span id="wifi" class="wifi" title="Wi-Fi link"><i class="bars"><b></b><b></b><b></b><b></b></i><span id="wifi-text">–</span></span>
+  <span id="net" class="net" title="Internet, as the robot sees it (rechecked every 4 s)"><i></i><span id="net-text">NET</span></span>
+</header>
+
+<div class="shell">
+  {# The shared rail: what somebody standing next to the vehicle needs on every
+     page. Every tile says "–" until the first poll; a failed poll dims them all. #}
+  <aside id="telemetry" class="stale">
+    <div class="tel-grid">
+      <div class="tel" id="tel-mode"><span>Mode</span><b>–</b><i>—</i></div>
+      <div class="tel" id="tel-selector"><span>Selector</span><b>–</b><i>—</i></div>
+      <div class="tel" id="tel-drives"><span>Drives</span><b>–</b><i>—</i></div>
+      <div class="tel" id="tel-source"><span>Command</span><b>–</b><i>—</i></div>
+      <div class="tel" id="tel-loc"><span>Localisation</span><b>–</b><i>—</i></div>
+      <div class="tel" id="tel-run"><span>Run</span><b>–</b><i>—</i></div>
+      <div class="tel" id="tel-wheels"><span>Wheels</span><b>–</b><i>rad/s · L / R</i></div>
+      <div class="tel" id="tel-gen"><span>Generation</span><b>–</b><i>—</i></div>
+    </div>
+    <pre id="log"></pre>
+  </aside>
+  <main class="{% block main_class %}{% endblock %}">{% block body %}{% endblock %}</main>
+</div>
+<script src="/static/amr.js"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

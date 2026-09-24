@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}AGV — manual{% endblock %}
+{% block body %}
+
+<div id="panel-strip" class="panel-strip" hidden>
+  <b>Panel</b>
+  <span>selector <b id="pn-sel">–</b></span>
+  <span>last <b id="pn-act">–</b></span>
+  <span id="pn-fault" class="pn-fault" hidden></span>
+</div>
+
+<div class="bar">
+  <button id="disarm" class="big off">DISARM</button>
+  <span class="hint"><b>Arm at the panel</b> — selector to MANUAL, press Reset.
+        The arrows stay greyed until then.</span>
+  <span class="hint">Hold a button or key to drive. Release to stop.
+        Released for {{ watchdog_ms }} ms &rarr; the AGV stops itself.</span>
+</div>
+
+{# The magnetic-tape strip used to sit above this. It went with tape following;
+   the MLS hardware stays installed because the IMU lives inside it, and that is
+   read on a bench by drivers/canbus/read_imu.py rather than by this page.
+
+   The reader is here because recording a tag means jogging the AGV over it by
+   hand, which happens on the page with the arrows. The value persists after
+   the vehicle has rolled past - see showRfid() in common.js. #}
+<section class="sensor pad-width">
+  <h2>Station tags <small>RFID reader &middot; {{ rfid_ip }}</small></h2>
+  <div class="rfid-grid">
+    <div class="tel tag"><span>RFID tag</span><b id="r-tag">&ndash;</b><i id="r-age">&mdash;</i></div>
+    <div class="rfid-side">
+      <div class="tel"><span>Link</span><b id="r-link">off</b><i id="r-detail">&mdash;</i></div>
+      <div class="tel"><span>Tags read</span><b id="r-count">0</b><i>this session</i></div>
+    </div>
+  </div>
+</section>
+
+<div class="pad" id="pad">
+{% for d in pad %}
+  <button class="dir {{ 'stopbtn' if d == 'stop' }}" data-dir="{{ d }}"
+          title="{{ labels[d] }} — {{ keymap[d] }}">
+    <span class="glyph">{{ glyphs[d] }}</span>
+    <span class="name">{{ labels[d] }}</span>
+    <span class="key">{{ keymap[d] }}</span>
+  </button>
+{% endfor %}
+</div>
+
+<p class="legend keys">
+  <b>Arrows</b> — <kbd>&uarr;</kbd> forward · <kbd>&darr;</kbd> reverse ·
+  <kbd>&larr;</kbd>/<kbd>&rarr;</kbd> spin on the spot.
+  Hold <b>two</b> for an in-between: <kbd>&uarr;</kbd>+<kbd>&larr;</kbd> fwd-left,
+  <kbd>&uarr;</kbd>+<kbd>&rarr;</kbd> fwd-right,
+  <kbd>&darr;</kbd>+<kbd>&larr;</kbd> rev-left,
+  <kbd>&darr;</kbd>+<kbd>&rarr;</kbd> rev-right.
+  Opposites cancel (<kbd>&uarr;</kbd>+<kbd>&darr;</kbd> = stop);
+  <kbd>Space</kbd> stops everything.
+</p>
+{% endblock %}
+
+{% block script %}
+<script>window.WATCHDOG_MS = {{ watchdog_ms }};</script>
+<script src="{{ url_for('static', filename='manual.js') }}"></script>
+{% endblock %}

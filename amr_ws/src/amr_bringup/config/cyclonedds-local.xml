@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- Loopback-only DDS for this host (spec §9, "DDS interface scope").
+     Nothing off the vehicle can join its ROS graph, and a simulation run on
+     this host cannot leak onto the LAN either. Foxglove talks to
+     foxglove_bridge over WebSocket (:8765), not DDS, so it is unaffected.
+     To let a laptop join deliberately, copy this file, bind wlp1s0 instead,
+     and point CYCLONEDDS_URI at the copy for that session only. -->
+<CycloneDDS xmlns="https://cdds.io/config" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+            xsi:schemaLocation="https://cdds.io/config https://raw.githubusercontent.com/eclipse-cyclonedds/cyclonedds/master/etc/cyclonedds.xsd">
+  <Domain Id="any">
+    <General>
+      <Interfaces>
+        <NetworkInterface name="lo" />
+      </Interfaces>
+      <!-- lo is not multicast-capable; discovery is unicast to localhost over the
+           participant-index range below. Raise MaxAutoParticipantIndex if a launch
+           ever has more participants than that (nav.launch.py has ~15). -->
+      <AllowMulticast>false</AllowMulticast>
+    </General>
+    <Discovery>
+      <ParticipantIndex>auto</ParticipantIndex>
+      <MaxAutoParticipantIndex>120</MaxAutoParticipantIndex>
+    </Discovery>
+  </Domain>
+</CycloneDDS>

@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>amr_maps</name>
+  <version>0.0.1</version>
+  <description>Map artefacts: simulated worlds for amr_sim, and the occupancy-grid file helpers shared by the survey save and the route editor.</description>
+  <maintainer email="igp.indi.4.0.00@gmail.com">gvipc</maintainer>
+  <license>Proprietary</license>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <test_depend>python3-pytest</test_depend>
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

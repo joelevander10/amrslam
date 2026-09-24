@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}AMR — status{% endblock %}
+{% block body %}
+<section class="hero">
+  <div class="hero-eyebrow">Operating mode <span id="st-op"></span></div>
+  <div id="st-mode" class="hero-mode">–</div>
+  <div id="st-reason" class="hero-reason">connecting…</div>
+  <div class="hero-cols">
+    <div><span>Active map</span><b id="st-active">—</b></div>
+    <div><span>Last saved survey</span><b id="st-survey">—</b></div>
+    <div><span>Operation</span><b id="st-operation">—</b></div>
+  </div>
+</section>
+<div id="st-fault" class="warn-box stop" hidden></div>
+
+<section>
+  <h2>Readiness <small>supervisor · panel · drives · mux · localisation</small></h2>
+  <div id="st-ready" class="tel-grid"></div>
+</section>
+
+<section>
+  <div class="bar">
+    <a class="big" href="/maps">Survey a new map</a>
+    <a class="big" href="/run">Use a saved map</a>
+    <button id="btn-idle" class="big">Return to idle</button>
+    <button id="btn-recover" class="danger">Recover (FAULT → IDLE)</button>
+  </div>
+  <p class="note">Changing mode replaces only the mapping/navigation software; the drives, panel, lidar and this page stay up. A change needs the vehicle <b>stopped</b> and the selector in <b>MANUAL</b>, and never starts a route or a survey by itself.</p>
+</section>
+{% endblock %}
+{% block scripts %}<script>
+document.getElementById('btn-idle').onclick = () => operation('/api/mode', { target: 'idle' });
+document.getElementById('btn-recover').onclick = () => api('/api/recover').then(r => log(r.data.message, r.status === 200 ? '' : 'bad'));
+const $ = id => document.getElementById(id);
+onState(st => {
+  const m = st.mode;
+  $('st-mode').textContent = m ? m.mode_name : 'NO SUPERVISOR';
+  $('st-mode').className = 'hero-mode ' + (m ? (MODE_LEVEL[m.mode_name] || '') : 'bad');
+  const transition = m && m.mode_name === 'TRANSITIONING' && m.requested_name !== m.mode_name ? ` → ${m.requested_name}` : '';
+  $('st-op').textContent = m ? `· ${m.phase || 'steady'}${transition}` : '';
+  $('st-reason').textContent = m ? (m.fault_code ? '' : (m.reason || '—')) : 'no ModeState from the supervisor';
+  $('st-active').textContent = m && m.active_map_id ? `${m.active_map_id} rev${m.active_map_revision}` : '—';
+  $('st-survey').textContent = m && m.last_survey_map_id ? `${m.last_survey_map_id} rev${m.last_survey_revision}` : '—';
+  $('st-operation').textContent = m && m.operation_id ? m.operation_id : '—';
+  $('st-fault').hidden = !(m && m.fault_code);
+  if (m && m.fault_code) $('st-fault').innerHTML = `<b>FAULT ${esc(m.fault_code)}</b> — ${esc(m.reason)}`;
+  const p = st.panel, d = st.drives, mx = st.mux, l = st.localization;
+  const panelVal = p ? (p.age_s > FRESH_S ? 'STALE' : (p.valid ? (p.mode_auto ? 'AUTO' : 'MANUAL') : 'INVALID')) : '–';
+  tiles('st-ready', [
+    ['Base ready', yesno(m && m.base_ready), 'drives · panel · lidar · mux', m && m.base_ready ? '' : 'bad'],
+    ['Panel', panelVal, p ? `${num(p.age_s, 2)} s` : 'no image', panelVal === 'AUTO' || panelVal === 'MANUAL' ? '' : 'bad'],
+    ['Drives', d ? (d.operational ? 'ARMED' : 'OFF') : '–', d ? `${num(d.age_s, 2)} s` : 'no status', d && d.age_s <= FRESH_S ? (d.operational ? '' : 'warn') : 'bad'],
+    ['Command source', mx ? mx.source : '–', mx ? (mx.inhibited ? 'inhibited' : '—') : 'no mux state', mx && mx.inhibited ? 'warn' : ''],
+    ['Localisation', l ? l.state_name : (st.localization_stale ? 'STALE' : '–'), st.localization_stale ? 'old layer' : '—', l ? LOC_LEVEL[l.state_name] : ''],
+    ['Manual available', yesno(m && m.manual_available), '—'],
+    ['Autonomous available', yesno(m && m.autonomous_available), '—'],
+  ]);
+});
+</script>{% endblock %}

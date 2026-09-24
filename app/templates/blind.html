@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}AGV — blind run{% endblock %}
+{% block body %}
+
+<div id="panel-strip" class="panel-strip" hidden>
+  <b>Panel</b>
+  <span>selector <b id="pn-sel">–</b></span>
+  <span>last <b id="pn-act">–</b></span>
+  <span id="pn-fault" class="pn-fault" hidden></span>
+</div>
+
+<div class="bar">
+  <span class="hint"><b>Set the move here, run it from the panel</b> — selector
+        to MANUAL, press Start. Reset stops it. This page cannot start the wheels.</span>
+  <span class="hint">Encoder only: nothing steers on a sensor. The IMU yaw rate
+        is recorded beside the encoder heading for comparison. Limits:
+        {{ max_distance_m }} m per wheel per segment, {{ max_rpm }} r/min
+        ({{ max_mps }} m/s), {{ max_segments }} segments.</span>
+</div>
+
+<section class="auto-summary" aria-label="Blind run status">
+  <div id="blind-status" class="auto-status" role="status">NO PLAN SET</div>
+  <p id="blind-status-note" class="auto-detail">Build a move and press SET</p>
+</section>
+
+<section class="sensor">
+  <h2>Move <small>track {{ track_m }} m</small></h2>
+  <div id="blind-segments" class="blind-segments"></div>
+  <div class="blind-row">
+    <button type="button" id="blind-add" class="danger">Add segment</button>
+    <label>Speed <input id="blind-speed" type="number" step="any" min="0" value="0.2"></label>
+    <select id="blind-speed-unit" aria-label="Speed unit">
+      <option value="speed_mps">m/s (centre path)</option>
+      <option value="motor_rpm">motor r/min</option>
+    </select>
+  </div>
+  <div class="bar">
+    <button type="button" id="blind-set" class="big run">SET</button>
+    <button type="button" id="blind-clear" class="big">CLEAR</button>
+    <span id="blind-error" class="hint blind-error" role="alert"></span>
+  </div>
+  <p class="auto-detail">Straight: distance, + forward. Arc: radius + left / − right,
+     angle + forward / − reverse. Pivot: angle + counter-clockwise. Pulses: raw
+     6064h counts per drive, as the drive counts them. The speed is the centre
+     path for straight and arc, the wheel for a pivot, the faster wheel for pulses.</p>
+</section>
+
+<section class="sensor">
+  <h2>Plan <small id="blind-plan-note">none set</small></h2>
+  <div class="blind-table-wrap">
+    <table class="blind-table" id="blind-plan">
+      <thead><tr><th>#</th><th>Move</th><th>Counts L / R</th><th>Wheel m L / R</th>
+        <th>Peak r/min L / R</th><th>Est. s</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
+
+<section class="sensor">
+  <h2>Run</h2>
+  <div class="tel-grid">
+    <div class="tel"><span>Phase</span><b id="br-phase">–</b><i id="br-seg">segment –</i></div>
+    <div class="tel"><span>Left wheel</span><b id="br-left">–</b><i id="br-left-t">of – m</i></div>
+    <div class="tel"><span>Right wheel</span><b id="br-right">–</b><i id="br-right-t">of – m</i></div>
+    <div class="tel"><span>Encoder pose</span><b id="br-pose">–</b><i>x / y m · heading °</i></div>
+    <div class="tel"><span>Speed</span><b id="br-speed">–</b><i>m/s, faster wheel</i></div>
+    {# The one sensor beside the encoders. Yaw rate from the MLS IMU, so a
+       pivot's encoder heading rate can be eyeballed against the gyro while it
+       turns - recorded in the run CSV as gyro_z_dps, never steered on. #}
+    {% if imu_enabled %}
+    <div class="tel" id="br-imu-tile"><span>IMU yaw rate</span><b id="br-gyro">–</b><i id="br-gyro-note">°/s, recorded only</i></div>
+    {% endif %}
+  </div>
+</section>
+
+<section class="sensor">
+  <h2>Results <small id="blind-log">—</small></h2>
+  <div class="blind-table-wrap">
+    <table class="blind-table" id="blind-results">
+      <thead><tr><th>#</th><th>Move</th><th>Commanded</th><th>Encoder</th>
+        <th>Target L / R</th><th>Final L / R</th><th>Error L / R</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <p class="auto-detail">Every segment is also appended to logs/blind_results.csv,
+     with blank measured_distance_m and measured_heading_deg columns for the
+     tape-measured values.</p>
+</section>
+{% endblock %}
+
+{% block script %}
+<script>window.BLIND_MAX_SEGMENTS = {{ max_segments }};</script>
+<script src="{{ url_for('static', filename='blind.js') }}"></script>
+{% endblock %}

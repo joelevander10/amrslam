@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}AMR — monitor{% endblock %}
+{% block body %}
+<p class="note">Diagnostic only — nothing here is in the safety path. Values come from the drive owner's own bus thread (one bounded read per slot); this page never opens a CAN client. A value shown as <b>not available</b> was never read or last timed out.</p>
+<section id="mon" class="mon-grid"><div class="none">connecting…</div></section>
+{% endblock %}
+{% block scripts %}<script>
+const LEVEL = [['OK', 'ok'], ['WARN', 'warn'], ['ERROR', 'bad'], ['STALE', 'bad']];
+async function tick() {
+  const { status, data } = await apiGet('/api/diagnostics');
+  if (status === 200) {
+    const names = Object.keys(data).sort();
+    document.getElementById('mon').innerHTML = names.length ? names.map(n => {
+      const d = data[n]; const stale = d.age_s > 3;
+      const [label, cls] = stale ? ['STALE', 'bad'] : (LEVEL[d.level] || ['?', '']);
+      const rows = Object.entries(d.values).map(([k, v]) =>
+        `<div class="row"><span class="k">${esc(k)}</span><span class="v">${v === '' ? '<span class="muted">not available</span>' : esc(v)}</span></div>`).join('');
+      return `<div class="mon-node${stale ? ' stale-block' : ''}"><h3>${esc(n)} <span class="chip ${cls}">${label}</span></h3>` +
+        `<div class="mon-meta">${esc(d.hardware_id)} · ${num(d.age_s, 1)} s ago${d.message && !stale ? ' · ' + esc(d.message) : ''}</div>` +
+        `<div class="list">${rows || '<div class="none">no values</div>'}</div></div>`;
+    }).join('') : '<div class="none">no diagnostics yet (drive owner not running?)</div>';
+  }
+  setTimeout(tick, 1000);
+}
+tick();
+</script>{% endblock %}

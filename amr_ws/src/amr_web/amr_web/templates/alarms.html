@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}AMR — alarms{% endblock %}
+{% block body %}
+<section>
+  <h2>Standing now <small>against the vehicle</small></h2>
+  <div id="active" class="al-log"><div class="none">connecting…</div></div>
+  <p class="note">This page cannot clear anything. A drive alarm is cleared by a drive <b>power cycle</b>; a latched supervisor FAULT by <b>Recover</b> on the Status page after the cause is fixed; an executor FAULT by <b>Acknowledge</b> on the Run page. Software never resets a drive alarm or ETO (deny-listed).</p>
+</section>
+<section>
+  <h2>Events <small>newest first · last 200</small></h2>
+  <div id="events" class="al-log"><div class="none">no events yet</div></div>
+</section>
+{% endblock %}
+{% block scripts %}<script>
+let since = 0; const rows = [];
+const LV = { info: 'lv-info', warn: 'lv-warn', error: 'lv-error' };
+async function events() {
+  const { status, data } = await apiGet(`/api/events?since=${since}`);
+  if (status === 200 && data.length) {
+    data.forEach(e => { since = Math.max(since, e.n); rows.unshift(e); });
+    rows.splice(200);
+    document.getElementById('events').innerHTML = rows.map(e =>
+      `<div class="al-row ${LV[e.level] || 'lv-info'}"><span class="al-time">${new Date(e.t * 1000).toLocaleTimeString()}</span>` +
+      `<span class="al-lv">${esc(e.level)}</span><span class="al-msg"><span class="al-what">${esc(e.source)} ${esc(e.code)}</span>${esc(e.text)}</span></div>`).join('');
+  }
+  setTimeout(events, 1000);
+}
+events();
+onState(st => {
+  const out = [];  // [level, what, text]
+  const m = st.mode; if (m && m.fault_code) out.push(['error', `SUPERVISOR FAULT ${m.fault_code}`, m.reason]);
+  const r = st.run; if (r && r.state_name === 'FAULT') out.push(['error', 'EXECUTOR FAULT', r.reason]);
+  const l = st.localization; if (l && l.state_name === 'LOST') out.push(['error', 'LOCALISATION LOST', l.reason]);
+  const p = st.panel; if (!p || p.age_s > 0.5 || !p.valid) out.push(['error', 'PANEL', 'invalid or stale — no motion authority']);
+  const d = st.drives; if (d && !d.operational) out.push(['warn', 'DRIVES', `not operational: ${d.left} / ${d.right}`]);
+  const mx = st.mux; if (mx && mx.inhibited) out.push(['warn', 'MOTION INHIBITED', mx.reason]);
+  document.getElementById('active').innerHTML = out.length ? out.map(([lv, what, text]) =>
+    `<div class="al-row standing ${LV[lv]}"><span class="al-lv">${lv}</span><span class="al-msg"><span class="al-what">${esc(what)}</span>${esc(text)}</span></div>`).join('')
+    : '<div class="none">nothing standing</div>';
+});
+</script>{% endblock %}

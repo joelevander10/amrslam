@@ -1,0 +1,7 @@
+# Simulation only: drop a square box into scan_synth's world (not into the saved map).
+float64 x_m
+float64 y_m
+float64 size_m
+---
+bool ok
+string message

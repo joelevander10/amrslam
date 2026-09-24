@@ -1,0 +1,28 @@
+# AMR QR (profile amr-qr-01) geometry for amr.urdf.xacro. Same conventions as the URDF:
+# base_link at the centre of the drive axle, x forward, z up; metres / radians.
+#
+# From the operator's specification (2026-09-23):
+#   body 1.18 m long x 0.675 m wide, wheel diameter 0.18 m, wheel width 0.18 m,
+#   track (wheel centre to wheel centre) 0.37652 m, drive axle to lidar 0.81 m,
+#   IMU and encoders at the axle centre.
+# MEASURE = assumed, not measured. VERIFY = to be confirmed by the lidar commissioning
+# (RUNBOOK "Lidar commissioning": a box 2.00 m ahead must read +x, one to the left +y).
+xacro:
+  wheel_radius: 0.09
+  track_width: 0.37652
+  wheel_width: 0.18          # as specified (visual only)
+  chassis_length: 1.18
+  chassis_width: 0.675
+  chassis_height: 0.30       # MEASURE (visual only)
+  # MEASURE: the body is assumed to end 0.05 m ahead of the lidar's optical centre, so
+  # it spans x = -0.32 .. +0.86 and its centre is 0.27 m ahead of the axle. Must agree
+  # with footprint.amr-qr-01.yaml.
+  chassis_x: 0.27
+  chassis_z: 0.05            # MEASURE (visual only)
+  laser_x: 0.81              # specified: drive axle to lidar
+  laser_y: 0.0               # MEASURE (assumed on the centreline)
+  laser_z: 0.02              # MEASURE: scan-plane height above the floor minus 0.09
+  laser_yaw: 0.0             # VERIFY
+  imu_x: 0.0                 # specified: at the axle centre
+  imu_y: 0.0
+  imu_z: 0.0

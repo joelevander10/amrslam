@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EDC IUV architecture diagrams</title>
+  <style>
+    @font-face{font-family:Archivo;src:url("../../amr_ws/src/amr_web/amr_web/static/fonts/archivo-600.woff2") format("woff2");font-weight:600;font-display:swap}
+    @font-face{font-family:Archivo;src:url("../../amr_ws/src/amr_web/amr_web/static/fonts/archivo-700.woff2") format("woff2");font-weight:700;font-display:swap}
+    @font-face{font-family:"IBM Plex Sans";src:url("../../amr_ws/src/amr_web/amr_web/static/fonts/plex-sans-400.woff2") format("woff2");font-weight:400;font-display:swap}
+    @font-face{font-family:"IBM Plex Sans";src:url("../../amr_ws/src/amr_web/amr_web/static/fonts/plex-sans-600.woff2") format("woff2");font-weight:600;font-display:swap}
+    @font-face{font-family:"IBM Plex Mono";src:url("../../amr_ws/src/amr_web/amr_web/static/fonts/plex-mono-400.woff2") format("woff2");font-weight:400;font-display:swap}
+    @font-face{font-family:"IBM Plex Mono";src:url("../../amr_ws/src/amr_web/amr_web/static/fonts/plex-mono-600.woff2") format("woff2");font-weight:600;font-display:swap}
+
+    :root{
+      --paper:#eff1f5;--surface:#fff;--surface-2:#e4e8ef;--ink:#14171d;--ink-2:#3d4553;--ink-3:#666e7f;
+      --rule:#cbd2de;--rule-soft:#dde2eb;--accent:#1b3a5c;--accent-2:#2f5f94;--accent-wash:#dfe7f1;
+      --ok:#186e42;--ok-wash:#ddeee4;--hazard:#e8b900;--hazard-wash:#fbf2d2;--hazard-ink:#5e4a00;
+      --stop:#a32218;--stop-wash:#f6dedb;--violet:#66578f;--violet-wash:#eeeaf7;--cyan:#2e7180;--cyan-wash:#e1f0f2;
+      --blue-line:#688ab0;--green-line:#59927d;--amber-line:#b68e16;--red-line:#b8665f;--violet-line:#8a7eb0;
+      color-scheme:light;
+    }
+    *{box-sizing:border-box}html,body{margin:0;background:var(--paper);color:var(--ink)}
+    body{font:18px/1.45 "IBM Plex Sans",Arial,sans-serif;font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}
+    button{font:inherit}.toolbar{position:sticky;top:0;z-index:20;min-height:50px;display:flex;align-items:center;gap:8px;padding:8px 16px;background:var(--surface);border-bottom:2px solid var(--ink)}
+    .toolbar strong{margin-right:10px;font:700 15px Archivo,sans-serif;letter-spacing:-.015em}.toolbar button{border:1px solid var(--rule);border-radius:0;background:var(--surface);color:var(--ink-2);padding:7px 11px;cursor:pointer;font:600 11px "IBM Plex Mono",monospace;letter-spacing:.07em;text-transform:uppercase}
+    .toolbar button:hover,.toolbar button:focus-visible{color:var(--accent-2);border-color:var(--accent-2);outline:2px solid var(--accent-2);outline-offset:2px}.toolbar .meta{margin-left:auto;color:var(--ink-3);font:500 10.5px "IBM Plex Mono",monospace;letter-spacing:.08em;text-transform:uppercase}
+    .deck{padding:22px 16px 60px}.frame{position:relative;margin:0 auto 24px;background:var(--surface);border:1px solid var(--rule);overflow:hidden;scroll-margin-top:66px}.slide{position:absolute;inset:0 auto auto 0;width:1600px;height:900px;transform-origin:top left;overflow:hidden;background:var(--surface)}
+    .slide:after{content:"";position:absolute;inset:13px;border:1px solid var(--rule-soft);pointer-events:none}.slide-head{position:absolute;top:38px;left:68px;right:68px;height:82px;display:grid;grid-template-columns:330px 1fr;align-items:start;border-bottom:9px solid var(--stop)}
+    .brand{height:58px;display:flex;align-items:center}.brand h2{margin:0;color:var(--ink);font:600 18px/1.2 Archivo,sans-serif;letter-spacing:-.01em}.title-wrap{text-align:right}.title-wrap h1{margin:2px 0;font:600 29px/1.15 Archivo,sans-serif;letter-spacing:-.02em;text-transform:uppercase}.title-wrap p{margin:0;color:var(--ink-3);font:500 12.5px "IBM Plex Mono",monospace;letter-spacing:.09em;text-transform:uppercase}
+
+    .box{position:absolute;z-index:3;border:1.5px solid var(--rule);background:var(--surface);padding:15px 18px}.box h2{margin:0;color:var(--accent);font:600 18px/1.2 Archivo,sans-serif;letter-spacing:-.008em;text-align:center;text-transform:uppercase}.box .sub{margin:4px 0 10px;color:var(--ink-3);text-align:center;font:500 12px "IBM Plex Mono",monospace;letter-spacing:.045em;text-transform:uppercase}.box p{margin:7px 0 0;color:var(--ink-2);font-size:14px;line-height:1.35;text-align:center}
+    .blue{background:#e8eff8;border-color:var(--blue-line)}.green{background:#e5f1ec;border-color:var(--green-line)}.amber{background:var(--hazard-wash);border-color:var(--amber-line)}.red{background:#f7e7e5;border-color:var(--red-line)}.violet{background:var(--violet-wash);border-color:var(--violet-line)}.grey{background:#eef0f4;border-color:#8d96a4}
+    .chips{display:flex;justify-content:center;flex-wrap:wrap;gap:5px;margin-top:9px}.chip{padding:4px 7px;border:1px solid currentColor;color:var(--accent-2);background:rgba(255,255,255,.78);font:600 10.5px "IBM Plex Mono",monospace;letter-spacing:.055em;text-transform:uppercase}.green .chip{color:var(--ok)}.amber .chip{color:var(--hazard-ink)}.red .chip{color:var(--stop)}
+
+    .vehicle-card{position:absolute;z-index:3;left:66px;top:140px;width:425px;height:218px;padding:10px 14px;border:1px solid var(--rule);background:#f8f9fb}.photo-window{position:relative;height:164px;display:flex;align-items:center;justify-content:center;overflow:hidden;background:var(--surface);border-bottom:1px solid var(--rule-soft)}.photo-window img{width:100%;height:100%;object-fit:contain}.image-missing{display:none;position:absolute;inset:0;align-items:center;justify-content:center;padding:20px;border:1px dashed var(--blue-line);background:var(--accent-wash);color:var(--accent-2);text-align:center;font:600 11px/1.5 "IBM Plex Mono",monospace;letter-spacing:.05em;text-transform:uppercase}.vehicle-spec{padding-top:9px;color:var(--ink-2);text-align:center;font:600 10px "IBM Plex Mono",monospace;letter-spacing:.05em;text-transform:uppercase}
+    .sensor-stack{position:absolute;z-index:3;left:66px;top:386px;width:425px;height:367px}.sensor-stack>h2{margin:0 0 8px;color:var(--accent);font:600 16px Archivo,sans-serif;text-align:center;text-transform:uppercase}.sensor-row{display:grid;grid-template-columns:160px 1fr;align-items:center;min-height:54px;margin-bottom:7px;padding:7px 12px;border:1px solid var(--violet-line);background:var(--violet-wash)}.sensor-row strong{color:var(--violet);font:600 12px "IBM Plex Mono",monospace;letter-spacing:.05em;text-transform:uppercase}.sensor-row span{color:var(--ink-2);font-size:13px;line-height:1.25}
+    .main-controller{left:558px;top:158px;width:498px;height:197px}.fleet-box{left:1134px;top:158px;width:398px;height:197px}.motion-box{left:558px;top:406px;width:498px;height:206px}.driver-box{left:1134px;top:406px;width:398px;height:154px}.motor-box{left:1134px;top:610px;width:398px;height:126px}.power-box{left:558px;top:657px;width:498px;height:106px;padding-top:11px}
+    .footer-strip{position:absolute;z-index:4;left:66px;top:796px;width:1466px;min-height:55px;display:grid;grid-template-columns:250px 1fr 330px;align-items:center;border:1px solid var(--hazard-ink);border-left:7px solid var(--hazard);background:var(--hazard-wash);color:var(--ink-2)}.footer-strip strong{padding-left:18px;color:var(--hazard-ink);font:600 13px "IBM Plex Mono",monospace;letter-spacing:.07em;text-transform:uppercase}.footer-strip span{font-size:13.5px}.footer-strip em{padding-right:18px;color:var(--hazard-ink);font:normal 600 10.5px "IBM Plex Mono",monospace;letter-spacing:.05em;text-align:right;text-transform:uppercase}
+    .wires{position:absolute;z-index:2;inset:0;width:1600px;height:900px;pointer-events:none}.wires path{fill:none;stroke:#8792a2;stroke-width:1.6;marker-end:url(#arrow)}.wires .bi{marker-start:url(#arrow-start)}.wires .power{stroke:var(--hazard-ink);marker-end:url(#arrow-amber)}.wires .label-bg{fill:#fff;stroke:var(--rule-soft);stroke-width:1}.wires text{fill:var(--ink-3);font:600 11px "IBM Plex Mono",monospace;letter-spacing:.045em;text-transform:uppercase}
+
+    .architecture{position:absolute;left:66px;right:66px;top:132px;bottom:48px}.layer{position:absolute;left:0;width:1468px;display:grid;grid-template-columns:238px 1fr;border:1.5px solid var(--rule)}
+    .application{top:0;height:124px;background:#e8eff8;border-color:var(--blue-line)}.navigation{top:142px;height:132px;background:#e5f1ec;border-color:var(--green-line)}.motion{top:292px;height:132px;background:var(--hazard-wash);border-color:var(--amber-line)}.middleware{top:442px;height:118px;background:var(--violet-wash);border-color:var(--violet-line)}.hardware{top:578px;height:124px;background:#eef0f4;border-color:#8d96a4}
+    .layer-title{display:flex;flex-direction:column;justify-content:center;padding:0 22px;border-right:1px solid currentColor;color:var(--accent);font:600 15.5px/1.2 Archivo,sans-serif;letter-spacing:.01em;text-transform:uppercase}.layer-title small{margin-top:7px;color:var(--ink-3);font:600 10px/1.3 "IBM Plex Mono",monospace;letter-spacing:.06em}.layer-cards{display:grid;gap:10px;align-items:stretch;padding:14px}.cols-5{grid-template-columns:repeat(5,minmax(0,1fr))}.cols-6{grid-template-columns:repeat(6,minmax(0,1fr))}
+    .arch-card{display:flex;flex-direction:column;justify-content:center;min-width:0;padding:10px 8px 8px;border:1px solid currentColor;background:rgba(255,255,255,.83);color:var(--accent-2);text-align:center}.navigation .arch-card{color:var(--ok)}.motion .arch-card{color:var(--hazard-ink)}.middleware .arch-card{color:var(--violet)}.hardware .arch-card{color:#525d6c}.arch-card strong{font:600 12.5px/1.22 "IBM Plex Mono",monospace;letter-spacing:.035em;text-transform:uppercase}.arch-card span{margin-top:5px;color:var(--ink-3);font-size:12px;line-height:1.2}
+    .flow-label{position:absolute;z-index:4;left:474px;width:520px;height:18px;display:flex;align-items:center;justify-content:center;gap:10px;color:var(--ink-3);background:var(--surface);font:600 11px "IBM Plex Mono",monospace;letter-spacing:.07em;text-transform:uppercase}.flow-label:before,.flow-label:after{color:var(--accent-2);font-size:15px;line-height:1}.flow-label:before{content:"↓"}.flow-label:after{content:"↑"}.flow-1{top:124px}.flow-2{top:274px}.flow-3{top:424px}.flow-4{top:560px}
+    .arch-footer{position:absolute;left:0;top:716px;width:1468px;height:51px;display:grid;grid-template-columns:1fr 1fr 1.2fr;align-items:center;border:1px solid var(--hazard-ink);border-left:7px solid var(--hazard);background:var(--hazard-wash)}.arch-footer div{height:100%;display:flex;align-items:center;justify-content:center;padding:0 16px;border-right:1px solid #d5c269;color:var(--hazard-ink);font:600 11px/1.3 "IBM Plex Mono",monospace;text-align:center;text-transform:uppercase}.arch-footer div:last-child{border-right:0}.slide-note{position:absolute;z-index:5;right:70px;bottom:17px;color:var(--ink-3);font:500 10px "IBM Plex Mono",monospace;letter-spacing:.035em;text-transform:uppercase}
+
+    @page{size:16.6667in 9.375in;margin:0}@media print{html,body{background:#fff}.toolbar{display:none}.deck{padding:0}.frame{width:1600px!important;height:900px!important;margin:0;border:0;break-after:page;page-break-after:always}.frame:last-child{break-after:auto;page-break-after:auto}.slide{transform:none!important}}
+  </style>
+</head>
+<body>
+  <nav class="toolbar" aria-label="Diagram controls">
+    <strong>EDC IUV reference architecture</strong>
+    <button type="button" data-jump="topology">01 · Topology</button>
+    <button type="button" data-jump="software">02 · Software</button>
+    <button type="button" id="print">Print / PDF</button>
+    <span class="meta">Third-party reference · 2 slides · 16:9</span>
+  </nav>
+
+  <main class="deck">
+    <div class="frame" id="topology">
+      <section class="slide" aria-labelledby="topology-title">
+        <header class="slide-head">
+          <div class="brand"><h2>EDC Engineering Development Center</h2></div>
+          <div class="title-wrap"><h1 id="topology-title">IUV Controller &amp; Software Topology</h1><p>Reference architecture · transcribed from the supplied EDC slide</p></div>
+        </header>
+
+        <div class="vehicle-card">
+          <div class="photo-window">
+            <img src="assets/edc-iuv-vehicle.png" alt="EDC IUV vehicle" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+            <div class="image-missing">Place the IUV image at<br>assets/edc-iuv-vehicle.png</div>
+          </div>
+          <div class="vehicle-spec">IUV · 24 V / 50 Ah · 4WID · 100 kg payload</div>
+        </div>
+
+        <div class="sensor-stack">
+          <h2>Sensors &amp; Safety Inputs</h2>
+          <div class="sensor-row"><strong>2D LiDAR</strong><span>Obstacle detection and mapping input.</span></div>
+          <div class="sensor-row"><strong>IMU</strong><span>Yaw-rate and acceleration measurements.</span></div>
+          <div class="sensor-row"><strong>Wheel encoders ×4</strong><span>Wheel-speed feedback and odometry.</span></div>
+          <div class="sensor-row"><strong>E-stop + bumper</strong><span>Hardwired stop and collision chain.</span></div>
+          <div class="sensor-row"><strong>Safety sensors</strong><span>Front and rear obstacle-zone inputs.</span></div>
+        </div>
+
+        <article class="box blue main-controller"><h2>Main Controller</h2><div class="sub">Industrial PC · Ubuntu 24.04 · ROS 2 Jazzy</div><div class="chips"><span class="chip">SLAM / localization</span><span class="chip">Motion planner</span><span class="chip">Diagnostics</span><span class="chip">Fleet client</span></div><p>High-level autonomy, mission execution, navigation, map handling and system diagnostics.</p></article>
+        <article class="box green fleet-box"><h2>Fleet Management / Factory IT</h2><div class="sub">Wi-Fi / Ethernet</div><div class="chips"><span class="chip">Mission dispatch</span><span class="chip">Traffic</span><span class="chip">Map + status</span></div><p>Fleet supervision with API links to WMS / MES and the factory IoT environment.</p></article>
+        <article class="box amber motion-box"><h2>Real-Time Motion Controller</h2><div class="sub">MCU / dedicated motion controller</div><div class="chips"><span class="chip">4WID kinematics</span><span class="chip">Wheel-speed control</span><span class="chip">Straight correction</span><span class="chip">Odometry</span></div><p>Runs deterministic steering and wheel-control functions in a 100–500 Hz loop.</p></article>
+        <article class="box red driver-box"><h2>Actuation · Drive Drivers ×2</h2><div class="sub">24 V motor power stage</div><div class="chips"><span class="chip">CAN</span><span class="chip">RS485</span><span class="chip">PWM</span></div><p>Two drive power stages command four wheel motors.</p></article>
+        <article class="box red motor-box"><h2>Hub Motors ×4</h2><div class="sub">24 V · 25 A · 15 Nm · 370 r/min</div><p>Four independently driven, fixed-orientation hub motors.</p></article>
+        <article class="box grey power-box"><h2>Power &amp; Safety Distribution</h2><p>24 V / 50 Ah battery → BMS → fuse / contactor → motor bus. DC/DC supplies 12 V and 5 V loads; E-stop interrupts traction power.</p></article>
+
+        <div class="footer-strip"><strong>Reference partition</strong><span>Industrial PC handles autonomy; an MCU handles deterministic motion; hardwired devices interrupt traction independently.</span><em>Content reproduced from the EDC reference, not GVIEVO-01</em></div>
+
+        <svg class="wires" viewBox="0 0 1600 900" aria-hidden="true">
+          <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#8792a2" stroke="none"/></marker><marker id="arrow-start" markerWidth="8" markerHeight="8" refX="1" refY="4" orient="auto"><path d="M8,0 L0,4 L8,8 Z" fill="#8792a2" stroke="none"/></marker><marker id="arrow-amber" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#5e4a00" stroke="none"/></marker></defs>
+          <path class="bi" d="M1056 255 H1134"/><rect class="label-bg" x="1060" y="233" width="70" height="18"/><text x="1095" y="246" text-anchor="middle">WI-FI / ETH</text>
+          <path class="bi" d="M807 355 V406"/><rect class="label-bg" x="735" y="371" width="144" height="18"/><text x="807" y="384" text-anchor="middle">ROS 2 / UART / CAN</text>
+          <path d="M491 570 H558"/><rect class="label-bg" x="491" y="548" width="67" height="18"/><text x="524" y="561" text-anchor="middle">SENSOR DATA</text>
+          <path d="M1056 472 H1134"/><rect class="label-bg" x="1060" y="450" width="69" height="18"/><text x="1095" y="463" text-anchor="middle">CAN / RS485</text>
+          <path d="M1056 526 H1134"/><rect class="label-bg" x="1060" y="504" width="69" height="18"/><text x="1095" y="517" text-anchor="middle">PWM / CAN</text>
+          <path d="M1333 560 V610"/><rect class="label-bg" x="1270" y="574" width="126" height="18"/><text x="1333" y="587" text-anchor="middle">POWER + COMMAND</text>
+          <path class="power" d="M1056 710 H1095 V675 H1134"/><rect class="label-bg" x="1058" y="687" width="75" height="18"/><text x="1095" y="700" text-anchor="middle">24 V BUS</text>
+          <path class="power" d="M807 657 V612"/><rect class="label-bg" x="757" y="625" width="100" height="18"/><text x="807" y="638" text-anchor="middle">24 V / 5 V</text>
+        </svg>
+        <div class="slide-note">Source: user-supplied EDC presentation photographs and other-design.md</div>
+      </section>
+    </div>
+
+    <div class="frame" id="software">
+      <section class="slide" aria-labelledby="software-title">
+        <header class="slide-head">
+          <div class="brand"><h2>EDC Engineering Development Center</h2></div>
+          <div class="title-wrap"><h1 id="software-title">IUV Software Architecture</h1><p>Five-layer reference architecture · original responsibilities retained</p></div>
+        </header>
+
+        <div class="architecture">
+          <section class="layer application"><div class="layer-title">Application / Fleet Layer<small>Mission and factory-facing functions</small></div><div class="layer-cards cols-5">
+            <article class="arch-card"><strong>Mission Manager</strong><span>Creates and sequences vehicle missions.</span></article>
+            <article class="arch-card"><strong>Fleet Client</strong><span>Connects robot status and commands to fleet control.</span></article>
+            <article class="arch-card"><strong>HMI / Web UI</strong><span>Provides operator control and system visibility.</span></article>
+            <article class="arch-card"><strong>Diagnostics</strong><span>Reports component state, faults and maintenance data.</span></article>
+            <article class="arch-card"><strong>WMS / MES API</strong><span>Exchanges work orders and production-system status.</span></article>
+          </div></section>
+          <div class="flow-label flow-1">Mission</div>
+
+          <section class="layer navigation"><div class="layer-title">Autonomy &amp; Navigation Layer<small>Mapping, localization and route decisions</small></div><div class="layer-cards cols-5">
+            <article class="arch-card"><strong>Mapping / SLAM</strong><span>Builds the map from LiDAR and odometry.</span></article>
+            <article class="arch-card"><strong>Localization</strong><span>Uses AMCL or SLAM localization against the map.</span></article>
+            <article class="arch-card"><strong>Path Planner</strong><span>Produces the global route and waypoint sequence.</span></article>
+            <article class="arch-card"><strong>Local Planner</strong><span>Generates local motion with obstacle avoidance.</span></article>
+            <article class="arch-card"><strong>Mode State Manager</strong><span>Coordinates straight, turn, pivot and dock modes.</span></article>
+          </div></section>
+          <div class="flow-label flow-2">Pose / path</div>
+
+          <section class="layer motion"><div class="layer-title">Motion Control Layer<small>Vehicle motion and software stop functions</small></div><div class="layer-cards cols-5">
+            <article class="arch-card"><strong>4WID Kinematics</strong><span>Models skid-steer / differential-drive motion.</span></article>
+            <article class="arch-card"><strong>Velocity Allocation</strong><span>Converts body motion into left/right wheel commands.</span></article>
+            <article class="arch-card"><strong>Straight-Line Control</strong><span>Corrects travel using encoder and IMU feedback.</span></article>
+            <article class="arch-card"><strong>Odometry Fusion</strong><span>Combines wheel-encoder and IMU estimates.</span></article>
+            <article class="arch-card"><strong>Safety Stop Logic</strong><span>Provides the architecture’s software-level stop.</span></article>
+          </div></section>
+          <div class="flow-label flow-3">ROS 2 messages</div>
+
+          <section class="layer middleware"><div class="layer-title">ROS 2 Middleware &amp; Services<small>Communication, frames and system support</small></div><div class="layer-cards cols-6">
+            <article class="arch-card"><strong>ROS 2 DDS</strong><span>Topics and service transport.</span></article>
+            <article class="arch-card"><strong>TF2</strong><span>Frames and coordinate transforms.</span></article>
+            <article class="arch-card"><strong>Lifecycle</strong><span>Managed node-state control.</span></article>
+            <article class="arch-card"><strong>rosbag2</strong><span>Runtime data recording and replay.</span></article>
+            <article class="arch-card"><strong>Parameters</strong><span>Calibration and tuning values.</span></article>
+            <article class="arch-card"><strong>OTA</strong><span>Remote software update manager.</span></article>
+          </div></section>
+          <div class="flow-label flow-4">Hardware feedback</div>
+
+          <section class="layer hardware"><div class="layer-title">Hardware / Driver Layer<small>Sensor, actuator and safety interfaces</small></div><div class="layer-cards cols-6">
+            <article class="arch-card"><strong>LiDAR Driver</strong><span>USB / Ethernet measurement interface.</span></article>
+            <article class="arch-card"><strong>IMU Driver</strong><span>I²C / UART inertial interface.</span></article>
+            <article class="arch-card"><strong>Motor Driver Node</strong><span>CAN / RS485 actuator interface.</span></article>
+            <article class="arch-card"><strong>Encoder Interface</strong><span>Pulse / CAN wheel feedback.</span></article>
+            <article class="arch-card"><strong>BMS Interface</strong><span>CAN / RS485 battery information.</span></article>
+            <article class="arch-card"><strong>Safety I/O</strong><span>Discrete E-stop and bumper signals.</span></article>
+          </div></section>
+
+          <footer class="arch-footer"><div>Industrial PC · autonomy + ROS 2</div><div>MCU · deterministic motion control</div><div>Independent safety circuit · E-stop / contactor / safety sensors</div></footer>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    (()=>{const W=1600,H=900,frames=[...document.querySelectorAll('.frame')];function fit(){const s=Math.min(1,(innerWidth-32)/W);frames.forEach(f=>{f.style.width=`${W*s}px`;f.style.height=`${H*s}px`;f.querySelector('.slide').style.transform=`scale(${s})`})}document.querySelectorAll('[data-jump]').forEach(b=>b.addEventListener('click',()=>document.getElementById(b.dataset.jump).scrollIntoView({behavior:'smooth',block:'start'})));document.getElementById('print').addEventListener('click',()=>print());addEventListener('resize',fit);fit()})();
+  </script>
+</body>
+</html>

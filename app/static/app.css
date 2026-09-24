@@ -1,0 +1,619 @@
+/* Self-hosted, because the vehicle has no internet on the floor. A <link> to
+   fonts.googleapis.com renders at a desk and silently falls back to system
+   fonts on the AGV - two appearances for one page. See fonts/LICENSE.md. */
+@font-face { font-family:"Archivo"; font-style:normal; font-weight:600;
+  font-display:swap; src:url("fonts/archivo-600.woff2") format("woff2"); }
+@font-face { font-family:"Archivo"; font-style:normal; font-weight:700;
+  font-display:swap; src:url("fonts/archivo-700.woff2") format("woff2"); }
+@font-face { font-family:"IBM Plex Sans"; font-style:normal; font-weight:400;
+  font-display:swap; src:url("fonts/plex-sans-400.woff2") format("woff2"); }
+@font-face { font-family:"IBM Plex Sans"; font-style:normal; font-weight:500;
+  font-display:swap; src:url("fonts/plex-sans-500.woff2") format("woff2"); }
+@font-face { font-family:"IBM Plex Sans"; font-style:normal; font-weight:600;
+  font-display:swap; src:url("fonts/plex-sans-600.woff2") format("woff2"); }
+@font-face { font-family:"IBM Plex Mono"; font-style:normal; font-weight:400;
+  font-display:swap; src:url("fonts/plex-mono-400.woff2") format("woff2"); }
+@font-face { font-family:"IBM Plex Mono"; font-style:normal; font-weight:500;
+  font-display:swap; src:url("fonts/plex-mono-500.woff2") format("woff2"); }
+@font-face { font-family:"IBM Plex Mono"; font-style:normal; font-weight:600;
+  font-display:swap; src:url("fonts/plex-mono-600.woff2") format("woff2"); }
+
+/* Light only - there is no dark half and no prefers-color-scheme block. A
+   control surface that changes appearance with the operator's OS setting is a
+   surface whose colour semantics cannot be relied on. */
+:root {
+  --paper:#EFF1F5;   --surface:#FFFFFF;  --surface-2:#E4E8EF;
+  /* --ink-3 is 2.4% darker than the reference's #6B7486, same hue and
+     saturation. It carries the 10-11px mono labels, and at #6B7486 those sit
+     at 4.16:1 on --paper - under AA for small text. This is a control surface
+     read at arm's length on a vehicle, so legibility wins over fidelity.
+     4.53:1 on paper, 5.12:1 on a surface tile. */
+  --ink:#14171D;     --ink-2:#3D4553;    --ink-3:#666E7F;
+  --rule:#CBD2DE;    --rule-soft:#DDE2EB;
+  --accent:#1B3A5C;  --accent-2:#2F5F94; --accent-wash:#DFE7F1;
+  --hazard:#E8B900;  --hazard-wash:#FBF2D2;  --hazard-ink:#5E4A00;
+  --ok:#186E42;      --ok-wash:#DDEEE4;
+  --stop:#A32218;    --stop-wash:#F6DEDB;
+
+  --disp:"Archivo","IBM Plex Sans",-apple-system,sans-serif;
+  --sans:"IBM Plex Sans",-apple-system,"Segoe UI",Roboto,sans-serif;
+  --mono:"IBM Plex Mono","SFMono-Regular",Consolas,monospace;
+}
+* { box-sizing:border-box; }
+
+/* One fixed page: the document never scrolls. Everything is sized against the
+   viewport and the only scrollable regions are the log and, as a safety valve,
+   the main column - a control surface must never put DISARM out of reach on a
+   short window. */
+html, body { height:100%; overflow:hidden; }
+body {
+  margin:0; background:var(--paper); color:var(--ink);
+  font:15.5px/1.62 var(--sans); -webkit-font-smoothing:antialiased;
+  touch-action:manipulation;
+  display:flex; flex-direction:column;
+}
+
+/* Selection is off on the CONTROLS only - a long press on the jog pad must not
+   pop a selection callout, and a repeated tap must not select the label under
+   it. Everywhere else it stays on: log paths, statusword hex, alarm codes and
+   IP addresses are read off these pages to be pasted somewhere, and a page you
+   cannot copy a fault code out of is a page somebody retypes it from. */
+button, nav a, .pad, .lamp, .pill, kbd {
+  -webkit-user-select:none; user-select:none;
+}
+
+/* Square corners, 1px rules and no shadows throughout. Emphasis is carried by a
+   left bar in a semantic colour, never by a fill alone - see .warn/.pn-fault. */
+header {
+  display:flex; align-items:center; gap:16px; padding:10px 18px;
+  background:var(--surface); border-bottom:2px solid var(--ink); flex-wrap:wrap;
+  flex:0 0 auto;
+}
+h1 { font:700 17px/1.06 var(--disp); margin:0; letter-spacing:-.022em; }
+nav { display:flex; gap:4px; }
+nav a {
+  padding:6px 14px; text-decoration:none; color:var(--ink-3);
+  border:1px solid transparent;
+  font:600 11.5px var(--mono); letter-spacing:.08em; text-transform:uppercase;
+}
+nav a:hover { color:var(--accent-2); }
+nav a.on { color:var(--accent-2); background:var(--accent-wash); border-color:var(--rule); }
+.pill {
+  margin-left:auto; font:500 11.5px var(--mono); letter-spacing:.06em;
+  padding:4px 10px; background:var(--surface-2); border:1px solid var(--rule);
+  /* --ink-2, not --ink-3: on the darker --surface-2 chip ground the tertiary
+     tone falls to 4.17:1, under AA for text this small. Same reason on .chip
+     and the jog pad's stop button below. */
+  color:var(--ink-2); font-variant-numeric:tabular-nums; text-transform:uppercase;
+}
+.pill.ok  { color:var(--ok);   border-color:var(--ok);   background:var(--ok-wash); }
+.pill.bad { color:var(--stop); border-color:var(--stop); background:var(--stop-wash); }
+
+/* Telemetry rail left, page content right. min-height:0 on both is what lets
+   the children actually shrink instead of overflowing the grid row. */
+.shell {
+  flex:1 1 auto; min-height:0;
+  display:grid; grid-template-columns:300px minmax(0,1fr);
+}
+main {
+  padding:18px; min-height:0; overflow:auto;
+  display:flex; flex-direction:column;
+}
+main > * { flex:0 0 auto; width:100%; max-width:900px; margin-left:auto; margin-right:auto; }
+
+.bar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:16px; }
+button.big {
+  font:600 12px var(--mono); letter-spacing:.09em; text-transform:uppercase;
+  padding:13px 24px; border:1px solid var(--rule);
+  background:var(--surface); color:var(--ink); cursor:pointer;
+}
+button.big:hover:not(:disabled) { border-color:var(--accent-2); color:var(--accent-2); }
+button.big.go  { background:var(--ok);       border-color:var(--ok);       color:#fff; }
+button.big.run { background:var(--accent-2); border-color:var(--accent-2); color:#fff; }
+button.big.off { background:var(--stop);     border-color:var(--stop);     color:#fff; }
+button.big.go:hover:not(:disabled),
+button.big.run:hover:not(:disabled),
+button.big.off:hover:not(:disabled) { color:#fff; filter:brightness(1.12); }
+button.big:disabled { opacity:.32; cursor:not-allowed; }
+button.big:focus-visible { outline:2px solid var(--accent-2); outline-offset:2px; }
+
+/* The service restart on /alarms. Quiet until armed, then it takes the stop
+   colour - a control that de-energises the vehicle should not look the same
+   before and after the press that means it. */
+button.danger {
+  font:600 11.5px var(--mono); letter-spacing:.08em; text-transform:uppercase;
+  padding:8px 16px; border:1px solid var(--rule);
+  background:var(--surface); color:var(--ink-2); cursor:pointer;
+}
+button.danger:hover:not(:disabled) { border-color:var(--stop); color:var(--stop); }
+button.danger.armed {
+  background:var(--stop); border-color:var(--stop); color:#fff;
+}
+button.danger:disabled { opacity:.32; cursor:not-allowed; }
+button.danger:focus-visible { outline:2px solid var(--stop); outline-offset:2px; }
+.hint { color:var(--ink-2); font-size:13px; flex:1 1 240px; }
+
+/* ---- manual pad ---- */
+/* flex:1 with 1fr rows: the pad absorbs the leftover height so the page fits
+   without scrolling. aspect-ratio would fight that - it fixes the height from
+   the width and pushes the legend off the bottom on a short window. */
+.pad {
+  display:grid; grid-template-columns:repeat(3,1fr);
+  grid-template-rows:repeat(3,minmax(0,1fr)); gap:8px;
+  max-width:520px; margin:0 auto; flex:1 1 auto; min-height:230px;
+}
+button.dir {
+  min-height:0; display:flex; flex-direction:column; align-items:center;
+  justify-content:center; gap:2px; cursor:pointer;
+  background:var(--surface); border:1px solid var(--rule); color:var(--ink);
+  font:inherit; transition:background .06s, transform .06s, border-color .06s;
+}
+button.dir .glyph { font-size:30px; line-height:1; }
+button.dir .name  { font:600 11px var(--mono); letter-spacing:.09em; text-transform:uppercase; }
+button.dir .key {
+  font:500 10px var(--mono); color:var(--ink-2); margin-top:3px;
+  letter-spacing:.04em; white-space:nowrap;
+}
+button.dir:disabled { opacity:.3; cursor:not-allowed; }
+/* Active inverts to the accent. On paper the fill has to carry WHITE text - the
+   old dark-ground treatment used near-black, which is unreadable here. */
+button.dir.active:not(:disabled) {
+  background:var(--accent-2); border-color:var(--accent-2); color:#fff;
+  transform:scale(.97);
+}
+button.dir.active .name,
+button.dir.active .key { color:#fff; }
+button.dir.stopbtn { background:var(--surface-2); border-color:var(--rule); }
+button.dir.stopbtn.active { background:var(--stop); border-color:var(--stop); color:#fff; }
+
+.legend { color:var(--ink-2); font-size:13px; max-width:520px; margin:16px auto 0; }
+.legend.keys kbd {
+  background:var(--surface-2); border:1px solid var(--rule); border-bottom-width:2px;
+  padding:1px 5px; font:600 11px var(--mono); color:var(--ink);
+}
+
+/* Callout idiom: wash background, left bar in a semantic colour. Used for every
+   advisory on every page, so they read as one class of thing. */
+.warn {
+  background:var(--hazard-wash); border:1px solid var(--rule);
+  border-left:4px solid var(--hazard); color:var(--hazard-ink);
+  padding:12px 16px; font-size:14px; margin-bottom:16px; max-width:74ch;
+}
+.warn b, .warn strong { color:var(--hazard-ink); font-weight:600; }
+
+/* Headings are styled globally rather than scoped to .sensor: every h2 happens
+   to live in one today, but a scoped rule means the next heading added outside
+   that container silently falls back to the browser's default serif. */
+h2 { font:600 17px var(--disp); letter-spacing:-.012em; margin:0; }
+h3 { font:600 15px var(--disp); letter-spacing:-.006em; margin:0; }
+/* The subtitle after a heading is the reference's eyebrow: mono, uppercase,
+   tracked, tertiary ink. It carries the object numbers and node ids. */
+h2 small, h3 small {
+  font:500 11px var(--mono); letter-spacing:.11em; text-transform:uppercase;
+  color:var(--ink-3); margin-left:10px;
+}
+
+/* ---- sensor ---- */
+.sensor h2 { margin:0 0 12px; }
+.track {
+  position:relative; height:74px; background:var(--surface);
+  border:1px solid var(--rule); margin-bottom:14px; overflow:hidden;
+}
+.track-rule { position:absolute; inset:auto 0 50% 0; height:1px; background:var(--rule); }
+.track-zero { position:absolute; left:50%; top:0; bottom:0; width:1px; background:var(--ink-3); }
+.lcp {
+  position:absolute; top:50%; width:12px; height:26px; margin:-13px 0 0 -6px;
+  background:var(--accent-2); display:none; transition:left .08s linear;
+}
+.lcp[data-n="2"] { background:var(--ok); height:34px; margin-top:-17px; }
+.lcp::after {
+  content:attr(data-mm); position:absolute; top:-16px; left:50%;
+  transform:translateX(-50%); font:500 10px var(--mono);
+  color:var(--ink-3); white-space:nowrap;
+}
+/* Full-scale marks. Small and low-contrast - they are a reference the eye
+   checks once, not a value it reads. */
+.track-end {
+  position:absolute; bottom:3px; font:500 10px var(--mono); color:var(--ink-3);
+  font-variant-numeric:tabular-nums; pointer-events:none;
+}
+.track-lo { left:5px; }
+.track-hi { right:5px; }
+.track-empty {
+  position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+  color:var(--ink-3); font:500 11px var(--mono);
+  letter-spacing:.12em; text-transform:uppercase;
+}
+
+/* ---- telemetry rail ---- */
+#telemetry {
+  border-right:1px solid var(--rule); background:var(--surface); padding:14px;
+  display:flex; flex-direction:column; gap:10px; min-height:0; overflow:hidden;
+}
+.tel-grid {
+  display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr));
+  gap:8px; max-width:900px; margin:0 auto;
+}
+/* In the rail the tiles pack 2x2 and the log claims everything below. */
+#telemetry .tel-grid { grid-template-columns:repeat(2,minmax(0,1fr)); max-width:none; margin:0; }
+#telemetry .states { margin:0; flex-direction:column; }
+/* "node 1 left 0x1737 Operation enabled" is 37 monospace chars - at 12px it
+   wraps mid-word in a 300px rail, so drop a size and let it break cleanly. */
+#telemetry .st { font-size:11px; line-height:1.4; }
+.tel {
+  background:var(--surface); border:1px solid var(--rule);
+  padding:8px 12px; display:flex; flex-direction:column;
+}
+.tel span {
+  font:500 10px var(--mono); color:var(--ink-3);
+  text-transform:uppercase; letter-spacing:.11em;
+}
+.tel b { font:600 19px var(--mono); color:var(--ink); font-variant-numeric:tabular-nums; }
+.tel i { font:400 11px var(--mono); color:var(--ink-3); font-style:normal; }
+
+/* ---- reading order on the sensor pages -----------------------------------
+   These tiles are read at arm's length, in motion, by somebody who also has a
+   hand on the vehicle. They are NOT equally important and were being rendered
+   as though they were: #LCP, the tape position and the station tag are the
+   three facts worth a glance, and field/level/link/count are context that only
+   matters when something is already wrong.
+
+   So the first group is enlarged and washed, the rest is left exactly as it
+   was. Emphasis by size and ground rather than by colour alone - the same rule
+   the alarm rows follow, and for the same reason. */
+.tel.key {
+  background:var(--accent-wash); border-color:var(--accent-2);
+}
+.tel.key b { font-size:34px; line-height:1.1; }
+
+/* The station tag is the one an operator copies down off the screen, so it is
+   the largest thing on the page - ~2.3x the ordinary tile. */
+.tel.tag b { font-size:44px; line-height:1.06; }
+
+/* Tag left and full height, link above count on the right: the tag earns the
+   space, and the two context tiles stack beside it instead of shrinking it to
+   a third of the row. */
+.rfid-grid {
+  display:grid; grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);
+  gap:8px; max-width:900px; margin:0 auto;
+}
+/* The side tiles are a nested column rather than more grid cells, so the tag
+   stays full height whether there are two of them (/manual) or three (/auto).
+   Row spanning would have to be told how many. */
+.rfid-side { display:flex; flex-direction:column; gap:8px; min-width:0; }
+.rfid-side .tel { flex:1 1 0; }
+.rfid-grid .tel.tag { justify-content:center; }
+/* The reader identity is ~100 characters of firmware banner. It is genuinely
+   context - read once at commissioning - but unclamped it sets the row height
+   and shoulders the tag aside, which is most of why this row was unreadable.
+   Two lines then ellipsis; the whole string stays in the tooltip. */
+.rfid-grid .tel { min-width:0; }
+#r-detail {
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+  overflow:hidden; overflow-wrap:anywhere;
+}
+@media (max-width:560px) {
+  .rfid-grid { grid-template-columns:minmax(0,1fr); }
+}
+.states { display:flex; gap:8px; max-width:900px; margin:10px auto 0; flex-wrap:wrap; }
+.st {
+  font:400 12px var(--mono); color:var(--ink-2); background:var(--surface-2);
+  border:1px solid var(--rule-soft); padding:5px 10px;
+}
+.st.bad {
+  color:var(--stop); border-color:var(--stop); border-left-width:3px;
+  background:var(--stop-wash);
+}
+#log {
+  margin:0; font:400 11.5px/1.6 var(--mono);
+  color:var(--ink-2); white-space:pre-wrap; overflow-y:auto;
+  background:var(--surface-2); border:1px solid var(--rule);
+  padding:8px 10px; flex:1 1 auto; min-height:60px;
+}
+
+/* The tape strip on the manual page sits above the jog pad, so it is capped to
+   the same width - .pad is 520px inside a 900px main and a full-bleed strip
+   above it reads as a different column. */
+.pad-width { max-width: 520px; margin: 0 auto 18px; }
+
+/* Below this the rail and the pad cannot share a row usefully, so fall back to
+   the stacked layout and let the document scroll - unreachable controls are a
+   worse failure than a scrollbar. */
+@media (max-width:820px) {
+  html, body { overflow:auto; }
+  .shell { display:block; }
+  #telemetry { border-right:none; border-bottom:1px solid var(--rule); }
+  #telemetry .tel-grid { grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); }
+  #telemetry .states { flex-direction:row; }
+  #log { max-height:110px; }
+  .pad { min-height:0; }
+  button.dir { aspect-ratio:1/1; }
+}
+
+/* ---- monitor page -------------------------------------------------------
+   Read-only diagnostics. Two drives side by side so left/right divergence is
+   visible at a glance - that is the whole point of showing them together. */
+.mon-grid { display:flex; gap:14px; flex-wrap:wrap; }
+.mon-node { flex:1 1 280px; min-width:0; }
+.mon-node h3 {
+  font:600 10.5px var(--mono); color:var(--ink-3); text-transform:uppercase;
+  letter-spacing:.11em; margin:0 0 8px;
+}
+/* A monitored value that crosses its warn or trip threshold has to be findable
+   without reading every tile, so the tile itself carries the colour. */
+.tel.warn {
+  border-color:var(--rule); border-left:3px solid var(--hazard);
+  background:var(--hazard-wash);
+}
+.tel.warn b { color:var(--hazard-ink); }
+.tel.bad {
+  border-color:var(--rule); border-left:3px solid var(--stop);
+  background:var(--stop-wash);
+}
+.tel.bad b { color:var(--stop); }
+
+.chips { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
+.chip {
+  font:600 10px var(--mono); letter-spacing:.09em; text-transform:uppercase;
+  padding:3px 7px; border:1px solid var(--rule);
+  color:var(--ink-2); background:var(--surface-2);
+}
+.chip.warn  { border-color:var(--hazard); color:var(--hazard-ink); background:var(--hazard-wash); }
+.chip.error { border-color:var(--stop);   color:var(--stop);       background:var(--stop-wash); }
+
+.mon-alarms { display:flex; flex-direction:column; gap:8px; }
+.mon-alarm {
+  padding:11px 15px; border:1px solid var(--rule);
+  border-left:3px solid var(--rule); background:var(--surface);
+}
+.mon-alarm.warn  { border-left-color:var(--hazard); background:var(--hazard-wash); }
+.mon-alarm.error { border-left-color:var(--stop);   background:var(--stop-wash); }
+.mon-alarm b { font:600 14px var(--mono); margin-right:8px; color:var(--ink); }
+.mon-alarm-node {
+  float:right; font:500 10.5px var(--mono); color:var(--ink-3);
+  text-transform:uppercase; letter-spacing:.09em;
+}
+.mon-none { color:var(--ink-3); font-size:13.5px; padding:6px 0; }
+.mon-note { color:var(--ink-2); font-size:12.5px; margin:8px 0 0; line-height:1.6; max-width:74ch; }
+
+.mon-policy { display:flex; gap:24px; flex-wrap:wrap; }
+.mon-policy h3 {
+  font:600 10.5px var(--mono); color:var(--accent-2); text-transform:uppercase;
+  letter-spacing:.09em; margin:0 0 6px;
+}
+.mon-policy ul { margin:0; padding-left:18px; }
+.mon-policy li { font-size:13px; line-height:1.75; color:var(--ink-2); }
+code, .mon-policy code {
+  font:400 .885em var(--mono); background:var(--surface-2); color:var(--ink);
+  padding:1px 5px; border-radius:2px; white-space:nowrap;
+}
+
+/* ---- I/O page ---------------------------------------------------------- */
+/* Two panels side by side, each 16 rows. The page is fixed-height like every
+   other one, so the lists scroll inside their panel rather than the document. */
+.io-cols { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
+@media (max-width:820px) { .io-cols { grid-template-columns:1fr; } }
+
+.io-list {
+  display:flex; flex-direction:column;
+  border:1px solid var(--rule); background:var(--surface);
+}
+.io-row {
+  display:grid; grid-template-columns:48px 18px 1fr; align-items:center;
+  gap:10px; padding:4px 10px; border-bottom:1px solid var(--rule-soft);
+}
+.io-row:last-child { border-bottom:none; }
+.io-ch {
+  font:600 11px var(--mono); color:var(--ink-3);
+  letter-spacing:.06em; font-variant-numeric:tabular-nums;
+}
+/* Fixed width and a reserved min-height so filling names in later cannot
+   reflow the grid or change the page's height. */
+.io-name {
+  font-size:12.5px; color:var(--ink-2); min-height:1.2em;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+
+/* What the vehicle is doing to an output, beside the readback lamp. Small and
+   grey on purpose: it is a qualifier on the lamp, not a second lamp. The name
+   column already says what the channel is, and the lamp beside it already
+   says what the channel is doing. Only "held on" is coloured, and it borrows
+   the DO lamp's hazard ink so the row reads as one statement. */
+.io-cmd {
+  font:600 10px var(--mono); color:var(--ink-3);
+  letter-spacing:.06em; text-transform:uppercase; white-space:nowrap;
+}
+.io-cmd.on { color:var(--hazard-ink); }
+
+/* The one deliberate exception to square corners: a round indicator is the
+   convention for a lamp, and a square one would read as a button. The dark
+   theme's outer glow is gone - it is a dark-ground device that only muddies the
+   edge on paper - so the lit state is carried by fill and ring alone. */
+.lamp {
+  width:14px; height:14px; border-radius:50%;
+  border:1px solid var(--rule); background:var(--surface-2);
+  transition:background .08s linear, border-color .08s linear;
+}
+/* Inputs and outputs are deliberately different colours: at a glance, a live
+   INPUT and an energised OUTPUT must never be mistaken for each other. */
+.lamp.on    { background:var(--accent-2); border-color:var(--accent); }
+.lamp.do.on { background:var(--hazard);   border-color:var(--hazard-ink); }
+
+/* Stale: the lamps are last-known, not current. Dimmed and desaturated so the
+   page cannot be misread as a live view of an idle module. */
+#io-grid.stale { opacity:.38; filter:grayscale(1); }
+/* Same treatment for the IMU tiles: a sensor that stopped answering keeps its
+   last numbers, dimmed, rather than showing a live-looking value. */
+#mon-imu.stale, .tel.stale { opacity:.38; filter:grayscale(1); }
+
+/* ---- operator panel strip ---------------------------------------------- */
+.panel-strip {
+  display:flex; align-items:center; gap:18px; flex-wrap:wrap;
+  padding:7px 12px; margin-bottom:12px;
+  border:1px solid var(--rule); border-left:3px solid var(--accent-2);
+  background:var(--surface);
+  font:500 11px var(--mono); letter-spacing:.08em; text-transform:uppercase;
+  color:var(--ink-3);
+}
+.panel-strip b {
+  color:var(--ink); font-weight:600; font-variant-numeric:tabular-nums;
+  text-transform:none; letter-spacing:.02em;
+}
+/* A latched fault is the reason a button press does nothing, so it gets the
+   loudest treatment on the page rather than a line in the log. */
+.pn-fault {
+  margin-left:auto; padding:3px 10px;
+  border:1px solid var(--stop); border-left-width:3px;
+  background:var(--stop-wash); color:var(--stop);
+  font-weight:600; text-transform:none; letter-spacing:.01em;
+}
+
+/* ---- blind run ---------------------------------------------------------- */
+.blind-segments { display:flex; flex-direction:column; gap:6px; margin-bottom:10px; }
+.blind-row { display:flex; flex-wrap:wrap; gap:8px 14px; align-items:center; margin:0 0 10px; }
+.blind-seg { padding:8px; border:1px solid var(--rule); background:var(--surface); margin:0; }
+.blind-fields { display:flex; flex-wrap:wrap; gap:6px 14px; flex:1 1 280px; }
+.blind-row label { font-size:13px; color:var(--ink-2); }
+.blind-row input, .blind-row select {
+  font:400 13px var(--mono); color:var(--ink); background:var(--surface);
+  border:1px solid var(--rule); padding:5px 8px; width:9em; max-width:100%;
+}
+.blind-row input:focus-visible, .blind-row select:focus-visible {
+  outline:2px solid var(--accent-2); outline-offset:1px;
+}
+.blind-error { color:var(--stop); }
+.blind-table-wrap { overflow-x:auto; }
+.blind-table { border-collapse:collapse; width:100%; font:400 12.5px var(--mono); }
+.blind-table th, .blind-table td {
+  border-bottom:1px solid var(--rule-soft); padding:5px 8px; text-align:left; white-space:nowrap;
+}
+.blind-table th { color:var(--ink-2); font-weight:600; }
+/* The status banner. Big and bordered because it is read from beside the
+   vehicle, and it carries the one instruction that matters: where Start is. */
+.auto-summary { border:2px solid var(--rule); padding:clamp(16px,3vw,32px); margin-bottom:20px; overflow-wrap:anywhere; }
+.auto-status { font-weight:700; letter-spacing:.06em; margin-bottom:18px; }
+.auto-detail { color:var(--ink-2); font-size:13px; }
+
+/* ---- alarms page --------------------------------------------------------
+   White, orange, red. The level is carried by a left bar AND a text label, not
+   by colour alone: a colour-only scheme is unreadable to a good fraction of
+   operators, and it disappears entirely in a photograph of the screen - which
+   is how a fault usually gets reported to somebody who was not there. */
+.al-filters {
+  display:flex; align-items:center; gap:16px; flex-wrap:wrap;
+  padding:8px 0 12px; font-size:12.5px; color:var(--ink-2);
+}
+.al-filters label { display:inline-flex; align-items:center; gap:6px; }
+.al-filters .fixed { color:var(--ink-3); }
+.al-filters .fixed i { font-style:normal; font-size:11px; }
+.al-count {
+  margin-left:auto; font:500 11px var(--mono); color:var(--ink-3);
+  font-variant-numeric:tabular-nums;
+}
+
+.al-log {
+  border:1px solid var(--rule); background:var(--surface);
+  max-height:60vh; overflow-y:auto;
+}
+.al-row {
+  display:grid; grid-template-columns:auto 54px 1fr; align-items:baseline;
+  gap:10px; padding:5px 10px 5px 12px;
+  border-bottom:1px solid var(--rule-soft); border-left:4px solid var(--rule);
+  font-size:12.5px;
+}
+.al-row:last-child { border-bottom:none; }
+.al-time, .al-lv {
+  font:500 11px var(--mono); color:var(--ink-3);
+  font-variant-numeric:tabular-nums;
+}
+.al-lv { text-transform:uppercase; letter-spacing:.07em; }
+.al-msg, .al-detail { color:var(--ink-2); overflow-wrap:anywhere; }
+.al-what { font-weight:600; color:var(--ink); }
+
+/* The standing list is the same row shape, minus the timestamp. */
+#al-standing .al-row { grid-template-columns:54px auto 1fr; }
+
+.lv-info  { border-left-color:var(--rule); background:var(--surface); }
+.lv-warn  { border-left-color:var(--hazard); background:var(--hazard-wash); }
+.lv-warn  .al-lv { color:var(--hazard-ink); }
+.lv-error { border-left-color:var(--stop); background:var(--stop-wash); }
+.lv-error .al-lv, .lv-error .al-what { color:var(--stop); }
+
+/* ---- parameters page ----------------------------------------------------
+   A reference table, not a control surface: no lamps, no colour semantics and
+   nothing that changes while you read it. Rows are two columns and a note
+   toggle, so a value can be found by scanning down one edge - which is what
+   somebody comparing the screen against a profile in an editor is doing. */
+.pm-id { display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; }
+.pm-id-name {
+  font:700 21px var(--disp); letter-spacing:-.015em; color:var(--accent);
+}
+.pm-id-path { font-size:12.5px; color:var(--ink-3); overflow-wrap:anywhere; }
+
+.pm-list {
+  display:flex; flex-direction:column;
+  border:1px solid var(--rule); background:var(--surface);
+}
+.pm-row {
+  display:grid; grid-template-columns:minmax(0,1fr) minmax(0,15em) 3.6em;
+  align-items:baseline; gap:12px; padding:6px 10px 6px 12px;
+  border-bottom:1px solid var(--rule-soft);
+}
+.pm-row:last-child { border-bottom:none; }
+.pm-row[hidden] { display:none; }
+.pm-sec[hidden] { display:none; }
+
+/* The JSON key leads, because that is what gets edited; the exported constant
+   and the derivation sit under it in the tertiary tone. */
+.pm-key {
+  font:600 13px var(--mono); color:var(--ink); overflow-wrap:anywhere;
+}
+.pm-key i {
+  display:block; font:400 11px var(--mono); color:var(--ink-3);
+  font-style:normal; overflow-wrap:anywhere;
+}
+/* Tabular figures and a right-hand unit: 0.001875 under 0.0075 lines up, which
+   is the only way a mis-scaled fraction is visible without reading both. */
+.pm-val {
+  font:500 14px var(--mono); color:var(--ink); font-variant-numeric:tabular-nums;
+  overflow-wrap:anywhere;
+}
+.pm-val i {
+  font:400 11px var(--mono); color:var(--ink-3); font-style:normal;
+  margin-left:6px;
+}
+
+/* config.py's own paragraph about the key, collapsed. Open, it keeps the
+   author's line breaks - the notes contain small tables of tuning points that
+   reflow into nonsense as prose. */
+.pm-note summary {
+  font:500 10px var(--mono); letter-spacing:.09em; text-transform:uppercase;
+  color:var(--ink-3); cursor:pointer; list-style:none; text-align:right;
+}
+.pm-note summary::-webkit-details-marker { display:none; }
+.pm-note summary:hover { color:var(--accent-2); }
+/* Open, the note claims a row of its own under the value it explains. */
+.pm-note[open] {
+  grid-column:1 / -1; border-left:3px solid var(--accent-wash);
+  margin:4px 0 2px; padding-left:10px;
+}
+.pm-note[open] summary {
+  color:var(--accent-2); text-align:left; margin-bottom:4px;
+}
+.pm-note pre {
+  margin:0; font:400 12px/1.6 var(--mono); color:var(--ink-2);
+  white-space:pre-wrap; overflow-wrap:anywhere; max-width:74ch;
+}
+.pm-secnote { margin:0 0 10px; }
+
+.al-filters input[type=search] {
+  font:400 12.5px var(--mono); color:var(--ink); background:var(--surface);
+  border:1px solid var(--rule); padding:5px 8px; min-width:15em;
+}
+.al-filters input[type=search]:focus-visible {
+  outline:2px solid var(--accent-2); outline-offset:1px;
+}
+
+@media (max-width:820px) {
+  .pm-row { grid-template-columns:minmax(0,1fr) minmax(0,8em) 3.6em; }
+}

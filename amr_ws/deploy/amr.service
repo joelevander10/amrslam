@@ -1,0 +1,40 @@
+[Unit]
+Description=Unified AMR supervisor, hardware, web UI, mapping and navigation
+Documentation=file:///home/gvipc-evo-01/agv_can/amr_ws/RUNBOOK.md
+After=network-online.target sys-subsystem-net-devices-can0.device
+Wants=network-online.target
+BindsTo=sys-subsystem-net-devices-can0.device
+Conflicts=agv_controller.service amr_nav.service amr_mapping.service
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=gvipc-evo-01
+Group=gvipc-evo-01
+WorkingDirectory=/home/gvipc-evo-01/agv_can/amr_ws
+Environment=HOME=/home/gvipc-evo-01
+EnvironmentFile=/home/gvipc-evo-01/agv_can/amr_ws/deploy/amr.env
+
+# Device owners take advisory locks here before opening CAN or Modbus. The
+# sticky directory lets the legacy and unified services use the same locks
+# during the migration window.
+ExecStartPre=+/usr/bin/install -d -o root -g root -m 1777 /run/lock/amr
+ExecStartPre=+/usr/bin/install -d -o gvipc-evo-01 -g gvipc-evo-01 -m 0755 ${AMR_STATE_DIR}
+ExecStartPre=+/usr/bin/install -d -o gvipc-evo-01 -g gvipc-evo-01 -m 0755 ${AMR_MAPS_DIR}
+ExecStart=/home/gvipc-evo-01/agv_can/amr_ws/deploy/amr-supervisor.sh
+
+# SIGINT lets the supervisor revoke its lease, stop the active mode layer,
+# disarm the drives through base.launch.py, then stop web/bridge. If that
+# bounded path hangs, systemd kills the whole cgroup after TimeoutStopSec.
+KillSignal=SIGINT
+KillMode=mixed
+TimeoutStopSec=55
+SendSIGKILL=yes
+
+Restart=on-failure
+RestartSec=5
+UMask=0022
+
+[Install]
+WantedBy=multi-user.target

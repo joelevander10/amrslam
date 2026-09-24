@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}AGV — I/O{% endblock %}
+{% block body %}
+
+<section class="sensor">
+  <h2>Digital I/O <small>Modbus TCP · {{ dio_ip }} · {{ scan_hz }} Hz scan</small></h2>
+  <div class="tel-grid">
+    <div class="tel"><span>Link</span><b id="io-link">–</b><i id="io-detail">—</i></div>
+    <div class="tel"><span>Scans</span><b id="io-scans">–</b><i id="io-age">—</i></div>
+    <div class="tel"><span>Errors</span><b id="io-errors">–</b><i>since start</i></div>
+  </div>
+</section>
+
+{# Dimmed as a whole when the scan is stale: 32 lamps reading "off" because
+   nothing answered looks exactly like 32 lamps reading a genuinely idle
+   module, and that is the most dangerous thing this page could show. #}
+<div id="io-grid" class="io-cols">
+  <section class="sensor">
+    <h2>Inputs <small>discrete inputs · read every scan</small></h2>
+    <div class="io-list">
+      {% for name in di_names %}
+      <div class="io-row">
+        <span class="io-ch">DI{{ '%02d' % loop.index0 }}</span>
+        <span class="lamp" id="di-{{ loop.index0 }}"></span>
+        <span class="io-name" id="di-n-{{ loop.index0 }}">{{ name }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="sensor">
+    <h2>Outputs <small>coil readback · commanded by the vehicle, never
+        from this page</small></h2>
+    <div class="io-list">
+      {% for name in do_names %}
+      <div class="io-row">
+        <span class="io-ch">DO{{ '%02d' % loop.index0 }}</span>
+        <span class="lamp do" id="do-{{ loop.index0 }}"></span>
+        <span class="io-name" id="do-n-{{ loop.index0 }}">{{ name }}</span>
+        {# Filled in from the snapshot: a coil this software holds says so,
+           because an unclaimed dark lamp and a lamp being held dark are the
+           same picture and opposite facts. #}
+        <span class="io-cmd" id="do-c-{{ loop.index0 }}"></span>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+</div>
+
+{% endblock %}
+
+{% block script %}
+<script src="{{ url_for('static', filename='io.js') }}"></script>
+{% endblock %}

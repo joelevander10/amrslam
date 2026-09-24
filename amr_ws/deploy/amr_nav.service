@@ -1,0 +1,30 @@
+[Unit]
+Description=AMR runtime: drives, panel, lidar, AMCL, route executor, web app (:5001)
+Documentation=file:///home/gvipc-evo-01/agv_can/amr_ws/RUNBOOK.md
+After=network-online.target sys-subsystem-net-devices-can0.device
+Wants=network-online.target
+BindsTo=sys-subsystem-net-devices-can0.device
+# One owner of can0 and of the DIO coil (spec 3.1, 3.4). Conflicts= is
+# symmetric: starting this stops the others, starting them stops this.
+Conflicts=agv_controller.service amr_mapping.service amr.service
+
+[Service]
+Type=simple
+User=gvipc-evo-01
+Group=gvipc-evo-01
+WorkingDirectory=/home/gvipc-evo-01/agv_can/amr_ws
+Environment=HOME=/home/gvipc-evo-01
+EnvironmentFile=/home/gvipc-evo-01/agv_can/amr_ws/deploy/amr_legacy.env
+ExecStart=/home/gvipc-evo-01/agv_can/amr_ws/deploy/amr-launch.sh amr_bringup nav.launch.py sim:=false map_id:=${AMR_MAP_ID} revision:=${AMR_MAP_REVISION} maps_dir:=${AMR_MAPS_DIR} foxglove:=${AMR_FOXGLOVE} web:=true
+
+# *** SAFETY - keep SIGINT ***  ros2 launch forwards it; drive_node's clean exit
+# zeroes, clears 1016h, de-energises; panel_node quiesces the horn coil low.
+KillSignal=SIGINT
+KillMode=mixed
+TimeoutStopSec=25
+
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

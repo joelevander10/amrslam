@@ -1,0 +1,42 @@
+# sick_safetyscanners2 parameters for the nanoScan3 on enp3s0.
+#
+# Addresses come from the existing controller's config (LIDAR_SENSOR_IP,
+# LIDAR_HOST_IP, LIDAR_PORT) and manuals/rfid-setup + /etc/netplan/70-nanoscan3.yaml.
+#
+# On start the driver opens a CoLa2 session (TCP 2122) and writes the UDP
+# output settings of `channel` on the scanner: host_ip, host_udp_port and the
+# feature flags below. This is the data-output configuration only; it is not
+# part of the verified safety configuration (fields, monitoring cases), and
+# Safety Designer stays humans-only, read-only.
+#
+# The controller's passive listener (drivers/lidar.py) used to bind the same
+# host port; it was removed on 2026-09-16 and ROS owns the port outright. The
+# standalone bench tool drivers/lidar_scan.py still binds it when hand-run, so
+# stop this driver before using that.
+sick_safetyscanners2_node:
+  ros__parameters:
+    frame_id: "laser_frame"          # spec §2.3, exact string
+    sensor_ip: "192.168.3.10"
+    host_ip: "192.168.3.2"
+    interface_ip: "0.0.0.0"
+    host_udp_port: 6060
+    channel: 0
+    channel_enabled: true
+    skip: 0                          # publish every scan (~34 Hz); raise to 1 for ~17 Hz if the N97 needs it
+    # The mount has a wall behind the scanner: only about +/-95 deg is usable
+    # (operator, 2026-09-16). Beams outside that hit the vehicle itself and
+    # must not reach AMCL or the costmap. Radians, 0 = scanner forward.
+    # Verified on the unit 2026-09-16 (T10): the driver publishes -96.2..+95.7
+    # deg, 1152 beams at 0.167 deg, ~34 Hz, stamp-to-receive delay ~1 ms;
+    # nothing inside the window returns closer than 2.25 m, so no vehicle or
+    # rear-wall hits. Fields: 3 output paths (path 0 = safety OSSD).
+    angle_start: -1.658
+    angle_end: 1.658
+    time_offset: 0.0
+    general_system_state: true
+    derived_settings: true
+    measurement_data: true
+    intrusion_data: true             # protective/warning field status (plan §4.1)
+    application_io_data: true
+    use_persistent_config: false
+    min_intensities: 0.0

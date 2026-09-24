@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>{% block title %}AGV{% endblock %}</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body>
+<header>
+  <h1>AGV control</h1>
+  <nav>
+    <a href="/manual" class="{{ 'on' if page == 'manual' }}">Manual</a>
+    <a href="/io"     class="{{ 'on' if page == 'io' }}">I/O</a>
+    <a href="/blind"  class="{{ 'on' if page == 'blind' }}">Blind run</a>
+    <a href="/alarms" class="{{ 'on' if page == 'alarms' }}">Alarms</a>
+    <a href="/monitor" class="{{ 'on' if page == 'monitor' }}">Monitor</a>
+    <a href="/params" class="{{ 'on' if page == 'params' }}">Params</a>
+  </nav>
+  <div id="link" class="pill">connecting…</div>
+</header>
+
+<div class="shell">
+  <aside id="telemetry">
+    {# The shared rail. Loop timing, frames-per-tick and the watchdog countdown
+       used to live here; they are diagnostics for someone tuning the control
+       loop, not facts an operator acts on, so they moved to /monitor. What is
+       here is what somebody standing next to the vehicle needs. #}
+    <div class="tel-grid">
+      <div class="tel"><span>Battery</span><b id="batt">–</b><i id="batt-note">V</i></div>
+      <div class="tel"><span>State</span><b id="vstate">–</b><i id="vstate-note">—</i></div>
+      <div class="tel"><span>Left</span><b id="rpm-1">–</b><i>r/min</i></div>
+      <div class="tel"><span>Right</span><b id="rpm-2">–</b><i>r/min</i></div>
+      <div class="tel"><span>Setpoint</span><b id="setpoint">0 / 0</b><i>L / R</i></div>
+      <div class="tel"><span>Alarm</span><b id="alarm">–</b><i id="alarm-note">—</i></div>
+      {# The gyro, on every page. Yaw rate is the one IMU number worth a
+         glance from beside the vehicle; the rest is on /monitor. Hidden when
+         the profile has no IMU, greyed when it stops answering. #}
+      <div class="tel" id="rail-imu" hidden><span>Yaw rate</span><b id="rail-gz">–</b><i id="rail-gz-note">°/s</i></div>
+      <div class="tel" id="rail-horn" hidden><span>Horn</span><b id="rail-horn-state">–</b><i id="rail-horn-note">—</i></div>
+    </div>
+
+    <div class="states">
+      <div id="st-1" class="st">node 1 –</div>
+      <div id="st-2" class="st">node 2 –</div>
+    </div>
+    <pre id="log"></pre>
+  </aside>
+
+  <main>{% block body %}{% endblock %}</main>
+</div>
+
+{# Runs BEFORE common.js, which polls immediately on load. A page that claims
+   the auto watchdog has to declare it here, not in the script block below. #}
+{% block prescript %}{% endblock %}
+<script src="{{ url_for('static', filename='common.js') }}"></script>
+{% block script %}{% endblock %}
+</body>
+</html>

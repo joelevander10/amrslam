@@ -1,0 +1,1010 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GVIEVO-01 SLAM</title>
+<style>
+  @font-face { font-family: "Archivo"; src: url("../../amr_ws/src/amr_web/amr_web/static/fonts/archivo-600.woff2") format("woff2"); font-weight: 600; font-display: swap; }
+  @font-face { font-family: "Archivo"; src: url("../../amr_ws/src/amr_web/amr_web/static/fonts/archivo-700.woff2") format("woff2"); font-weight: 700; font-display: swap; }
+  @font-face { font-family: "IBM Plex Sans"; src: url("../../amr_ws/src/amr_web/amr_web/static/fonts/plex-sans-400.woff2") format("woff2"); font-weight: 400; font-display: swap; }
+  @font-face { font-family: "IBM Plex Sans"; src: url("../../amr_ws/src/amr_web/amr_web/static/fonts/plex-sans-600.woff2") format("woff2"); font-weight: 600; font-display: swap; }
+  @font-face { font-family: "IBM Plex Mono"; src: url("../../amr_ws/src/amr_web/amr_web/static/fonts/plex-mono-400.woff2") format("woff2"); font-weight: 400; font-display: swap; }
+  @font-face { font-family: "IBM Plex Mono"; src: url("../../amr_ws/src/amr_web/amr_web/static/fonts/plex-mono-500.woff2") format("woff2"); font-weight: 500; font-display: swap; }
+  @font-face { font-family: "IBM Plex Mono"; src: url("../../amr_ws/src/amr_web/amr_web/static/fonts/plex-mono-600.woff2") format("woff2"); font-weight: 600; font-display: swap; }
+
+  :root {
+    --paper: #eff1f5;
+    --surface: #ffffff;
+    --surface-2: #e4e8ef;
+    --ink: #14171d;
+    --ink-2: #3d4553;
+    --ink-3: #666e7f;
+    --rule: #cbd2de;
+    --rule-soft: #dde2eb;
+    --accent: #1b3a5c;
+    --accent-2: #2f5f94;
+    --on-accent: #ffffff;
+    --ok: #186e42;
+    --hazard-ink: #5e4a00;
+    --stop: #a32218;
+    --stop-wash: #f6dedb;
+    --violet: #66578f;
+    --cyan: #2e7180;
+    --blue-wash: #e8eff8;   --blue-line: #688ab0;
+    --green-wash: #e5f1ec;  --green-line: #59927d;
+    --amber-wash: #fbf2d2;  --amber-line: #b68e16;
+    --violet-wash: #eeeaf7; --violet-line: #8a7eb0;
+    --cyan-wash: #e1f0f2;   --cyan-line: #5f9aa6;
+    --grey-wash: #eef0f4;   --grey-line: #8d96a4;
+    --card: rgba(255,255,255,.8);
+    --wire: #8792a2;
+    --math-bg: #f3f5f9;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #0f1319; --surface: #171c24; --surface-2: #1f2530;
+      --ink: #e6e9ef; --ink-2: #b9c0cc; --ink-3: #8a93a3;
+      --rule: #333b48; --rule-soft: #262d38;
+      --accent: #9cc0e8; --accent-2: #7fa9dc; --on-accent: #0f1319;
+      --ok: #7fcfa2; --hazard-ink: #e8c75a; --stop: #ef7b70; --stop-wash: #3a1c1a;
+      --violet: #b9aee0; --cyan: #7ec6d3;
+      --blue-wash: #182536;   --blue-line: #3f5f85;
+      --green-wash: #15291f;  --green-line: #3f7a62;
+      --amber-wash: #2d2610;  --amber-line: #8a6d14;
+      --violet-wash: #231f33; --violet-line: #6a5f91;
+      --cyan-wash: #132a2e;   --cyan-line: #3f7f8a;
+      --grey-wash: #1d222b;   --grey-line: #5b6474;
+      --card: rgba(15,19,25,.5); --wire: #6b7585; --math-bg: #11151c;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #0f1319; --surface: #171c24; --surface-2: #1f2530;
+    --ink: #e6e9ef; --ink-2: #b9c0cc; --ink-3: #8a93a3;
+    --rule: #333b48; --rule-soft: #262d38;
+    --accent: #9cc0e8; --accent-2: #7fa9dc; --on-accent: #0f1319;
+    --ok: #7fcfa2; --hazard-ink: #e8c75a; --stop: #ef7b70; --stop-wash: #3a1c1a;
+    --violet: #b9aee0; --cyan: #7ec6d3;
+    --blue-wash: #182536;   --blue-line: #3f5f85;
+    --green-wash: #15291f;  --green-line: #3f7a62;
+    --amber-wash: #2d2610;  --amber-line: #8a6d14;
+    --violet-wash: #231f33; --violet-line: #6a5f91;
+    --cyan-wash: #132a2e;   --cyan-line: #3f7f8a;
+    --grey-wash: #1d222b;   --grey-line: #5b6474;
+    --card: rgba(15,19,25,.5); --wire: #6b7585; --math-bg: #11151c;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    color: var(--ink);
+    background: var(--paper);
+    font: 16px/1.45 "IBM Plex Sans", Arial, sans-serif;
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+  }
+  button { font: inherit; }
+  code { font: 500 .92em "IBM Plex Mono", ui-monospace, monospace; }
+
+  .toolbar {
+    position: sticky;
+    top: env(safe-area-inset-top, 0px);
+    z-index: 20;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    background: var(--surface);
+    border-bottom: 2px solid var(--ink);
+  }
+  .toolbar strong {
+    margin-right: 10px;
+    font: 700 15px "Archivo", Arial, sans-serif;
+    letter-spacing: -.015em;
+  }
+  .toolbar button {
+    border: 1px solid var(--rule);
+    border-radius: 0;
+    background: var(--surface);
+    color: var(--ink-2);
+    padding: 7px 11px;
+    cursor: pointer;
+    font: 600 11px "IBM Plex Mono", ui-monospace, monospace;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+  }
+  .toolbar button:hover,
+  .toolbar button:focus-visible {
+    color: var(--accent-2);
+    border-color: var(--accent-2);
+    outline: 2px solid var(--accent-2);
+    outline-offset: 2px;
+  }
+  .toolbar .meta {
+    margin-left: auto;
+    color: var(--ink-3);
+    font: 500 10.5px "IBM Plex Mono", ui-monospace, monospace;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+
+  .deck { padding: 22px 16px 60px; display: grid; gap: 24px; }
+  .frame-wrap { overflow-x: auto; }
+  .frame {
+    position: relative;
+    margin: 0 auto;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    overflow: hidden;
+    scroll-margin-top: 66px;
+  }
+  .slide {
+    position: absolute;
+    inset: 0 auto auto 0;
+    width: 1600px;
+    height: 900px;
+    transform-origin: top left;
+    overflow: hidden;
+    background: var(--surface);
+  }
+  .slide::after {
+    content: "";
+    position: absolute;
+    inset: 13px;
+    border: 1px solid var(--rule-soft);
+    pointer-events: none;
+  }
+
+  .slide-head {
+    position: absolute;
+    top: 38px; left: 68px; right: 68px;
+    height: 82px;
+    display: grid;
+    grid-template-columns: 330px 1fr;
+    align-items: start;
+    border-bottom: 9px solid var(--stop);
+  }
+  .brand { display: flex; align-items: center; height: 58px; }
+  .brand h2 { margin: 0; font: 600 18px/1.2 "Archivo", Arial, sans-serif; letter-spacing: -.01em; }
+  .title-wrap { text-align: right; }
+  .title-wrap h1 {
+    margin: 2px 0;
+    font: 600 29px/1.15 "Archivo", Arial, sans-serif;
+    letter-spacing: -.02em;
+    text-transform: uppercase;
+  }
+  .title-wrap p, .mono-label {
+    margin: 0;
+    color: var(--ink-3);
+    font: 500 12.5px "IBM Plex Mono", ui-monospace, monospace;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+  }
+
+  .caption {
+    position: absolute;
+    z-index: 3;
+    color: var(--ink-3);
+    font: 600 11.5px "IBM Plex Mono", ui-monospace, monospace;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--rule);
+    padding-bottom: 4px;
+  }
+
+  /* ---- boxes ---- */
+  .box {
+    position: absolute;
+    z-index: 3;
+    border: 1.5px solid var(--grey-line);
+    background: var(--grey-wash);
+    padding: 14px 18px;
+    --tone: var(--accent);
+  }
+  .box.blue   { background: var(--blue-wash);   border-color: var(--blue-line);   --tone: var(--accent); }
+  .box.green  { background: var(--green-wash);  border-color: var(--green-line);  --tone: var(--ok); }
+  .box.amber  { background: var(--amber-wash);  border-color: var(--amber-line);  --tone: var(--hazard-ink); }
+  .box.violet { background: var(--violet-wash); border-color: var(--violet-line); --tone: var(--violet); }
+  .box.cyan   { background: var(--cyan-wash);   border-color: var(--cyan-line);   --tone: var(--cyan); }
+  .box.grey   { --tone: var(--ink-2); }
+  .box h3 {
+    margin: 0;
+    color: var(--tone);
+    font: 600 18px/1.2 "Archivo", Arial, sans-serif;
+    letter-spacing: -.008em;
+    text-transform: uppercase;
+  }
+  .box .sub {
+    margin: 3px 0 0;
+    color: var(--ink-3);
+    font: 500 11.5px "IBM Plex Mono", ui-monospace, monospace;
+    letter-spacing: .045em;
+    text-transform: uppercase;
+  }
+  .box p { margin: 8px 0 0; color: var(--ink-2); font-size: 14px; line-height: 1.38; }
+  .box .status {
+    position: absolute;
+    top: -9px; right: 12px;
+    padding: 1px 5px;
+    border: 1px solid var(--tone);
+    background: var(--surface);
+    color: var(--tone);
+    font: 600 9.5px "IBM Plex Mono", ui-monospace, monospace;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+  }
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; }
+  .chip {
+    padding: 3px 7px;
+    border: 1px solid var(--tone);
+    color: var(--tone);
+    background: var(--card);
+    font: 600 10.5px "IBM Plex Mono", ui-monospace, monospace;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+  }
+  .kv {
+    display: grid;
+    grid-template-columns: 96px 1fr;
+    gap: 6px 12px;
+    margin: 11px 0 0;
+  }
+  .kv dt {
+    padding-top: 2px;
+    color: var(--tone);
+    font: 600 10.5px/1.3 "IBM Plex Mono", ui-monospace, monospace;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+  }
+  .kv dd { margin: 0; color: var(--ink-2); font-size: 13.5px; line-height: 1.32; }
+
+  .core {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--on-accent);
+    text-align: center;
+    padding: 20px 24px;
+    --tone: var(--on-accent);
+  }
+  .core h3 { font-size: 24px; color: var(--on-accent); }
+  .core .sub { color: var(--on-accent); opacity: .75; }
+  .core p { color: var(--on-accent); opacity: .92; font-size: 14.5px; }
+  .core .chips { justify-content: center; }
+  .core .chip { background: transparent; }
+
+  .math {
+    margin: 8px 0 0;
+    padding: 8px 10px;
+    background: var(--math-bg);
+    border: 1px solid var(--rule-soft);
+    color: var(--ink);
+    font: 500 12.5px/1.55 "IBM Plex Mono", ui-monospace, monospace;
+    white-space: pre;
+  }
+
+  /* ---- wires ---- */
+  .wires {
+    position: absolute;
+    z-index: 2;
+    inset: 0;
+    width: 1600px;
+    height: 900px;
+    pointer-events: none;
+  }
+  .wires path { fill: none; stroke: var(--wire); stroke-width: 1.6; }
+  .wires .arrow { marker-end: url(#arrow); }
+  .wires .dash { stroke-dasharray: 6 4; }
+  .wires .branch { stroke-width: 2; }
+  .wires marker path { fill: var(--wire); stroke: none; }
+  .wires circle { fill: var(--wire); }
+  .wires .label-bg { fill: var(--surface); stroke: var(--rule-soft); stroke-width: 1; }
+  .wires text {
+    fill: var(--ink-3);
+    font: 600 10.5px "IBM Plex Mono", ui-monospace, monospace;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+  }
+
+  /* ---- TF strip ---- */
+  .tf-strip {
+    position: absolute;
+    z-index: 3;
+    left: 66px; top: 750px;
+    width: 1468px; height: 92px;
+    display: grid;
+    grid-template-columns: 354px 380px 340px 394px;
+    border: 1.5px solid var(--ink-3);
+    background: var(--surface);
+  }
+  .tf-strip > div { padding: 11px 16px; border-left: 1px solid var(--rule); }
+  .tf-strip > div:first-child { border-left: 0; background: var(--surface-2); }
+  .tf-strip b {
+    display: block;
+    color: var(--accent);
+    font: 600 13px "IBM Plex Mono", ui-monospace, monospace;
+    letter-spacing: .03em;
+  }
+  .tf-strip span { display: block; margin-top: 4px; color: var(--ink-2); font-size: 13px; line-height: 1.3; }
+  .tf-strip .tf-title b { font: 600 16px "Archivo", Arial, sans-serif; text-transform: uppercase; color: var(--ink); }
+
+  /* ---- survey lifecycle strip ---- */
+  .lifecycle {
+    position: absolute;
+    z-index: 3;
+    left: 66px; top: 712px;
+    width: 1044px; height: 128px;
+    padding: 12px 16px;
+    border: 1.5px solid var(--grey-line);
+    background: var(--grey-wash);
+  }
+  .lifecycle h3 {
+    margin: 0 0 9px;
+    color: var(--ink);
+    font: 600 15px "Archivo", Arial, sans-serif;
+    text-transform: uppercase;
+  }
+  .lifecycle h3 small {
+    margin-left: 8px;
+    color: var(--ink-3);
+    font: 500 11px "IBM Plex Mono", ui-monospace, monospace;
+    letter-spacing: .05em;
+  }
+  .states { display: grid; grid-template-columns: repeat(5, 1fr); gap: 22px; }
+  .state { position: relative; }
+  .state + .state::before {
+    content: "→";
+    position: absolute;
+    left: -17px; top: 2px;
+    color: var(--ink-3);
+    font: 600 14px "IBM Plex Mono", ui-monospace, monospace;
+  }
+  .state b {
+    display: block;
+    padding: 3px 6px;
+    border: 1px solid var(--ink-3);
+    background: var(--surface);
+    color: var(--ink);
+    font: 600 11px "IBM Plex Mono", ui-monospace, monospace;
+    letter-spacing: .05em;
+    text-align: center;
+  }
+  .state span { display: block; margin-top: 5px; color: var(--ink-2); font-size: 12.5px; line-height: 1.3; }
+
+  /* ---- math panel ---- */
+  .math-panel {
+    position: absolute;
+    z-index: 3;
+    left: 1150px; top: 165px;
+    width: 384px; height: 675px;
+    padding: 14px 18px;
+    border: 1.5px solid var(--ink-3);
+    background: var(--surface);
+  }
+  .math-panel h3 {
+    margin: 0;
+    font: 600 18px "Archivo", Arial, sans-serif;
+    text-transform: uppercase;
+  }
+  .math-panel h4 {
+    margin: 13px 0 0;
+    color: var(--accent-2);
+    font: 600 11px "IBM Plex Mono", ui-monospace, monospace;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+  }
+  .math-panel p { margin: 6px 0 0; color: var(--ink-2); font-size: 12.8px; line-height: 1.36; }
+  .math-panel svg { display: block; width: 100%; height: 132px; margin-top: 8px; }
+  .graph-svg .edge { stroke: var(--ok); stroke-width: 2; fill: none; }
+  .graph-svg .loop { stroke: var(--accent-2); stroke-width: 2; stroke-dasharray: 5 4; fill: none; }
+  .graph-svg circle { fill: var(--surface); stroke: var(--ok); stroke-width: 2; }
+  .graph-svg text { fill: var(--ink-2); font: 600 10px "IBM Plex Mono", ui-monospace, monospace; }
+  .graph-svg .loop-label { fill: var(--accent-2); }
+
+  /* ---- localization slide ---- */
+  .cloud svg { display: block; width: 100%; height: 58px; margin-top: 6px; }
+  .cloud .pt { fill: var(--accent-2); }
+  .cloud .best { fill: var(--stop); }
+  .monitor { left: 820px; top: 160px; width: 714px; height: 615px; }
+  .fsm {
+    display: grid;
+    grid-template-columns: auto 1fr auto 1fr auto 1fr auto;
+    align-items: end;
+    gap: 0 6px;
+    margin-top: 16px;
+  }
+  .fsm .st {
+    padding: 6px 10px;
+    border: 1.5px solid var(--tone);
+    background: var(--surface);
+    color: var(--tone);
+    font: 600 12px "IBM Plex Mono", ui-monospace, monospace;
+    letter-spacing: .05em;
+    text-align: center;
+  }
+  .fsm .st.ready { background: var(--ok); border-color: var(--ok); color: var(--surface); }
+  .fsm .st.lost { background: var(--stop); border-color: var(--stop); color: var(--surface); }
+  .fsm .tr {
+    padding-bottom: 5px;
+    color: var(--ink-3);
+    font: 600 9.5px/1.25 "IBM Plex Mono", ui-monospace, monospace;
+    letter-spacing: .03em;
+    text-align: center;
+    text-transform: uppercase;
+    border-bottom: 1.6px solid var(--wire);
+    position: relative;
+    margin-bottom: 14px;
+  }
+  .fsm .tr::after {
+    content: "";
+    position: absolute;
+    right: -2px; bottom: -5px;
+    border: 4.5px solid transparent;
+    border-left: 7px solid var(--wire);
+    border-right: 0;
+  }
+  .checks { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 14px; }
+  .check {
+    padding: 9px 11px;
+    border: 1px solid var(--tone);
+    background: var(--card);
+  }
+  .check b {
+    display: block;
+    color: var(--tone);
+    font: 600 11px "IBM Plex Mono", ui-monospace, monospace;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+  }
+  .check span { display: block; margin-top: 4px; color: var(--ink-2); font-size: 12.8px; line-height: 1.32; }
+  .check code { font: 500 11.5px "IBM Plex Mono", ui-monospace, monospace; color: var(--ink); }
+  .check.trigger { border-width: 1.5px; border-color: var(--stop); }
+  .check.trigger b { color: var(--stop); }
+
+  .scan-check { display: grid; grid-template-columns: 1fr 330px; gap: 20px; align-items: center; height: 100%; }
+  .scan-check svg { display: block; width: 330px; height: 150px; }
+  .sc-free { fill: var(--surface); stroke: var(--rule); }
+  .sc-wall { fill: var(--ink-3); }
+  .sc-robot { fill: var(--accent); }
+  .sc-ok, .sc-see, .sc-long { fill: none; stroke-width: 1.8; }
+  .sc-ok { stroke: var(--ok); }
+  .sc-see { stroke: var(--hazard-ink); stroke-dasharray: 5 3; }
+  .sc-long { stroke: var(--stop); }
+  .sc-ok-dot { fill: var(--ok); } .sc-see-dot { fill: var(--hazard-ink); } .sc-long-dot { fill: var(--stop); }
+  .sc-t { fill: var(--ink-3); font: 600 10px "IBM Plex Mono", ui-monospace, monospace; letter-spacing: .03em; text-transform: uppercase; }
+  .sc-t.ok { fill: var(--ok); } .sc-t.see { fill: var(--hazard-ink); } .sc-t.long { fill: var(--stop); }
+
+  .stop-strip {
+    position: absolute;
+    z-index: 4;
+    left: 66px; top: 800px;
+    width: 1468px; min-height: 52px;
+    display: grid;
+    grid-template-columns: 230px 1fr 250px;
+    align-items: center;
+    border: 1px solid var(--stop);
+    border-left: 7px solid var(--stop);
+    background: var(--stop-wash);
+    color: var(--ink-2);
+  }
+  .stop-strip strong {
+    padding-left: 18px;
+    color: var(--stop);
+    font: 600 13px "IBM Plex Mono", ui-monospace, monospace;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+  }
+  .stop-strip span { font-size: 14px; }
+  .stop-strip em {
+    padding-right: 18px;
+    color: var(--stop);
+    font: normal 600 11px "IBM Plex Mono", ui-monospace, monospace;
+    letter-spacing: .055em;
+    text-align: right;
+    text-transform: uppercase;
+  }
+
+  .slide-note {
+    position: absolute;
+    z-index: 5;
+    right: 70px; bottom: 19px;
+    color: var(--ink-3);
+    font: 500 10px "IBM Plex Mono", ui-monospace, monospace;
+    letter-spacing: .035em;
+    text-transform: uppercase;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    html { scroll-behavior: smooth; }
+  }
+</style>
+</head>
+<body>
+
+<nav class="toolbar" aria-label="Diagram navigation">
+  <strong>GVIEVO-01 SLAM</strong>
+  <button type="button" id="jump-map" data-jump="mindmap">01 · Mind map</button>
+  <button type="button" id="jump-flow" data-jump="flow">02 · Data flow</button>
+  <button type="button" id="jump-slam" data-jump="slam">03 · slam_toolbox</button>
+  <button type="button" id="jump-amcl" data-jump="amcl">04 · Localization</button>
+  <span class="meta">4 diagrams · from amr_ws configs · 2026-09-19</span>
+</nav>
+
+<main class="deck">
+
+  <!-- =========================== 01 MIND MAP =========================== -->
+  <div class="frame-wrap"><div class="frame" id="mindmap">
+    <section class="slide" aria-labelledby="t1">
+      <header class="slide-head">
+        <div class="brand"><h2>GVIEVO-01 · Localization &amp; Mapping</h2></div>
+        <div class="title-wrap">
+          <h1 id="t1">How the AMR knows where it is</h1>
+          <p>Mind map · every block in the SLAM stack and who owns it</p>
+        </div>
+      </header>
+
+      <div class="caption" style="left:66px; top:138px; width:440px;">Front end · runs in every mode</div>
+      <div class="caption" style="left:1094px; top:138px; width:440px;">Back end · survey or production, never both</div>
+
+      <article class="box violet" style="left:66px; top:165px; width:440px; height:190px;">
+        <span class="status">Hardware</span>
+        <h3>Sensors</h3>
+        <div class="sub">raw measurements</div>
+        <dl class="kv">
+          <dt>nanoScan3</dt><dd>2-D LiDAR, 190° sector, 34 Hz → <code>/scan</code></dd>
+          <dt>Encoders ×2</dt><dd>BLV-R motor position over CANopen → <code>/wheel_states</code></dd>
+          <dt>MLS gyro</dt><dd>Yaw rate, CAN node 10 → <code>/imu/data_raw</code></dd>
+        </dl>
+      </article>
+
+      <article class="box amber" style="left:66px; top:380px; width:440px; height:190px;">
+        <span class="status">Own code</span>
+        <h3>Pre-processing</h3>
+        <div class="sub">amr_base · amr_localization</div>
+        <dl class="kv">
+          <dt>Scan gate</dt><dd>Releases a scan only once TF can place it; ≤ 10 Hz</dd>
+          <dt>Wheel odom</dt><dd>Midpoint integration of encoder deltas → x, y, θ</dd>
+          <dt>Gyro bias</dt><dd>2 s still-window average subtracted (raw +0.057 °/s)</dd>
+        </dl>
+      </article>
+
+      <article class="box cyan" style="left:66px; top:595px; width:440px; height:190px;">
+        <span class="status">ROS pkg</span>
+        <h3>Odometry fusion</h3>
+        <div class="sub">robot_localization EKF</div>
+        <dl class="kv">
+          <dt>Fuses</dt><dd>Forward speed v<sub>x</sub> + yaw rate only; never absolute yaw</dd>
+          <dt>Rate</dt><dd>50 Hz, 2-D mode</dd>
+          <dt>Output</dt><dd><code>odom → base_footprint</code>: smooth, but drifts</dd>
+        </dl>
+      </article>
+
+      <article class="box core" style="left:600px; top:395px; width:400px; height:160px;">
+        <h3>SLAM on GVIEVO-01</h3>
+        <div class="sub">2-D LiDAR graph SLAM + particle filter</div>
+        <p>Build the map once in a supervised survey, then localize on the saved, approved map on every run.</p>
+        <div class="chips"><span class="chip">survey → slam_toolbox</span><span class="chip">run → AMCL</span></div>
+      </article>
+
+      <article class="box green" style="left:1094px; top:165px; width:440px; height:190px;">
+        <span class="status">ROS pkg · survey</span>
+        <h3>Mapping</h3>
+        <div class="sub">slam_toolbox · online async</div>
+        <dl class="kv">
+          <dt>Front end</dt><dd>Correlative scan matching against recent scans</dd>
+          <dt>Back end</dt><dd>Pose graph + loop closure, optimised by Ceres (LM)</dd>
+          <dt>Output</dt><dd><code>/map</code> 5 cm grid · <code>map → odom</code> 20 Hz</dd>
+        </dl>
+      </article>
+
+      <article class="box grey" style="left:1094px; top:380px; width:440px; height:190px;">
+        <span class="status">Own code</span>
+        <h3>Map revisions</h3>
+        <div class="sub">mapping_session_node · map_bundle</div>
+        <dl class="kv">
+          <dt>Survey</dt><dd>IDLE → MAPPING → RETURN_REVIEW → SAVING → SAVED</dd>
+          <dt>Saved</dt><dd>map.pgm/.yaml + pose graph + hashed manifest</dd>
+          <dt>Rule</dt><dd>rev N is published by atomic rename, never rewritten</dd>
+        </dl>
+      </article>
+
+      <article class="box blue" style="left:1094px; top:595px; width:440px; height:190px;">
+        <span class="status">ROS pkg + own · run</span>
+        <h3>Localization</h3>
+        <div class="sub">AMCL + localization monitor</div>
+        <dl class="kv">
+          <dt>Filter</dt><dd>500–2 000 particles, likelihood-field laser model</dd>
+          <dt>Gate</dt><dd>READY needs settled covariance, scan check, operator OK</dd>
+          <dt>Loss</dt><dd>No random recovery: LOST stops the robot</dd>
+        </dl>
+      </article>
+
+      <svg class="wires" viewBox="0 0 1600 900" aria-hidden="true">
+        <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z"/></marker></defs>
+        <path class="branch" d="M600 475 C553 475 553 260 506 260"/>
+        <path class="branch" d="M600 475 H506"/>
+        <path class="branch" d="M600 475 C553 475 553 690 506 690"/>
+        <path class="branch" d="M1000 475 C1047 475 1047 260 1094 260"/>
+        <path class="branch" d="M1000 475 H1094"/>
+        <path class="branch" d="M1000 475 C1047 475 1047 690 1094 690"/>
+        <path class="arrow" d="M200 355 V380"/>
+        <path class="arrow" d="M200 570 V595"/>
+        <path class="arrow" d="M1250 355 V380"/>
+        <path class="arrow" d="M1250 570 V595"/>
+        <text x="212" y="372">feeds</text>
+        <text x="212" y="587">feeds</text>
+        <text x="1262" y="372">save</text>
+        <text x="1262" y="587">load</text>
+        <circle cx="600" cy="475" r="3.5"/><circle cx="1000" cy="475" r="3.5"/>
+      </svg>
+      <div class="slide-note">Source: amr_ws/src · slam_mapping.yaml · amcl.yaml · ekf.yaml</div>
+    </section>
+  </div></div>
+
+  <!-- =========================== 02 DATA FLOW =========================== -->
+  <div class="frame-wrap"><div class="frame" id="flow">
+    <section class="slide" aria-labelledby="t2">
+      <header class="slide-head">
+        <div class="brand"><h2>GVIEVO-01 · Localization &amp; Mapping</h2></div>
+        <div class="title-wrap">
+          <h1 id="t2">Sensor-to-pose data flow</h1>
+          <p>ROS 2 nodes · topics · the TF tree they build</p>
+        </div>
+      </header>
+
+      <div class="caption" style="left:66px; top:140px; width:250px;">Sensors</div>
+      <div class="caption" style="left:420px; top:140px; width:300px;">Own pre-processing</div>
+      <div class="caption" style="left:800px; top:140px; width:260px;">Fusion</div>
+      <div class="caption" style="left:1140px; top:140px; width:394px;">Mode layer · one at a time</div>
+
+      <article class="box violet" style="left:66px; top:175px; width:250px; height:130px;">
+        <h3>nanoScan3</h3><div class="sub">SICK LiDAR · Ethernet</div>
+        <p>190° sector at 34 Hz, stamped on arrival.</p>
+      </article>
+      <article class="box violet" style="left:66px; top:345px; width:250px; height:130px;">
+        <h3>BLV-R encoders</h3><div class="sub">CANopen nodes 1 / 2</div>
+        <p>Motor-side position; wheel slip is not seen.</p>
+      </article>
+      <article class="box violet" style="left:66px; top:515px; width:250px; height:130px;">
+        <h3>MLS gyro</h3><div class="sub">CANopen node 10</div>
+        <p>Yaw rate with a raw +0.057 °/s bias.</p>
+      </article>
+
+      <article class="box amber" style="left:420px; top:175px; width:300px; height:130px;">
+        <h3>Scan gate</h3><div class="sub">scan_gate_node</div>
+        <p>Holds each scan until TF can place it, thins to ≤ 10 Hz, drops it after 0.5 s.</p>
+      </article>
+      <article class="box amber" style="left:420px; top:345px; width:300px; height:130px;">
+        <h3>Wheel odometry</h3><div class="sub">diff_drive_odom_node</div>
+        <p>Midpoint integration of left/right wheel travel into x, y, θ.</p>
+      </article>
+      <article class="box amber" style="left:420px; top:515px; width:300px; height:130px;">
+        <h3>Gyro bias removal</h3><div class="sub">imu_bias_node</div>
+        <p>Averages yaw rate over 2 s still windows and subtracts it; silent until calibrated.</p>
+      </article>
+
+      <article class="box cyan" style="left:800px; top:345px; width:260px; height:300px;">
+        <span class="status">ROS pkg</span>
+        <h3>EKF</h3><div class="sub">robot_localization</div>
+        <p>A 15-state Kalman filter at 50 Hz in 2-D mode.</p>
+        <p>Fuses only forward speed and yaw rate. The gyro's absolute yaw drifts 3.4 °/min, so orientation is never fused directly.</p>
+        <div class="chips"><span class="chip">v<sub>x</sub></span><span class="chip">ω<sub>z</sub></span><span class="chip">/odometry/filtered</span></div>
+      </article>
+
+      <article class="box green" style="left:1140px; top:175px; width:394px; height:230px;">
+        <span class="status">Survey mode</span>
+        <h3>slam_toolbox</h3><div class="sub">online async · Ceres back end</div>
+        <p>Matches each keyframe scan, grows the pose graph, closes loops and renders the occupancy map the operator watches.</p>
+        <div class="chips"><span class="chip">/map · 5 cm</span><span class="chip">map → odom</span><span class="chip">pose graph</span></div>
+      </article>
+      <article class="box blue" style="left:1140px; top:455px; width:394px; height:250px;">
+        <span class="status">Run mode</span>
+        <h3>map_server + AMCL</h3><div class="sub">+ localization_monitor_node</div>
+        <p>Loads an approved revision, tracks the pose with a particle filter, and gates READY / LOST for the route executor.</p>
+        <div class="chips"><span class="chip">/amcl_pose</span><span class="chip">map → odom</span><span class="chip">/amr/localization_state</span></div>
+      </article>
+
+      <div class="tf-strip">
+        <div class="tf-title"><b>TF tree</b><span>Each cell is one link of <code>map → odom → base_footprint → sensors</code>, under the node that publishes it.</span></div>
+        <div><b>base_footprint → laser_frame, imu_frame</b><span>URDF, fixed. The LiDAR sits 0.964 m ahead of the drive axle.</span></div>
+        <div><b>odom → base_footprint</b><span>EKF at 50 Hz. Smooth and continuous, but it drifts.</span></div>
+        <div><b>map → odom</b><span>slam_toolbox (survey) or AMCL (run). It cancels the drift and may jump.</span></div>
+      </div>
+
+      <svg class="wires" viewBox="0 0 1600 900" aria-hidden="true">
+        <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z"/></marker></defs>
+        <path class="arrow" d="M316 240 H420"/>
+        <rect class="label-bg" x="343" y="219" width="50" height="17"/><text x="368" y="231" text-anchor="middle">/scan</text>
+
+        <path class="arrow" d="M720 240 H1140"/>
+        <rect class="label-bg" x="860" y="219" width="140" height="17"/><text x="930" y="231" text-anchor="middle">/scan_gated · ≤10 Hz</text>
+        <path class="arrow" d="M1100 240 V520 H1140"/>
+        <circle cx="1100" cy="240" r="3.5"/>
+
+        <path class="arrow" d="M316 410 H420"/>
+        <rect class="label-bg" x="322" y="389" width="92" height="17"/><text x="368" y="401" text-anchor="middle">/wheel_states</text>
+        <path class="arrow dash" d="M340 410 V560 H420"/>
+        <circle cx="340" cy="410" r="3.5"/>
+        <rect class="label-bg" x="346" y="474" width="62" height="17"/><text x="377" y="486" text-anchor="middle">still?</text>
+
+        <path class="arrow" d="M720 410 H800"/>
+        <rect class="label-bg" x="724" y="389" width="72" height="17"/><text x="760" y="401" text-anchor="middle">/odom_raw</text>
+
+        <path class="arrow" d="M316 590 H420"/>
+        <rect class="label-bg" x="322" y="597" width="92" height="17"/><text x="368" y="609" text-anchor="middle">/imu/data_raw</text>
+        <path class="arrow" d="M720 580 H800"/>
+        <rect class="label-bg" x="726" y="559" width="68" height="17"/><text x="760" y="571" text-anchor="middle">/imu/data</text>
+
+        <path class="arrow" d="M930 645 V750"/>
+        <rect class="label-bg" x="880" y="689" width="100" height="17"/><text x="930" y="701" text-anchor="middle">TF · 50 Hz</text>
+
+        <path class="arrow" d="M1337 405 V455"/>
+        <rect class="label-bg" x="1262" y="421" width="150" height="17"/><text x="1337" y="433" text-anchor="middle">saved rev → loaded</text>
+
+        <path class="arrow" d="M1534 290 H1562 V796 H1534"/>
+        <path class="arrow" d="M1337 705 V750"/>
+      </svg>
+      <div class="slide-note">Consumers of /scan_gated: slam_toolbox, AMCL, costmap, monitor · web live view stays on raw /scan</div>
+    </section>
+  </div></div>
+
+  <!-- =========================== 03 SLAM_TOOLBOX =========================== -->
+  <div class="frame-wrap"><div class="frame" id="slam">
+    <section class="slide" aria-labelledby="t3">
+      <header class="slide-head">
+        <div class="brand"><h2>GVIEVO-01 · Localization &amp; Mapping</h2></div>
+        <div class="title-wrap">
+          <h1 id="t3">Inside slam_toolbox</h1>
+          <p>Graph SLAM loop · one pass per keyframe scan · slam_mapping.yaml</p>
+        </div>
+      </header>
+
+      <div class="caption" style="left:66px; top:138px; width:504px;">Front end · where am I relative to the last scans?</div>
+      <div class="caption" style="left:606px; top:138px; width:504px;">Back end · keep the whole graph consistent</div>
+
+      <article class="box cyan" style="left:66px; top:165px; width:234px; height:180px;">
+        <span class="status">Step 1</span>
+        <h3>Keyframe gate</h3>
+        <p>A gated scan becomes a keyframe only after 0.2 m or 0.2 rad of travel, and at most every 0.2 s.</p>
+      </article>
+      <article class="box cyan" style="left:336px; top:165px; width:234px; height:180px;">
+        <span class="status">Step 2</span>
+        <h3>Odometry prior</h3>
+        <p>Reads <code>odom → base_footprint</code> at the scan's timestamp: the EKF's guess of how far the robot moved.</p>
+      </article>
+      <article class="box green" style="left:606px; top:165px; width:234px; height:180px;">
+        <span class="status">Step 3</span>
+        <h3>Scan matching</h3>
+        <p>Slides the scan over a map of the last 10 scans: ±0.25 m at 1 cm, ±20° at 2°, then 0.2° fine.</p>
+      </article>
+      <article class="box green" style="left:876px; top:165px; width:234px; height:180px;">
+        <span class="status">Step 4</span>
+        <h3>Grow the graph</h3>
+        <p>Adds the matched pose as a node, plus an edge to the previous node carrying relative motion and its covariance.</p>
+      </article>
+
+      <article class="box blue" style="left:876px; top:425px; width:234px; height:200px;">
+        <span class="status">Step 5</span>
+        <h3>Loop closure</h3>
+        <p>Searches old nodes within 3 m. A chain of ≥ 10 scans must match: coarse response ≥ 0.35, then fine ≥ 0.45.</p>
+      </article>
+      <article class="box blue" style="left:606px; top:425px; width:234px; height:200px;">
+        <span class="status">Step 6</span>
+        <h3>Optimise</h3>
+        <p>Ceres moves every node at once to minimise total edge error. Levenberg–Marquardt with a sparse Cholesky solve.</p>
+      </article>
+      <article class="box violet" style="left:336px; top:425px; width:234px; height:200px;">
+        <span class="status">Step 7</span>
+        <h3>Publish</h3>
+        <p>Re-renders the 5 cm occupancy grid at 1 Hz and publishes <code>map → odom</code> at 20 Hz to cancel odometry drift.</p>
+      </article>
+
+      <div class="lifecycle">
+        <h3>Survey lifecycle <small>mapping_session_node wraps the loop above</small></h3>
+        <div class="states">
+          <div class="state"><b>IDLE</b><span>Readiness checks, start mark recorded</span></div>
+          <div class="state"><b>MAPPING</b><span>Operator drives the survey; loop runs</span></div>
+          <div class="state"><b>RETURN_REVIEW</b><span>Back at the mark: closure dx, dy, dθ shown</span></div>
+          <div class="state"><b>SAVING</b><span>Pause SLAM, serialise graph, verify hashes</span></div>
+          <div class="state"><b>SAVED</b><span>Atomic rename to rev N, never rewritten</span></div>
+        </div>
+      </div>
+
+      <aside class="math-panel">
+        <h3>The math</h3>
+        <svg class="graph-svg" viewBox="0 0 348 132" role="img" aria-label="Pose graph: seven poses in a loop, sequential edges and one loop-closure edge from x7 back to x1">
+          <path class="edge" d="M40 100 L110 108 L185 100 L262 84 L300 44 L230 22 L140 26"/>
+          <path class="loop" d="M140 26 C 80 34 44 64 40 100"/>
+          <circle cx="40" cy="100" r="7"/><circle cx="110" cy="108" r="7"/><circle cx="185" cy="100" r="7"/>
+          <circle cx="262" cy="84" r="7"/><circle cx="300" cy="44" r="7"/><circle cx="230" cy="22" r="7"/><circle cx="140" cy="26" r="7"/>
+          <text x="22" y="124">x₁</text><text x="104" y="128">x₂</text><text x="180" y="122">x₃</text>
+          <text x="262" y="108">x₄</text><text x="314" y="48">x₅</text><text x="226" y="12">x₆</text><text x="134" y="14">x₇</text>
+          <text class="loop-label" x="14" y="44">loop edge</text>
+        </svg>
+        <h4>Pose-graph optimisation</h4>
+        <div class="math">x* = argmin  Σ  eᵢⱼᵀ Ωᵢⱼ eᵢⱼ
+        x   (i,j)
+eᵢⱼ = zᵢⱼ ⊖ (xᵢ⁻¹ ⊕ xⱼ)</div>
+        <p>x are the poses (x, y, θ), z is the relative pose measured by scan matching, and Ω is its inverse covariance. A confident edge pulls harder.</p>
+        <h4>Each Levenberg–Marquardt step</h4>
+        <div class="math">(JᵀΩJ + λI) Δx = −JᵀΩe</div>
+        <p>A large λ takes small, cautious steps and a small λ approaches Gauss–Newton. JᵀΩJ is sparse, so sparse Cholesky solves it. There is no robust loss, so one false loop edge counts in full.</p>
+        <h4>Scan-match response</h4>
+        <div class="math">score(p) = penalty(p) · 1/N Σₖ M̃(T_p · bₖ)</div>
+        <p>bₖ are the beam endpoints and M̃ is the occupancy of recent scans smeared by 0.1 m. The penalty shrinks the score the further p strays from the odometry prior (distance 0.5, angle 1.0).</p>
+      </aside>
+
+      <svg class="wires" viewBox="0 0 1600 900" aria-hidden="true">
+        <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z"/></marker></defs>
+        <path class="arrow" d="M300 255 H336"/>
+        <path class="arrow" d="M570 255 H606"/>
+        <path class="arrow" d="M840 255 H876"/>
+        <path class="arrow" d="M993 345 V425"/>
+        <rect class="label-bg" x="943" y="376" width="100" height="17"/><text x="993" y="388" text-anchor="middle">new node</text>
+        <path class="arrow" d="M876 525 H840"/>
+        <path class="arrow" d="M606 525 H570"/>
+        <path class="arrow" d="M336 525 H183 V345"/>
+        <rect class="label-bg" x="128" y="426" width="110" height="17"/><text x="183" y="438" text-anchor="middle">next keyframe</text>
+        <path class="arrow dash" d="M993 625 V668 H453 V625"/>
+        <rect class="label-bg" x="628" y="659" width="190" height="17"/><text x="723" y="671" text-anchor="middle">no loop found · skip step 6</text>
+      </svg>
+      <div class="slide-note">search windows: correlation 0.5 m @ 0.01 m · loop 8 m @ 0.05 m · angles 0.349 / 0.0349 / 0.00349 rad</div>
+    </section>
+  </div></div>
+
+  <!-- =========================== 04 AMCL =========================== -->
+  <div class="frame-wrap"><div class="frame" id="amcl">
+    <section class="slide" aria-labelledby="t4">
+      <header class="slide-head">
+        <div class="brand"><h2>GVIEVO-01 · Localization &amp; Mapping</h2></div>
+        <div class="title-wrap">
+          <h1 id="t4">Localizing on a saved map</h1>
+          <p>AMCL particle filter · readiness gate · production runs</p>
+        </div>
+      </header>
+
+      <div class="caption" style="left:66px; top:138px; width:694px;">nav2_amcl · one cycle per 5 cm or 0.03 rad of travel</div>
+
+      <article class="box amber" style="left:243px; top:165px; width:340px; height:150px;">
+        <span class="status">Predict</span>
+        <h3>Move the particles</h3><div class="sub">differential motion model</div>
+        <p>Shifts every particle by the EKF odometry increment, plus noise scaled by α₁–α₄ = 0.1.</p>
+      </article>
+
+      <article class="box cloud blue" style="left:283px; top:385px; width:260px; height:140px;">
+        <h3>Particle cloud</h3><div class="sub">500 – 2 000 pose hypotheses</div>
+        <svg id="cloud" viewBox="0 0 224 58" aria-hidden="true"></svg>
+      </article>
+
+      <article class="box green" style="left:450px; top:580px; width:310px; height:195px;">
+        <span class="status">Weight · likelihood_field_prob</span>
+        <h3>Score against the map</h3>
+        <p>Scores 180 beams by distance to the nearest mapped wall; beam skipping ignores unmapped clutter.</p>
+        <div class="math">p(zₖ) = z_hit · N(dₖ; 0, 0.1²)
+      + z_rand / z_max</div>
+      </article>
+
+      <article class="box violet" style="left:66px; top:580px; width:310px; height:195px;">
+        <span class="status">Resample</span>
+        <h3>Keep the likely ones</h3><div class="sub">KLD-adaptive · every 2 updates</div>
+        <p>Draws a new set in proportion to weight. The count adapts between 500 and 2 000 (error 0.05, 99 % confidence).</p>
+        <p>The best cluster gives the pose and its covariance.</p>
+      </article>
+
+      <article class="box blue monitor" style="height:400px;">
+        <span class="status">Own code</span>
+        <h3>Localization monitor</h3>
+        <div class="sub">localization_monitor_node · readiness.py</div>
+        <div class="fsm">
+          <div class="st">UNLOCALIZED</div>
+          <div class="tr">/initialpose</div>
+          <div class="st">CHECKING</div>
+          <div class="tr">settled 2 s + operator OK</div>
+          <div class="st ready">READY</div>
+          <div class="tr">any trigger</div>
+          <div class="st lost">LOST</div>
+        </div>
+        <p>READY needs every automatic check to hold for 2 s and the operator to confirm that live scans line up with the map. Low covariance alone cannot prove the robot is in the right aisle. A new initial pose restarts CHECKING.</p>
+        <div class="checks">
+          <div class="check"><b>Covariance</b><span>xx, yy ≤ 0.05 m² · yaw ≤ 0.03 rad². LOST if exceeded for 1 s.</span></div>
+          <div class="check"><b>Pose jump</b><span><code>map→odom</code> moves &gt; 0.15 m or &gt; 5°. Ignored for 1.5 s after an initial pose.</span></div>
+          <div class="check trigger"><b>Long beams · loss trigger</b><span><code>r_meas &gt; r_map + tol</code> and the endpoint lands in mapped free space. LOST if &gt; 15 % for 1 s.</span></div>
+          <div class="check"><b>Scan match</b><span>≥ 60 % of endpoints near mapped obstacles. Gates the operator's confirm only.</span></div>
+          <div class="check"><b>Freshness</b><span>scan 0.15 s · wheels 0.10 s · IMU 0.20 s · TF 0.20 s · AMCL 5 s.</span></div>
+          <div class="check"><b>Dynamic areas</b><span>Beams in marked dynamic zones are left out of both scan fractions.</span></div>
+        </div>
+      </article>
+
+      <article class="box cyan" style="left:820px; top:585px; width:714px; height:190px;">
+        <span class="status">Own code</span>
+        <div class="scan-check">
+          <div>
+            <h3>Scan vs map</h3><div class="sub">scan_consistency.py</div>
+            <p>Ray-casts the map from the AMCL pose to get each beam's expected range, then compares it with the measured range.</p>
+            <div class="chips"><span class="chip">match ≥ 60 %</span><span class="chip">long ≤ 15 %</span></div>
+          </div>
+          <svg viewBox="0 0 330 150" role="img" aria-label="Three beams from the robot: one ends on the mapped wall (match), one passes through a mesh wall onto another mapped obstacle (ignored), one passes the wall into free space (long, pose is wrong)">
+            <rect class="sc-free" x="0" y="0" width="330" height="150"/>
+            <rect class="sc-wall" x="196" y="10" width="8" height="130"/>
+            <rect class="sc-wall" x="286" y="14" width="8" height="54"/>
+            <path class="sc-robot" d="M22 66 L46 75 L22 84 Z"/>
+            <path class="sc-ok" d="M46 75 L196 30"/><circle class="sc-ok-dot" cx="196" cy="30" r="4"/>
+            <path class="sc-see" d="M46 75 L286 52"/><circle class="sc-see-dot" cx="286" cy="52" r="4"/>
+            <path class="sc-long" d="M46 75 L262 122"/><circle class="sc-long-dot" cx="262" cy="122" r="4"/>
+            <text class="sc-t ok" x="112" y="34">match</text>
+            <text class="sc-t see" x="212" y="84">seen through</text><text class="sc-t see" x="212" y="96">· ignored</text>
+            <text class="sc-t long" x="120" y="124">long → pose wrong</text>
+            <text class="sc-t" x="190" y="148">mapped wall</text>
+          </svg>
+        </div>
+      </article>
+
+      <div class="stop-strip">
+        <strong>No random recovery</strong>
+        <span>recovery_alpha_slow = recovery_alpha_fast = 0: AMCL never re-scatters particles, and a LOST robot stops until the operator gives a new initial pose.</span>
+        <em>Lost means stop, not guess</em>
+      </div>
+
+      <svg class="wires" viewBox="0 0 1600 900" aria-hidden="true">
+        <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z"/></marker></defs>
+        <path class="arrow" d="M583 240 C660 240 605 420 605 580"/>
+        <rect class="label-bg" x="620" y="382" width="120" height="17"/><text x="680" y="394" text-anchor="middle">for each particle</text>
+        <path class="arrow" d="M450 680 H376"/>
+        <rect class="label-bg" x="378" y="652" width="70" height="17"/><text x="413" y="664" text-anchor="middle">weights</text>
+        <path class="arrow" d="M221 580 C221 420 166 240 243 240"/>
+        <rect class="label-bg" x="96" y="382" width="110" height="17"/><text x="151" y="394" text-anchor="middle">new cloud</text>
+        <path class="arrow" d="M543 455 H820"/>
+        <rect class="label-bg" x="566" y="434" width="232" height="17"/><text x="682" y="446" text-anchor="middle">/amcl_pose + cov · map→odom</text>
+      </svg>
+      <div class="slide-note">Source: amcl.yaml · localization/readiness.py · scan_consistency.py</div>
+    </section>
+  </div></div>
+</main>
+
+<script>
+  (() => {
+    const W = 1600, H = 900, MIN = 0.5;
+    const frames = [...document.querySelectorAll('.frame')];
+
+    function fit() {
+      frames.forEach((frame) => {
+        const avail = frame.parentElement.clientWidth;
+        const s = Math.max(MIN, Math.min(1, (avail - 2) / W));
+        frame.style.width = `${W * s}px`;
+        frame.style.height = `${H * s}px`;
+        frame.querySelector('.slide').style.transform = `scale(${s})`;
+      });
+    }
+
+    document.querySelectorAll('[data-jump]').forEach((b) => {
+      b.addEventListener('click', () => document.getElementById(b.dataset.jump).scrollIntoView({ block: 'start' }));
+    });
+
+    // Particle cloud: a seeded Gaussian blob, heavier near the best estimate.
+    const svg = document.getElementById('cloud');
+    let seed = 7;
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    const gauss = () => Math.sqrt(-2 * Math.log(rnd() || 1e-9)) * Math.cos(2 * Math.PI * rnd());
+    const ns = 'http://www.w3.org/2000/svg';
+    for (let i = 0; i < 90; i++) {
+      const x = 112 + gauss() * 34, y = 29 + gauss() * 8;
+      if (x < 4 || x > 220 || y < 3 || y > 55) continue;
+      const c = document.createElementNS(ns, 'circle');
+      c.setAttribute('cx', x.toFixed(1)); c.setAttribute('cy', y.toFixed(1));
+      c.setAttribute('r', '1.8'); c.setAttribute('class', 'pt');
+      c.setAttribute('opacity', (0.35 + 0.6 * Math.exp(-((x - 112) ** 2) / 1800)).toFixed(2));
+      svg.appendChild(c);
+    }
+    const best = document.createElementNS(ns, 'circle');
+    best.setAttribute('cx', '112'); best.setAttribute('cy', '29'); best.setAttribute('r', '4'); best.setAttribute('class', 'best');
+    svg.appendChild(best);
+
+    window.addEventListener('resize', fit);
+    fit();
+  })();
+</script>
+</body>
+</html>

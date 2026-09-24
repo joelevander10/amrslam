@@ -1,0 +1,9 @@
+# One preset survey move (survey_move_node, mapping layer only), press once.
+# kind "straight": value in m, + forward / - reverse, 0.05..10.
+# kind "rotate":   value in deg, + left (CCW) / - right (CW), one of 45, 90, 135, 180.
+string kind
+float64 value
+---
+bool accepted
+string message
+string move_id

@@ -1,0 +1,73 @@
+# slam_toolbox online ASYNCHRONOUS mapping for the manual survey (spec §6.1).
+# Started from mapping.launch.py; the mapping session node drives it through
+# /slam_toolbox/pause_new_measurements and /slam_toolbox/serialize_map.
+# Frames are the resolved T3 tree; odom->base_footprint comes from the EKF.
+slam_toolbox:
+  ros__parameters:
+    solver_plugin: solver_plugins::CeresSolver
+    ceres_linear_solver: SPARSE_NORMAL_CHOLESKY
+    ceres_preconditioner: SCHUR_JACOBI
+    ceres_trust_strategy: LEVENBERG_MARQUARDT
+    ceres_dogleg_type: TRADITIONAL_DOGLEG
+    ceres_loss_function: None
+
+    odom_frame: odom
+    map_frame: map
+    base_frame: base_footprint
+    scan_topic: /scan_gated             # amr_localization scan_gate_node: see scan_gate.py
+    use_map_saver: true
+    mode: mapping
+
+    debug_logging: false
+    throttle_scans: 1
+    transform_publish_period: 0.05       # map->odom at 20 Hz
+    map_update_interval: 1.0             # live map for the operator, 1 Hz (N97 budget)
+    resolution: 0.05
+    min_laser_range: 0.1                 # nanoScan3 minimum (0.0 only drew a startup warning)
+    max_laser_range: 20.0
+    minimum_time_interval: 0.2
+    transform_timeout: 0.2
+    # The nanoScan3 stamps a scan on arrival (34 Hz, ~1 ms lag) but the EKF's odom TF
+    # arrives ~18 ms behind its own stamp at 50 Hz. With the default queue of 1, every
+    # scan waiting for "odom at scan time" was pushed out by the next scan ("queue is
+    # full"), so SLAM never processed a scan after the first and map->odom froze: the
+    # 2026-09-17 vehicle survey could not reach RETURN_REVIEW. A few scans of queue
+    # lets each one wait for its transform; minimum_time_interval still thins them.
+    scan_queue_size: 10
+    tf_buffer_duration: 30.0
+    stack_size_to_use: 40000000
+    enable_interactive_mode: false       # no node-dragging UI (spec §6.1)
+
+    use_scan_matching: true
+    use_scan_barycenter: true
+    minimum_travel_distance: 0.2         # survey at <= 0.3 m/s: a node every ~0.7 s
+    minimum_travel_heading: 0.2
+    scan_buffer_size: 10
+    scan_buffer_maximum_scan_distance: 10.0
+    link_match_minimum_response_fine: 0.1
+    link_scan_maximum_distance: 1.5
+    loop_search_maximum_distance: 3.0
+    do_loop_closing: true
+    loop_match_minimum_chain_size: 10
+    loop_match_maximum_variance_coarse: 3.0
+    loop_match_minimum_response_coarse: 0.35
+    loop_match_minimum_response_fine: 0.45
+
+    correlation_search_space_dimension: 0.5
+    correlation_search_space_resolution: 0.01
+    correlation_search_space_smear_deviation: 0.1
+
+    loop_search_space_dimension: 8.0
+    loop_search_space_resolution: 0.05
+    loop_search_space_smear_deviation: 0.03
+
+    distance_variance_penalty: 0.5
+    angle_variance_penalty: 1.0
+    fine_search_angle_offset: 0.00349
+    coarse_search_angle_offset: 0.349
+    coarse_angle_resolution: 0.0349
+    minimum_angle_penalty: 0.9
+    minimum_distance_penalty: 0.5
+    use_response_expansion: true
+    min_pass_through: 2
+    occupancy_threshold: 0.1

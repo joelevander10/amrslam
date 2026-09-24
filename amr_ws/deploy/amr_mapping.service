@@ -1,0 +1,27 @@
+[Unit]
+Description=AMR survey: drives, panel, lidar, live SLAM, mapping session, web app (:5001)
+Documentation=file:///home/gvipc-evo-01/agv_can/amr_ws/RUNBOOK.md
+After=network-online.target sys-subsystem-net-devices-can0.device
+Wants=network-online.target
+BindsTo=sys-subsystem-net-devices-can0.device
+Conflicts=agv_controller.service amr_nav.service amr.service
+
+[Service]
+Type=simple
+User=gvipc-evo-01
+Group=gvipc-evo-01
+WorkingDirectory=/home/gvipc-evo-01/agv_can/amr_ws
+Environment=HOME=/home/gvipc-evo-01
+EnvironmentFile=/home/gvipc-evo-01/agv_can/amr_ws/deploy/amr_legacy.env
+ExecStart=/home/gvipc-evo-01/agv_can/amr_ws/deploy/amr-launch.sh amr_bringup mapping.launch.py sim:=false maps_dir:=${AMR_MAPS_DIR} foxglove:=${AMR_FOXGLOVE} web:=true
+
+KillSignal=SIGINT
+KillMode=mixed
+TimeoutStopSec=25
+
+# A survey is an operator session: if it dies, the operator restarts it
+# deliberately (slam_toolbox has no reset; a half-survey cannot resume).
+Restart=no
+
+[Install]
+WantedBy=multi-user.target

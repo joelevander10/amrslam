@@ -1,0 +1,851 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GVIEVO-01 architecture diagrams</title>
+  <style>
+    @font-face {
+      font-family: "Archivo";
+      src: url("../../amr_ws/src/amr_web/amr_web/static/fonts/archivo-600.woff2") format("woff2");
+      font-weight: 600;
+      font-display: swap;
+    }
+    @font-face {
+      font-family: "Archivo";
+      src: url("../../amr_ws/src/amr_web/amr_web/static/fonts/archivo-700.woff2") format("woff2");
+      font-weight: 700;
+      font-display: swap;
+    }
+    @font-face {
+      font-family: "IBM Plex Sans";
+      src: url("../../amr_ws/src/amr_web/amr_web/static/fonts/plex-sans-400.woff2") format("woff2");
+      font-weight: 400;
+      font-display: swap;
+    }
+    @font-face {
+      font-family: "IBM Plex Sans";
+      src: url("../../amr_ws/src/amr_web/amr_web/static/fonts/plex-sans-600.woff2") format("woff2");
+      font-weight: 600;
+      font-display: swap;
+    }
+    @font-face {
+      font-family: "IBM Plex Mono";
+      src: url("../../amr_ws/src/amr_web/amr_web/static/fonts/plex-mono-400.woff2") format("woff2");
+      font-weight: 400;
+      font-display: swap;
+    }
+    @font-face {
+      font-family: "IBM Plex Mono";
+      src: url("../../amr_ws/src/amr_web/amr_web/static/fonts/plex-mono-600.woff2") format("woff2");
+      font-weight: 600;
+      font-display: swap;
+    }
+
+    :root {
+      --paper: #eff1f5;
+      --surface: #ffffff;
+      --surface-2: #e4e8ef;
+      --ink: #14171d;
+      --ink-2: #3d4553;
+      --ink-3: #666e7f;
+      --rule: #cbd2de;
+      --rule-soft: #dde2eb;
+      --accent: #1b3a5c;
+      --accent-2: #2f5f94;
+      --accent-wash: #dfe7f1;
+      --ok: #186e42;
+      --ok-wash: #ddeee4;
+      --hazard: #e8b900;
+      --hazard-wash: #fbf2d2;
+      --hazard-ink: #5e4a00;
+      --stop: #a32218;
+      --stop-wash: #f6dedb;
+      --violet: #66578f;
+      --violet-wash: #eeeaf7;
+      --cyan: #2e7180;
+      --cyan-wash: #e1f0f2;
+      --blue-line: #688ab0;
+      --green-line: #59927d;
+      --amber-line: #b68e16;
+      --red-line: #b8665f;
+      --violet-line: #8a7eb0;
+      color-scheme: light;
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--paper); }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font: 18px/1.45 "IBM Plex Sans", Arial, sans-serif;
+      font-variant-numeric: tabular-nums;
+      -webkit-font-smoothing: antialiased;
+    }
+    button { font: inherit; }
+
+    .toolbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      min-height: 50px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      background: var(--surface);
+      border-bottom: 2px solid var(--ink);
+    }
+    .toolbar strong {
+      margin-right: 10px;
+      font: 700 15px "Archivo", sans-serif;
+      letter-spacing: -.015em;
+    }
+    .toolbar button {
+      border: 1px solid var(--rule);
+      border-radius: 0;
+      background: var(--surface);
+      color: var(--ink-2);
+      padding: 7px 11px;
+      cursor: pointer;
+      font: 600 11px "IBM Plex Mono", monospace;
+      letter-spacing: .07em;
+      text-transform: uppercase;
+    }
+    .toolbar button:hover,
+    .toolbar button:focus-visible {
+      color: var(--accent-2);
+      border-color: var(--accent-2);
+      outline: 2px solid var(--accent-2);
+      outline-offset: 2px;
+    }
+    .toolbar .meta {
+      margin-left: auto;
+      color: var(--ink-3);
+      font: 500 10.5px "IBM Plex Mono", monospace;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .deck { padding: 22px 16px 60px; }
+    .frame {
+      position: relative;
+      margin: 0 auto 24px;
+      background: var(--surface);
+      border: 1px solid var(--rule);
+      overflow: hidden;
+      scroll-margin-top: 66px;
+    }
+    .slide {
+      position: absolute;
+      inset: 0 auto auto 0;
+      width: 1600px;
+      height: 900px;
+      transform-origin: top left;
+      overflow: hidden;
+      background: var(--surface);
+    }
+    .slide::after {
+      content: "";
+      position: absolute;
+      inset: 13px;
+      border: 1px solid var(--rule-soft);
+      pointer-events: none;
+    }
+
+    .slide-head {
+      position: absolute;
+      top: 38px;
+      left: 68px;
+      right: 68px;
+      height: 82px;
+      display: grid;
+      grid-template-columns: 270px 1fr;
+      align-items: start;
+      border-bottom: 9px solid var(--stop);
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      height: 58px;
+      padding: 0;
+    }
+    .brand h2 {
+      margin: 0;
+      color: var(--ink);
+      font: 600 18px/1.2 "Archivo", sans-serif;
+      letter-spacing: -.01em;
+    }
+    .title-wrap { text-align: right; }
+    .title-wrap h1 {
+      margin: 2px 0 2px;
+      font: 600 29px/1.15 "Archivo", sans-serif;
+      letter-spacing: -.02em;
+      text-transform: uppercase;
+    }
+    .title-wrap p {
+      margin: 0;
+      color: var(--ink-3);
+      font: 500 12.5px "IBM Plex Mono", monospace;
+      letter-spacing: .09em;
+      text-transform: uppercase;
+    }
+
+    .box {
+      position: absolute;
+      z-index: 3;
+      border: 1.5px solid var(--rule);
+      background: var(--surface);
+      padding: 15px 18px;
+    }
+    .box h2,
+    .box h3 {
+      margin: 0;
+      color: var(--accent);
+      font: 600 18px/1.2 "Archivo", sans-serif;
+      letter-spacing: -.008em;
+      text-align: center;
+      text-transform: uppercase;
+    }
+    .box .sub {
+      margin: 4px 0 10px;
+      color: var(--ink-3);
+      text-align: center;
+      font: 500 12px "IBM Plex Mono", monospace;
+      letter-spacing: .045em;
+      text-transform: uppercase;
+    }
+    .box p {
+      margin: 7px 0 0;
+      color: var(--ink-2);
+      font-size: 14.5px;
+      line-height: 1.35;
+      text-align: center;
+    }
+    .box.blue { background: #e8eff8; border-color: var(--blue-line); }
+    .box.green { background: #e5f1ec; border-color: var(--green-line); }
+    .box.amber { background: var(--hazard-wash); border-color: var(--amber-line); }
+    .box.red { background: #f7e7e5; border-color: var(--red-line); }
+    .box.violet { background: var(--violet-wash); border-color: var(--violet-line); }
+    .box.grey { background: #eef0f4; border-color: #8d96a4; }
+
+    .chips {
+      display: flex;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-top: 9px;
+    }
+    .chip {
+      padding: 4px 7px;
+      border: 1px solid currentColor;
+      color: var(--accent-2);
+      background: rgba(255,255,255,.78);
+      font: 600 10.5px "IBM Plex Mono", monospace;
+      letter-spacing: .055em;
+      text-transform: uppercase;
+    }
+    .amber .chip { color: var(--hazard-ink); }
+    .red .chip { color: var(--stop); }
+    .green .chip { color: var(--ok); }
+    .violet .chip { color: var(--violet); }
+
+    .host-boundary {
+      position: absolute;
+      z-index: 1;
+      left: 528px;
+      top: 135px;
+      width: 558px;
+      height: 648px;
+      border: 1px dashed #8aa0b8;
+      background: rgba(223,231,241,.2);
+    }
+    .host-boundary span {
+      position: absolute;
+      top: -9px;
+      left: 14px;
+      padding: 0 6px;
+      color: var(--accent-2);
+      background: var(--surface);
+      font: 600 11px "IBM Plex Mono", monospace;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .vehicle-card {
+      position: absolute;
+      z-index: 3;
+      left: 66px;
+      top: 140px;
+      width: 425px;
+      height: 218px;
+      padding: 9px 16px 8px;
+      border: 1px solid var(--rule);
+      background: #f8f9fb;
+    }
+    .vehicle-card svg { display: block; width: 100%; height: 156px; }
+    .vehicle-spec {
+      color: var(--ink-2);
+      text-align: center;
+      font: 600 8.5px "IBM Plex Mono", monospace;
+      letter-spacing: .055em;
+      text-transform: uppercase;
+    }
+    .vehicle-spec strong { color: var(--accent); }
+
+    .sensor-stack {
+      position: absolute;
+      z-index: 3;
+      left: 66px;
+      top: 386px;
+      width: 425px;
+      height: 387px;
+    }
+    .sensor-stack > h2 {
+      margin: 0 0 8px;
+      color: var(--accent);
+      font: 600 16px "Archivo", sans-serif;
+      letter-spacing: .01em;
+      text-align: center;
+      text-transform: uppercase;
+    }
+    .sensor-row {
+      display: grid;
+      grid-template-columns: 160px 1fr;
+      align-items: center;
+      min-height: 62px;
+      margin-bottom: 7px;
+      padding: 7px 12px;
+      border: 1px solid var(--violet-line);
+      background: var(--violet-wash);
+    }
+    .sensor-row strong {
+      color: var(--violet);
+      font: 600 12px "IBM Plex Mono", monospace;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+    }
+    .sensor-row span {
+      color: var(--ink-2);
+      font-size: 13px;
+      line-height: 1.25;
+    }
+
+    .main-controller { left: 558px; top: 152px; width: 498px; height: 207px; }
+    .client-box { left: 1134px; top: 152px; width: 398px; height: 207px; }
+    .motion-box { left: 558px; top: 406px; width: 498px; height: 206px; }
+    .driver-box { left: 1134px; top: 406px; width: 398px; height: 162px; }
+    .motor-box { left: 1134px; top: 610px; width: 398px; height: 132px; }
+    .power-box { left: 558px; top: 652px; width: 498px; height: 111px; padding-top: 11px; }
+    .power-box p { margin-top: 5px; }
+
+    .safety-strip {
+      position: absolute;
+      z-index: 4;
+      left: 66px;
+      top: 796px;
+      width: 1466px;
+      min-height: 55px;
+      display: grid;
+      grid-template-columns: 230px 1fr 300px;
+      align-items: center;
+      border: 1px solid var(--stop);
+      border-left: 7px solid var(--stop);
+      background: var(--stop-wash);
+      color: var(--ink-2);
+    }
+    .safety-strip strong {
+      padding-left: 18px;
+      color: var(--stop);
+      font: 600 13px "IBM Plex Mono", monospace;
+      letter-spacing: .07em;
+      text-transform: uppercase;
+    }
+    .safety-strip span { font-size: 14px; }
+    .safety-strip em {
+      padding-right: 18px;
+      color: var(--stop);
+      font: normal 600 11px "IBM Plex Mono", monospace;
+      letter-spacing: .055em;
+      text-align: right;
+      text-transform: uppercase;
+    }
+
+    .wires {
+      position: absolute;
+      z-index: 2;
+      inset: 0;
+      width: 1600px;
+      height: 900px;
+      pointer-events: none;
+    }
+    .wires path,
+    .wires line {
+      fill: none;
+      stroke: #8792a2;
+      stroke-width: 1.6;
+      marker-end: url(#arrow);
+    }
+    .wires .bidirectional { marker-start: url(#arrow-start); }
+    .wires .safety-wire { stroke: var(--stop); stroke-dasharray: 6 4; marker-end: url(#arrow-red); }
+    .wires .power-wire { stroke: var(--hazard-ink); marker-end: url(#arrow-amber); }
+    .wires .label-bg { fill: #fff; stroke: var(--rule-soft); stroke-width: 1; }
+    .wires text {
+      fill: var(--ink-3);
+      font: 600 11px "IBM Plex Mono", monospace;
+      letter-spacing: .045em;
+      text-transform: uppercase;
+    }
+    .wires .safety-label { fill: var(--stop); }
+
+    .architecture {
+      position: absolute;
+      left: 66px;
+      right: 66px;
+      top: 132px;
+      bottom: 48px;
+    }
+    .layer {
+      position: absolute;
+      left: 0;
+      width: 1468px;
+      display: grid;
+      grid-template-columns: 238px 1fr;
+      border: 1.5px solid var(--rule);
+    }
+    .layer.application { top: 0; height: 124px; background: #e8eff8; border-color: var(--blue-line); }
+    .layer.navigation { top: 142px; height: 132px; background: #e5f1ec; border-color: var(--green-line); }
+    .layer.motion { top: 292px; height: 132px; background: var(--hazard-wash); border-color: var(--amber-line); }
+    .layer.middleware { top: 442px; height: 118px; background: var(--violet-wash); border-color: var(--violet-line); }
+    .layer.hardware { top: 578px; height: 124px; background: #eef0f4; border-color: #8d96a4; }
+
+    .layer-title {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 0 22px;
+      border-right: 1px solid currentColor;
+      color: var(--accent);
+      font: 600 15.5px/1.2 "Archivo", sans-serif;
+      letter-spacing: .01em;
+      text-transform: uppercase;
+    }
+    .layer-title small {
+      margin-top: 7px;
+      color: var(--ink-3);
+      font: 600 10px/1.3 "IBM Plex Mono", monospace;
+      letter-spacing: .06em;
+    }
+    .layer-cards {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 10px;
+      align-items: stretch;
+      padding: 14px 14px;
+    }
+    .arch-card {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      min-width: 0;
+      padding: 10px 8px 8px;
+      border: 1px solid currentColor;
+      background: rgba(255,255,255,.83);
+      color: var(--accent-2);
+      text-align: center;
+    }
+    .navigation .arch-card { color: var(--ok); }
+    .motion .arch-card { color: var(--hazard-ink); }
+    .middleware .arch-card { color: var(--violet); }
+    .hardware .arch-card { color: #525d6c; }
+    .arch-card strong {
+      font: 600 12.5px/1.22 "IBM Plex Mono", monospace;
+      letter-spacing: .035em;
+      text-transform: uppercase;
+    }
+    .arch-card span {
+      margin-top: 5px;
+      color: var(--ink-3);
+      font-size: 12px;
+      line-height: 1.2;
+    }
+    .arch-card .status {
+      position: absolute;
+      top: -7px;
+      right: 7px;
+      margin: 0;
+      padding: 1px 4px;
+      border: 1px solid currentColor;
+      background: var(--surface);
+      color: inherit;
+      font: 600 9px "IBM Plex Mono", monospace;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+    }
+    .arch-card.reserved {
+      border-style: dashed;
+      background: rgba(255,255,255,.38);
+      color: var(--ink-3);
+    }
+
+    .flow-label {
+      position: absolute;
+      z-index: 4;
+      left: 474px;
+      width: 520px;
+      height: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      color: var(--ink-3);
+      background: var(--surface);
+      font: 600 11px "IBM Plex Mono", monospace;
+      letter-spacing: .07em;
+      text-transform: uppercase;
+    }
+    .flow-label::before,
+    .flow-label::after { color: var(--accent-2); font-size: 15px; line-height: 1; }
+    .flow-label::before { content: "↓"; }
+    .flow-label::after { content: "↑"; }
+    .flow-1 { top: 124px; }
+    .flow-2 { top: 274px; }
+    .flow-3 { top: 424px; }
+    .flow-4 { top: 560px; }
+
+    .arch-footer {
+      position: absolute;
+      left: 0;
+      top: 716px;
+      width: 1468px;
+      height: 51px;
+      display: grid;
+      grid-template-columns: 235px 1fr 245px;
+      align-items: center;
+      border: 1px solid var(--stop);
+      border-left: 7px solid var(--stop);
+      background: var(--stop-wash);
+    }
+    .arch-footer strong {
+      padding-left: 16px;
+      color: var(--stop);
+      font: 600 12px "IBM Plex Mono", monospace;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+    .arch-footer span { color: var(--ink-2); font-size: 12.5px; }
+    .arch-footer em {
+      padding-right: 15px;
+      color: var(--stop);
+      font: normal 600 10px "IBM Plex Mono", monospace;
+      letter-spacing: .045em;
+      text-align: right;
+      text-transform: uppercase;
+    }
+
+    .slide-note {
+      position: absolute;
+      z-index: 5;
+      right: 70px;
+      bottom: 17px;
+      color: var(--ink-3);
+      font: 500 10px "IBM Plex Mono", monospace;
+      letter-spacing: .035em;
+      text-transform: uppercase;
+    }
+
+    @page { size: 16.6667in 9.375in; margin: 0; }
+    @media print {
+      html, body { background: #fff; }
+      .toolbar { display: none; }
+      .deck { padding: 0; }
+      .frame {
+        width: 1600px !important;
+        height: 900px !important;
+        margin: 0;
+        border: 0;
+        break-after: page;
+        page-break-after: always;
+      }
+      .frame:last-child { break-after: auto; page-break-after: auto; }
+      .slide { transform: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <nav class="toolbar" aria-label="Diagram controls">
+    <strong>GVIEVO-01 architecture</strong>
+    <button type="button" data-jump="topology">01 · Topology</button>
+    <button type="button" data-jump="software">02 · Software</button>
+    <button type="button" id="print">Print / PDF</button>
+    <span class="meta">2 slides · 16:9 · self-contained</span>
+  </nav>
+
+  <main class="deck">
+    <div class="frame" id="topology">
+      <section class="slide" aria-labelledby="topology-title">
+        <header class="slide-head">
+          <div class="brand">
+            <h2>IGP Automation &amp; Smart Factory</h2>
+          </div>
+          <div class="title-wrap">
+            <h1 id="topology-title">GVIEVO-01 Controller &amp; Software Topology</h1>
+            <p>Actual platform · implemented interfaces · migration architecture</p>
+          </div>
+        </header>
+
+        <div class="vehicle-card" aria-label="GVIEVO-01 vehicle schematic">
+          <svg viewBox="0 0 390 156" role="img" aria-label="Top view with two drive wheels, forward direction and front-mounted nanoScan3">
+            <defs>
+              <pattern id="deckHatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                <line x1="0" y1="0" x2="0" y2="8" stroke="#c7d2df" stroke-width="2" />
+              </pattern>
+            </defs>
+            <!-- Simplified top view. Only verified drive and sensor geometry is shown. -->
+            <path d="M29 39 H257 L304 56 V104 L257 121 H29 L12 104 V56 Z" fill="url(#deckHatch)" stroke="#1b3a5c" stroke-width="2"/>
+
+            <!-- One transverse drive axle with two driven wheels. ROS +y / left is up. -->
+            <line x1="87" y1="27" x2="87" y2="133" stroke="#666e7f" stroke-width="1.2" stroke-dasharray="4 3"/>
+            <rect x="60" y="24" width="54" height="17" fill="#3d4553"/>
+            <rect x="60" y="119" width="54" height="17" fill="#3d4553"/>
+            <text x="87" y="16" text-anchor="middle" fill="#3d4553" font-family="IBM Plex Mono" font-size="8" font-weight="600">LEFT DRIVE WHEEL</text>
+            <text x="87" y="150" text-anchor="middle" fill="#3d4553" font-family="IBM Plex Mono" font-size="8" font-weight="600">RIGHT DRIVE WHEEL</text>
+            <text x="92" y="61" fill="#666e7f" font-family="IBM Plex Mono" font-size="7" font-weight="600">BASE_LINK / DRIVE AXLE</text>
+
+            <!-- MLS contains the IMU and is 0.092 m forward of the axle. -->
+            <rect x="112" y="68" width="26" height="24" fill="#eeeaf7" stroke="#66578f" stroke-width="1.5"/>
+            <circle cx="125" cy="80" r="4" fill="#66578f"/>
+            <text x="144" y="76" fill="#66578f" font-family="IBM Plex Mono" font-size="8" font-weight="600">SICK MLS / IMU</text>
+            <text x="144" y="88" fill="#666e7f" font-family="IBM Plex Mono" font-size="7">CAN NODE 10 · X +0.092 M</text>
+
+            <!-- Measured axle-to-lidar offset. -->
+            <line x1="87" y1="108" x2="294" y2="108" stroke="#2f5f94" stroke-width="1"/>
+            <line x1="87" y1="103" x2="87" y2="113" stroke="#2f5f94" stroke-width="1"/>
+            <line x1="294" y1="103" x2="294" y2="113" stroke="#2f5f94" stroke-width="1"/>
+            <text x="191" y="103" text-anchor="middle" fill="#2f5f94" font-family="IBM Plex Mono" font-size="7" font-weight="600">AXLE → LIDAR · 0.964 M</text>
+
+            <!-- nanoScan3 sector is 190 degrees: -95 to +95 degrees about +x. -->
+            <path d="M294 80 L288.8 20.2 A60 60 0 1 1 288.8 139.8 Z" fill="#e1f0f2" fill-opacity=".55" stroke="#2e7180" stroke-width="1.2" stroke-dasharray="4 3"/>
+            <line x1="294" y1="80" x2="354" y2="80" stroke="#2e7180" stroke-width="1" stroke-dasharray="5 3"/>
+            <circle cx="294" cy="80" r="12" fill="#e1f0f2" stroke="#2e7180" stroke-width="2"/>
+            <text x="292" y="54" text-anchor="middle" fill="#2e7180" font-family="IBM Plex Mono" font-size="8" font-weight="600">NANOSCAN3</text>
+            <text x="344" y="149" text-anchor="middle" fill="#2e7180" font-family="IBM Plex Mono" font-size="7" font-weight="600">190° SECTOR</text>
+
+            <!-- REP-103 convention: +x is forward. -->
+            <line x1="186" y1="18" x2="265" y2="18" stroke="#a32218" stroke-width="2"/>
+            <path d="M265 18 L255 12 V24 Z" fill="#a32218"/>
+            <text x="225" y="10" text-anchor="middle" fill="#a32218" font-family="IBM Plex Mono" font-size="8" font-weight="600">+X · FORWARD</text>
+          </svg>
+          <div class="vehicle-spec"><strong>150 kg base</strong> · 2 driven wheels · Ø0.18 m · 0.487 m track</div>
+        </div>
+
+        <div class="sensor-stack">
+          <h2>Sensors &amp; Operator Inputs</h2>
+          <div class="sensor-row"><strong>SICK nanoScan3</strong><span>Publishes measurement LaserScan over dedicated Ethernet; its independent OSSD pair goes directly to the FX3.</span></div>
+          <div class="sensor-row"><strong>SICK MLS / IMU</strong><span>CANopen node 10 supplies timestamped yaw rate; the former magnetic-line tracking function is retired.</span></div>
+          <div class="sensor-row"><strong>Motor encoders ×2</strong><span>BLV-R feedback supplies motor position and velocity; wheel slip and gearbox backlash remain unobserved.</span></div>
+          <div class="sensor-row"><strong>Panel / pendant</strong><span>Modbus I/O carries Start, Reset, AUTO/MANUAL and four held pendant direction inputs.</span></div>
+          <div class="sensor-row"><strong>Chafon CF821 RFID</strong><span>The TCP reader reports tag identity only; it cannot provide a localization pose or precision docking.</span></div>
+        </div>
+
+        <div class="host-boundary"><span>One industrial PC · N97 · 8 GB</span></div>
+
+        <article class="box blue main-controller">
+          <h2>Autonomy &amp; Application</h2>
+          <div class="sub">Ubuntu 22.04 · ROS 2 Humble · CycloneDDS</div>
+          <div class="chips">
+            <span class="chip">AMR supervisor</span><span class="chip">SLAM / AMCL</span>
+            <span class="chip">Nav2 route control</span><span class="chip">Web HMI</span>
+          </div>
+          <p>Runs one supervised service for live map surveys, immutable revisions, AMCL localization, validated fixed-route missions, process cleanup and operator diagnostics.</p>
+        </article>
+
+        <article class="box green client-box">
+          <h2>Operator / Engineering Clients</h2>
+          <div class="sub">Wi-Fi / Ethernet</div>
+          <div class="chips"><span class="chip">Browser HMI</span><span class="chip">Foxglove</span><span class="chip">SSH / service</span></div>
+          <p>The browser provides mapping, manual jog, route and mission controls. Foxglove and SSH support engineering work. Fleet / MES remains a reserved boundary.</p>
+        </article>
+
+        <article class="box amber motion-box">
+          <h2>Base &amp; Motion Control</h2>
+          <div class="sub">ROS 2 processes on the same industrial PC</div>
+          <div class="chips">
+            <span class="chip">Authority + command mux</span><span class="chip">Diff-drive kinematics</span>
+            <span class="chip">Wheel odometry</span><span class="chip">IMU bias + EKF</span>
+          </div>
+          <p>Produces 50 Hz wheel commands under supervisor leases, physical-panel authority and freshness watchdogs. There is no separate motion MCU; each drive closes its own fast current and velocity loops.</p>
+        </article>
+
+        <article class="box red driver-box">
+          <h2>Actuation · BLV-R Drivers ×2</h2>
+          <div class="sub">CANopen · CiA 402 profile velocity</div>
+          <div class="chips"><span class="chip">Node 1 · Left</span><span class="chip">Node 2 · Right</span></div>
+          <p>Each drive closes its internal current and velocity loops, then returns statusword, velocity and encoder position. Loss of the PC heartbeat forces a drive fault.</p>
+        </article>
+
+        <article class="box red motor-box">
+          <h2>Geared Wheel Motors ×2</h2>
+          <div class="sub">30:1 gearbox · 4,000 r/min motor ceiling</div>
+          <p>Left and right geared motors create differential motion. Their encoders are motor-side, so ground slip and gearbox backlash are not measured directly.</p>
+        </article>
+
+        <article class="box grey power-box">
+          <h2>Power &amp; I/O Distribution</h2>
+          <p>Distributes traction and auxiliary power and connects the CANable 2.0 / SLCAN adapter, Ethernet links and Modbus I/O island.</p>
+        </article>
+
+        <div class="safety-strip">
+          <strong>Independent safety path</strong>
+          <span>nanoScan3 OSSD + safety encoders → SICK Flexi Soft FX3 → HWTO1 / HWTO2 → drive STO · EDM returns to FX3</span>
+          <em>Software observes status; it does not perform the safety function</em>
+        </div>
+
+        <svg class="wires" viewBox="0 0 1600 900" aria-hidden="true">
+          <defs>
+            <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#8792a2" stroke="none"/></marker>
+            <marker id="arrow-start" markerWidth="8" markerHeight="8" refX="1" refY="4" orient="auto"><path d="M8,0 L0,4 L8,8 Z" fill="#8792a2" stroke="none"/></marker>
+            <marker id="arrow-red" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#a32218" stroke="none"/></marker>
+            <marker id="arrow-amber" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#5e4a00" stroke="none"/></marker>
+          </defs>
+          <path class="bidirectional" d="M1056 252 H1134"/>
+          <rect class="label-bg" x="1061" y="231" width="68" height="17"/><text x="1095" y="243" text-anchor="middle">HTTP / DDS</text>
+          <path class="bidirectional" d="M807 359 V406"/>
+          <rect class="label-bg" x="732" y="374" width="150" height="18"/><text x="807" y="387" text-anchor="middle">ROS 2 TOPICS / TF</text>
+          <path d="M491 750 H520 V510 H558"/>
+          <rect class="label-bg" x="491" y="758" width="67" height="18"/><text x="524" y="771" text-anchor="middle">SENSOR / I/O</text>
+          <path class="bidirectional" d="M1056 480 H1134"/>
+          <rect class="label-bg" x="1060" y="459" width="69" height="18"/><text x="1095" y="472" text-anchor="middle">CANOPEN</text>
+          <path d="M1333 551 V610"/>
+          <rect class="label-bg" x="1269" y="571" width="128" height="18"/><text x="1333" y="584" text-anchor="middle">POWER + TORQUE</text>
+          <path class="power-wire" d="M1056 716 H1093 V516 H1134"/>
+          <rect class="label-bg" x="1062" y="692" width="73" height="18"/><text x="1098" y="705" text-anchor="middle">DC / I/O</text>
+          <path class="power-wire" d="M807 671 V612"/>
+          <rect class="label-bg" x="749" y="632" width="116" height="18"/><text x="807" y="645" text-anchor="middle">HOST POWER</text>
+          <path class="safety-wire" d="M1215 796 V739 H1333 V722"/>
+          <rect class="label-bg" x="1219" y="746" width="92" height="18"/><text class="safety-label" x="1265" y="759" text-anchor="middle">HWTO / STO</text>
+        </svg>
+        <div class="slide-note">Source: current code, active profile and measured platform notes · 2026-09-18</div>
+      </section>
+    </div>
+
+    <div class="frame" id="software">
+      <section class="slide" aria-labelledby="software-title">
+        <header class="slide-head">
+          <div class="brand">
+            <h2>IGP Automation &amp; Smart Factory</h2>
+          </div>
+          <div class="title-wrap">
+            <h1 id="software-title">GVIEVO-01 Software Architecture</h1>
+            <p>Unified AMR service · implemented software with reserved fleet boundary</p>
+          </div>
+        </header>
+
+        <div class="architecture">
+          <section class="layer application">
+            <div class="layer-title">Application &amp; Operations<small>Persistent web + supervised mode layers</small></div>
+            <div class="layer-cards">
+              <article class="arch-card"><span class="status">Own code</span><strong>AMR Supervisor</strong><span>Starts and replaces mode processes; issues generation-bound motion leases.</span></article>
+              <article class="arch-card"><span class="status">Own code</span><strong>Web HMI</strong><span>Operator mapping, route editing, jogging, run control and diagnostics.</span></article>
+              <article class="arch-card"><span class="status">Own code</span><strong>Survey &amp; Maps</strong><span>Coordinates surveys, verifies results and publishes immutable map revisions.</span></article>
+              <article class="arch-card"><span class="status">Own code</span><strong>Route Executor</strong><span>Sequences path and spin actions; handles pause, block, resume and abort.</span></article>
+              <article class="arch-card"><span class="status">Own code</span><strong>Diagnostics</strong><span>Read-only events, I/O, parameters and owner-published health snapshots.</span></article>
+              <article class="arch-card reserved"><span class="status">Reserved</span><strong>Fleet / MES Adapter</strong><span>Future MQTT / API adapter, isolated from navigation and motion ownership.</span></article>
+            </div>
+          </section>
+
+          <div class="flow-label flow-1">Operations · map identity · mission state</div>
+
+          <section class="layer navigation">
+            <div class="layer-title">Mapping &amp; Navigation<small>Only mapping or navigation exists at one time</small></div>
+            <div class="layer-cards">
+              <article class="arch-card"><span class="status">ROS pkg</span><strong>SLAM Toolbox</strong><span>Builds a live occupancy map during the supervised manual survey.</span></article>
+              <article class="arch-card"><span class="status">ROS pkg</span><strong>AMCL</strong><span>Localizes against an approved, unchanged map during production runs.</span></article>
+              <article class="arch-card"><span class="status">ROS pkg</span><strong>Nav2 RPP</strong><span>Tracks collision-checked straight segments without automatic aisle detours.</span></article>
+              <article class="arch-card"><span class="status">ROS pkg</span><strong>Spin Behavior</strong><span>Executes signed in-place rotations between straight route segments.</span></article>
+              <article class="arch-card"><span class="status">Own code</span><strong>Route Compiler</strong><span>Validates straight/turn syntax, map identity and footprint clearance.</span></article>
+              <article class="arch-card"><span class="status">Own code</span><strong>Localization Monitor</strong><span>Gates READY using covariance, freshness, settling and scan consistency.</span></article>
+            </div>
+          </section>
+
+          <div class="flow-label flow-2">Path · velocity command · pose / scan health</div>
+
+          <section class="layer motion">
+            <div class="layer-title">Motion &amp; Estimation<small>Application interlocks, not safety-rated control</small></div>
+            <div class="layer-cards">
+              <article class="arch-card"><span class="status">Own code</span><strong>Authority Gate</strong><span>Requires panel selection, supervisor lease and healthy drive feedback.</span></article>
+              <article class="arch-card"><span class="status">Own code</span><strong>Command Mux</strong><span>Selects manual, follow or rotate; zeros expired or revoked commands.</span></article>
+              <article class="arch-card"><span class="status">Own code</span><strong>Diff-drive Kinematics</strong><span>Converts body velocity into bounded left and right wheel setpoints.</span></article>
+              <article class="arch-card"><span class="status">Own code</span><strong>Wheel Odometry</strong><span>Integrates BLV-R motor positions into wrap-safe continuous wheel travel.</span></article>
+              <article class="arch-card"><span class="status">Own + ROS</span><strong>IMU Bias + EKF</strong><span>Removes stationary gyro bias and fuses yaw rate with wheel odometry.</span></article>
+              <article class="arch-card"><span class="status">Own code</span><strong>Fault / Watchdogs</strong><span>Stops on stale commands, feedback loss, nonfinite input or drive alarms.</span></article>
+            </div>
+          </section>
+
+          <div class="flow-label flow-3">ROS 2 messages · actions · services · TF</div>
+
+          <section class="layer middleware">
+            <div class="layer-title">ROS 2 &amp; System Services<small>Ubuntu 22.04 · ROS 2 Humble</small></div>
+            <div class="layer-cards">
+              <article class="arch-card"><strong>CycloneDDS</strong><span>Provides local ROS 2 topic transport in the isolated production domain.</span></article>
+              <article class="arch-card"><strong>TF2</strong><span>Maintains the map → odom → base_footprint → sensor frame tree.</span></article>
+              <article class="arch-card"><strong>Lifecycle</strong><span>Activates map, AMCL and Nav2 dependencies in controlled order.</span></article>
+              <article class="arch-card"><strong>Interfaces</strong><span>Typed topics, services and actions bind every layer contract.</span></article>
+              <article class="arch-card"><strong>Process Groups</strong><span>Supervisor owns child groups with bounded start and stop escalation.</span></article>
+              <article class="arch-card"><strong>Strict Profile</strong><span>Hardware configuration fails closed on unknown or missing keys.</span></article>
+            </div>
+          </section>
+
+          <div class="flow-label flow-4">Sensor feedback · panel state · wheel setpoints</div>
+
+          <section class="layer hardware">
+            <div class="layer-title">Hardware Drivers &amp; HAL<small>One owner per physical resource</small></div>
+            <div class="layer-cards">
+              <article class="arch-card"><span class="status">Ethernet</span><strong>nanoScan3 Driver</strong><span>Publishes LaserScan and diagnostics from the scanner measurement channel.</span></article>
+              <article class="arch-card"><span class="status">CAN owner</span><strong>BLV-R Nodes 1 / 2</strong><span>One bus owner commands both drives and pairs their PDO feedback.</span></article>
+              <article class="arch-card"><span class="status">CAN node 10</span><strong>MLS IMU Adapter</strong><span>Reads yaw rate and publishes raw timestamped IMU data.</span></article>
+              <article class="arch-card"><span class="status">Modbus TCP</span><strong>Panel / DIO</strong><span>Owns 16 DI/DO and debounces Start, Reset, selector and pendant.</span></article>
+              <article class="arch-card reserved"><span class="status">Library only</span><strong>RFID Reader</strong><span>TCP parser exists; its ROS diagnostic adapter is not yet implemented.</span></article>
+              <article class="arch-card"><span class="status">System</span><strong>CANable + Network</strong><span>SLCAN exposes can0; Ethernet links serve scanner and I/O devices.</span></article>
+            </div>
+          </section>
+
+          <footer class="arch-footer">
+            <strong>Independent safety circuit</strong>
+            <span>nanoScan3 OSSD + safety encoders → Flexi Soft FX3 → dual-channel HWTO / STO · separate from ROS 2 and the IPC</span>
+            <em>Software stop ≠ safety stop</em>
+          </footer>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    (() => {
+      const WIDTH = 1600;
+      const HEIGHT = 900;
+      const frames = [...document.querySelectorAll('.frame')];
+
+      function fitSlides() {
+        const scale = Math.min(1, (window.innerWidth - 32) / WIDTH);
+        frames.forEach((frame) => {
+          frame.style.width = `${WIDTH * scale}px`;
+          frame.style.height = `${HEIGHT * scale}px`;
+          frame.querySelector('.slide').style.transform = `scale(${scale})`;
+        });
+      }
+
+      document.querySelectorAll('[data-jump]').forEach((button) => {
+        button.addEventListener('click', () => {
+          document.getElementById(button.dataset.jump).scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+      });
+      document.getElementById('print').addEventListener('click', () => window.print());
+      window.addEventListener('resize', fitSlides);
+      fitSlides();
+    })();
+  </script>
+</body>
+</html>

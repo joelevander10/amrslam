@@ -1,0 +1,7 @@
+# Save the reviewed survey as an immutable revision bundle (spec §6.2).
+string note            # operator's review note, stored in the manifest
+---
+bool ok
+string path            # published revision directory
+uint32 revision
+string message

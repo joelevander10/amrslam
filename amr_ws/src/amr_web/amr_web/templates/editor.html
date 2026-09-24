@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}AMR — route editor{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block body %}
+<section class="editor">
+  <aside class="tools">
+    <h2>Route <small>map metres</small></h2>
+    <label class="field">Map <select id="ed-map"></select></label>
+    <label class="field">Route id <input id="ed-route-id" placeholder="route_a"></label>
+    <label class="field">Load saved <select id="ed-load"><option value="">— new —</option></select></label>
+    <div class="sep"></div>
+    <h3>Draw</h3>
+    <div class="bar" style="margin-top:0">
+      <button id="tool-start" class="tool">Start pose</button>
+      <button id="btn-start-survey" class="tool" title="Put the route start on the map's survey start mark">Start = survey mark</button>
+      <button id="tool-line" class="tool">Straight</button>
+    </div>
+    <label class="field">Straight length <small>mm, along the heading</small>
+      <span class="inline"><input id="ed-len" type="number" step="1" min="50" placeholder="1500"><button id="btn-line-len" class="tool" title="Add a straight of this length from the route's end pose">Add</button><button id="btn-reverse-len" class="tool" title="Back up this far along the heading, facing forward: at most 2000 mm, at half the speed cap (the rear is not scanned)">Reverse</button></span>
+    </label>
+    <label class="field" style="margin-top:12px">Turn <small>viewed from above</small></label>
+    <div class="turns">
+      <button class="tool turn" data-dir="ccw" data-ang="45">CCW 45</button><button class="tool turn" data-dir="ccw" data-ang="90">CCW 90</button><button class="tool turn" data-dir="ccw" data-ang="180">CCW 180</button><button class="tool turn" data-dir="ccw" data-ang="270">CCW 270</button>
+      <button class="tool turn" data-dir="cw" data-ang="45">CW 45</button><button class="tool turn" data-dir="cw" data-ang="90">CW 90</button><button class="tool turn" data-dir="cw" data-ang="180">CW 180</button><button class="tool turn" data-dir="cw" data-ang="270">CW 270</button>
+    </div>
+    <label class="field" style="margin-top:12px">Arc <small>forward along a circle · R ≥ 1 m · 45–180°</small>
+      <span class="inline"><input id="ed-arc-radius" type="number" step="0.1" min="1" max="50" value="1.0" title="radius, m"><input id="ed-arc-angle" type="number" step="5" min="45" max="180" value="90" title="angle, degrees"><button id="btn-arc-l" class="tool" title="Arc to the left (ccw)">Arc L</button><button id="btn-arc-r" class="tool" title="Arc to the right (cw)">Arc R</button></span>
+    </label>
+    <div class="bar">
+      <button id="btn-undo" class="tool">Undo</button><button id="btn-redo" class="tool">Redo</button><button id="btn-clear" class="danger">Clear steps</button>
+    </div>
+    <div class="sep"></div>
+    <h3>Limits</h3>
+    <label class="field">Repeat count <input id="ed-repeat" type="number" min="1" max="100" value="1"></label>
+    <label class="field">Speed cap m/s <input id="ed-speed" type="number" step="0.05" min="0.05" max="0.60" value="0.55"></label>
+    <label class="field">Long straight speed m/s <small>empty = no boost</small> <input id="ed-speed-long" type="number" step="0.05" min="0.05" max="0.85" value="0.85"></label>
+    <label class="field">Arc speed m/s <small>at most the cap</small> <input id="ed-speed-arc" type="number" step="0.05" min="0.05" max="0.60" value="0.40"></label>
+    <label class="field">Long straight from m <small>strictly longer</small> <input id="ed-long-min" type="number" step="0.5" min="1" max="100" value="4"></label>
+    <div class="bar">
+      <button id="btn-validate" class="big">Validate</button>
+      <button id="btn-save" class="big run">Save revision</button>
+    </div>
+    <div class="bar"><button id="btn-mission" class="big">Create mission from saved revision</button></div>
+    <div class="sep"></div>
+    <h3>Result</h3>
+    <div id="ed-result"><div class="none">not validated</div></div>
+    <h3 style="margin-top:12px">Steps</h3>
+    <div id="ed-steps" class="list"><div class="none">no steps</div></div>
+  </aside>
+  <div class="canvas-wrap">
+    <canvas id="ed-canvas" width="900" height="600"></canvas>
+    <div id="ed-hint" class="hint">Pick a map. Wheel = zoom, drag = pan, double-click = fit. Start pose: click, then drag for heading. Straight: click a point or type a length in mm; lengths are shown in mm. Dashed outlines are the area validation checks (footprint + margin); all of it must be white.</div>
+  </div>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/mapview.js"></script><script src="/static/editor.js"></script>{% endblock %}

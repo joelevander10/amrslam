@@ -1,0 +1,234 @@
+{
+  "profile_name": "amr-qr-01",
+  "platform": "qr_analog",
+  "vehicle": {
+    "track_m": 0.37652,
+    "wheel_dia_m": 0.18,
+    "gear_ratio": 30.0,
+    "motor_max_rpm": 900.0,
+    "sensor_lookahead_m": 0.1,
+    "invert_left": false,
+    "invert_right": true
+  },
+  "manual": {
+    "full_rpm": 600,
+    "half_ratio": 0.6
+  },
+  "drivers": {
+    "ramp": {
+      "manual": {
+        "accel": 800,
+        "decel": 1600
+      },
+      "auto": {
+        "accel": 1600,
+        "decel": 1600
+      }
+    },
+    "target_deadband_rpm": 5
+  },
+  "rfid": {
+    "enabled": false,
+    "ip": "192.168.1.200",
+    "port": 2022,
+    "interface": "enp2s0",
+    "init_hex": "CFFF0070002415",
+    "frame_len": 17,
+    "tag_offset": 13,
+    "tag_len": 2,
+    "ignore_tags": [
+      "3130"
+    ],
+    "recv_timeout_s": 1.0,
+    "banner_wait_s": 0.6,
+    "silent_warn_s": 60.0,
+    "reconnect_period_s": 2.0,
+    "tag_hold_s": 2.0
+  },
+  "dio": {
+    "enabled": true,
+    "ip": "192.168.1.40",
+    "port": 502,
+    "device_id": 1,
+    "scan_period_s": 0.03,
+    "timeout_s": 0.025,
+    "reconnect_period_s": 0.5,
+    "silent_warn_s": 1.0,
+    "di_base": 0,
+    "do_base": 0,
+    "num_di": 16,
+    "num_do": 16,
+    "di_flipped": false,
+    "di_names": [
+      "E-STOP (NC)",
+      "PB START AUTO",
+      "PB STOP AUTO",
+      "[SPARE] (no selector fitted)",
+      "[SPARE]",
+      "[SPARE]",
+      "[SPARE]",
+      "[SPARE]",
+      "[SPARE]",
+      "[SPARE]",
+      "[SPARE]",
+      "[SPARE]",
+      "[SPARE]",
+      "[SPARE]",
+      "[SPARE]",
+      "[SPARE]"
+    ],
+    "do_names": [
+      "[SPARE]",
+      "Motor R FWD",
+      "Motor R REV",
+      "Motor R BRAKE",
+      "Motor L FWD",
+      "Motor L REV",
+      "Motor L BRAKE",
+      "[SPARE]",
+      "[SPARE]",
+      "[SPARE]",
+      "[SPARE]",
+      "[SPARE]",
+      "[SPARE]",
+      "[SPARE]",
+      "[SPARE]",
+      "[SPARE]"
+    ]
+  },
+  "lidar": {
+    "enabled": false,
+    "host_ip": "192.168.3.2",
+    "sensor_ip": "192.168.3.10",
+    "port": 6060,
+    "reassembly_timeout_s": 0.06,
+    "zone_block": 0,
+    "zone_bytes": [
+      6,
+      12,
+      13
+    ],
+    "zone_active_low": false,
+    "zones_validated": false
+  },
+  "panel": {
+    "enabled": true,
+    "di_reset": 2,
+    "di_start": 1,
+    "di_auto": 3,
+    "debounce_scans": 2,
+    "coincidence_hold_s": 0.0,
+    "manual_auto_arm": true
+  },
+  "horn": {
+    "enabled": false,
+    "do_channel": 0
+  },
+  "pendant": {
+    "enabled": false,
+    "di_fwd": 4,
+    "di_rvs": 5,
+    "di_left": 6,
+    "di_right": 7
+  },
+  "can": {
+    "bitrate": 125000,
+    "channel": "can0",
+    "adapter_serial": "",
+    "left_node": 1,
+    "right_node": 2,
+    "sensor_node": 10,
+    "heartbeat_ms": 0,
+    "use_rpdo": false
+  },
+  "monitor": {
+    "enabled": false,
+    "poll_period_s": 0.1,
+    "driver_temp_warn_c": 70.0,
+    "driver_temp_trip_c": 85.0,
+    "motor_temp_warn_c": 80.0,
+    "motor_temp_trip_c": 95.0,
+    "bus_v_warn_low": 42.0,
+    "bus_v_warn_high": 56.0
+  },
+  "imu": {
+    "enabled": true,
+    "poll_period_s": 0.02,
+    "retry_period_s": 2.0
+  },
+  "blind_run": {
+    "max_distance_m": 10.0,
+    "max_rpm": 800.0,
+    "accel_rpm_s": 400.0,
+    "settle_s": 0.5,
+    "stop_tolerance_mm": 5.0,
+    "sync_kp": 2.0,
+    "overrun_margin": 0.02,
+    "max_segments": 8,
+    "max_speed_mps": 0.2
+  },
+  "pp": {
+    "enabled": false,
+    "vendor_ref": "",
+    "max_speed_mps": 0.1,
+    "expect": {
+      "max_torque_permille": null,
+      "following_error_counts": null,
+      "position_window_counts": null,
+      "halt_option": null,
+      "fault_reaction": null,
+      "quick_stop_decel": null
+    }
+  },
+  "timing": {
+    "loop_period_s": 0.02,
+    "telemetry_period_s": 0.2,
+    "manual_watchdog_s": 0.6,
+    "driver_timeout_s": 0.6,
+    "auto_start_delay_s": 0.6
+  },
+  "qr_base": {
+    "ao_ip": "192.168.1.30",
+    "ao_port": 502,
+    "ao_device_id": 1,
+    "ao_timeout_s": 0.05,
+    "ao_register_base": 64,
+    "ao_counts_per_volt": 1000.0,
+    "ao_full_scale_v": 10.0,
+    "ao_ch_left": 1,
+    "ao_ch_right": 0,
+    "do_left_fwd": 4,
+    "do_left_rev": 5,
+    "do_left_brk": 6,
+    "do_right_fwd": 1,
+    "do_right_rev": 2,
+    "do_right_brk": 3,
+    "brake_on_stop": true,
+    "coil_hold_s": 0.15,
+    "dir_dwell_s": 0.1,
+    "di_estop": 0,
+    "estop_active_low": true,
+    "auto_hold_s": 0.0,
+    "enc_counts_per_rev": 8192.0,
+    "enc_range_counts": 16777216,
+    "enc_invert_left": false,
+    "enc_invert_right": false,
+    "enc_mode": "auto",
+    "enc_event_ms": 20,
+    "enc_timeout_s": 0.2,
+    "imu_port": "/dev/ttyUSB0",
+    "imu_baud": 9600,
+    "imu_timeout_s": 0.5,
+    "imu_gyro_sign": 1.0,
+    "ff_motor_rpm_per_volt": 300.0,
+    "ff_offset_v": 0.4,
+    "v_max_v": 4.0,
+    "kp_v_per_rad_s": 0.3,
+    "ki_v_per_rad": 2.0,
+    "i_max_v": 1.0,
+    "zero_rad_s": 0.05,
+    "runaway_rad_s": 1.0,
+    "runaway_s": 0.3,
+    "stall_s": 2.0
+  }
+}

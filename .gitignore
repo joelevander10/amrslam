@@ -1,0 +1,21 @@
+agv-kim2a-controller/
+**/__pycache__/
+*.py[cod]
+*.log
+*.sh
+
+# ...but these are documentation, not runtime artifacts: rfid-setup.md calls them
+# "the four files" and step 1/2 of the guide is running them. Without this negation
+# they survive only by already being staged, which a re-add would silently undo.
+!manuals/rfid-setup/*.sh
+# Deployment and environment scripts are part of the product (unified plan U0).
+!amr_ws/deploy/*.sh
+!amr_ws/env/*.sh
+
+# Blind-run logs are evidence, not source: keep them out of the tree.
+logs/
+
+# Tool and OS clutter
+.pytest_cache/
+.ruff_cache/
+.DS_Store

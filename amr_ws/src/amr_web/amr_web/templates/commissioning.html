@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}AMR — commissioning{% endblock %}
+{% block body %}
+<div class="warn-box"><b>Engineering mode inside IDLE.</b> <b>Hold move</b> validates and stores one move — it moves nothing. The move runs only on a <b>fresh press of the physical Start</b> with the selector in <b>MANUAL</b>, once. While a move is held or running, ordinary jog and mode changes are refused. Selector change, Clear, panel or feedback loss aborts it; E-stop and the FX3/STO chain stay the physical stop.</div>
+<section class="cols">
+  <div class="panel" id="br-form">
+    <h2>Blind move <small>one move per Start · measured on the floor afterwards</small></h2>
+    <div class="bar" id="br-kinds" style="margin-top:4px">
+      <button class="tool" data-kind="straight">Straight</button>
+      <button class="tool" data-kind="rotate">Rotate</button>
+      <button class="tool" data-kind="arc">Arc</button>
+    </div>
+    <div id="br-straight">
+      <label class="field">Direction <select id="br-dir"><option value="forward">Forward</option><option value="reverse">Reverse</option></select></label>
+      <label class="field">Distance m <input id="br-distance" type="number" step="0.001" min="0.001" value="1.000"></label>
+    </div>
+    <div id="br-rotate" hidden>
+      <label class="field">Direction <small>seen from above</small> <select id="br-rot"><option value="ccw">CCW (left)</option><option value="cw">CW (right)</option></select></label>
+      <label class="field">Angle ° <input id="br-rot-angle" type="number" step="0.1" min="0.1" max="720" value="90"></label>
+    </div>
+    <div id="br-arc" hidden>
+      <label class="field">Side <small>always forwards</small> <select id="br-side"><option value="left">Left</option><option value="right">Right</option></select></label>
+      <label class="field">Angle ° <input id="br-arc-angle" type="number" step="0.1" min="0.1" max="360" value="90"></label>
+      <label class="field">Radius m <small id="br-radius-min">centre path</small> <input id="br-radius" type="number" step="0.001" value="1.000"></label>
+    </div>
+    <div class="sep"></div>
+    <label class="field">Speed m/s <small id="br-speed-cap"></small> <input id="br-speed" type="number" step="0.01" min="0.05" max="0.8" value="0.20"></label>
+    <label class="field">Backend
+      <select id="br-backend">
+        <option value="pv" selected>PV — profile velocity (software position loop)</option>
+        <option value="pp" disabled>PP — profile position (in the drive)</option>
+      </select></label>
+    <div id="br-warn" class="warn-box stop" hidden style="margin-top:10px"></div>
+    <label class="check"><input id="br-check" type="checkbox"> Area clear · E-stop within reach · the speed is within the protective field sizing</label>
+    <p id="br-errors" class="note"></p>
+    <div class="bar">
+      <button id="btn-plan" class="big run" disabled>Hold move</button>
+      <button id="btn-clear" class="danger">Clear / abort</button>
+    </div>
+    <h3 style="margin-top:14px">Held move</h3>
+    <div id="planned" class="list"><div class="none">no plan held</div></div>
+    <details class="pm-note" style="margin-top:12px"><summary>Advanced: plan JSON (PV, several segments)</summary>
+      <label class="field">Plan <small>kinds: straight {distance_m} · arc {radius_m, angle_deg} · pivot {angle_deg} · pulses {left, right}; "backend": "pv" | "pp"</small>
+        <textarea id="plan" rows="9">{
+  "id": "straight-1m",
+  "backend": "pv",
+  "speed": {"speed_mps": 0.10},
+  "segments": [
+    {"kind": "straight", "distance_m": 1.0}
+  ]
+}</textarea></label>
+      <div class="bar"><button id="btn-json" class="big">Hold JSON plan</button></div>
+    </details>
+  </div>
+  <div class="panel">
+    <h2>Job <small>/amr/commissioning_state</small></h2>
+    <div id="job" class="tel-grid"></div>
+    <p id="job-reason" class="note"></p>
+    <p id="job-evidence" class="note"></p>
+    <div class="sep"></div>
+    <h2>Measured result <small>tape, after the move</small></h2>
+    <p class="note">Vehicle frame at the start: <b>x forward, y left, heading counter-clockwise +</b>. Measure the axle-midpoint mark, and the heading from a second mark ~1 m ahead.</p>
+    <label class="field">Run <select id="ms-run"></select></label>
+    <p id="ms-commanded" class="note">commanded: –</p>
+    <div class="br-ms">
+      <label class="field">dx mm <input id="ms-dx" type="number" step="1"></label>
+      <label class="field">dy mm <input id="ms-dy" type="number" step="1"></label>
+      <label class="field">heading ° <input id="ms-hdg" type="number" step="0.1"></label>
+    </div>
+    <label class="field">Note <input id="ms-note" maxlength="500" placeholder="floor, tyre, anything odd"></label>
+    <div class="bar"><button id="btn-measure" class="big">Save measurement</button></div>
+  </div>
+</section>
+<section class="panel" style="margin-top:14px">
+  <h2>History <small>commanded vs measured · newest first</small></h2>
+  <div id="history" class="list"><div class="none">no runs yet</div></div>
+  <p class="note">Error = measured − commanded (mm, mm, °). Results measure the drive and the vehicle; nothing here corrects anything.</p>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/blindrun.js"></script>{% endblock %}

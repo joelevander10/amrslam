@@ -1,0 +1,136 @@
+# Nav2 components for drawn routes (spec §5): controller_server with RPP for straights,
+# behavior_server with Spin for directed turns, a rolling local costmap. No planner,
+# no BT navigator, no smoother: nothing here can insert a path the operator did not draw.
+#
+# The local costmap footprint is overridden by navigation_layer.launch.py (a node-scoped params file) from
+# amr_description/config/footprint.yaml (single source of truth).
+controller_server:
+  ros__parameters:
+    use_sim_time: false
+    controller_frequency: 20.0
+    min_x_velocity_threshold: 0.001
+    min_y_velocity_threshold: 0.5
+    min_theta_velocity_threshold: 0.03   # Part B1: corrections under 0.03 rad/s are noise at crawl speed; rollback 0.001
+    failure_tolerance: 0.3
+    progress_checker_plugin: progress_checker
+    goal_checker_plugins: [precise]
+    controller_plugins: [FollowPath]
+    progress_checker:
+      plugin: nav2_controller::SimpleProgressChecker
+      required_movement_radius: 0.10
+      movement_time_allowance: 10.0
+    precise:
+      plugin: nav2_controller::SimpleGoalChecker
+      xy_goal_tolerance: 0.05          # spec §5.2 +/-0.05. The executor aims the path goal_overshoot_m PAST the
+                                       # endpoint (Part B2), so the checker fires just before the true end instead
+                                       # of hunting a 2.5 cm circle it cannot see; rollback 0.025 with overshoot 0
+      yaw_goal_tolerance: 0.035
+      stateful: true
+    FollowPath:
+      plugin: nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController
+      desired_linear_vel: 0.85         # the vehicle CEILING (= route.VEHICLE_V_MAX; 0.70 09-18, 0.85 09-19), never what every step runs at:
+                                       # the executor publishes each step's speed on /speed_limit (RPP setSpeedLimit, absolute), so the
+                                       # approach ramp is planned from the step's own speed (0.55 default, 0.85 long straights), and the
+                                       # same number rides in the MotionPermit v_max as the mux's hard clamp (review Q04)
+      # Pure pursuit steers with curvature 2*offset/L^2: at the 0.3 m minimum lookahead a normal
+      # 5 cm start offset was a 1.1 rad/m yank to the right at the first metre (vehicle
+      # 2026-09-17). Routes are straight lines with turns in place, so a long lookahead costs
+      # nothing (no corners to cut): 0.8 m makes the same offset a 0.16 rad/m drift-in.
+      lookahead_dist: 0.8
+      min_lookahead_dist: 0.8
+      max_lookahead_dist: 1.2
+      lookahead_time: 2.5
+      use_velocity_scaled_lookahead_dist: true
+      transform_tolerance: 0.2
+      min_approach_linear_velocity: 0.05
+      approach_velocity_scaling_dist: 1.0   # 0.6 -> 1.0 (2026-09-18). The ramp is linear in distance, so its decel demand
+                                            # peaks at v0^2/D: 0.82 m/s^2 from 0.70 over 0.6 m (above the mux d_max 0.5, the
+                                            # lag lands past the endpoint), 0.49 over 1.0 m; 0.25 from 0.50. Rollback 0.6 with 0.40.
+                                            # 2026-09-19: a chain always ENDS at the base speed (the executor
+                                            # tapers a boosted one down first), so the bound is route.BASE_V_MAX
+                                            # 0.60: 0.36 m/s^2 over 1.0 m, not 0.85^2.
+      use_collision_detection: true
+      max_allowed_time_to_collision_up_to_carrot: 1.2   # 1.02 m ahead at 0.85 (1.5 s = 1.05 m at 0.70 on 09-18; was 1.0 s at 0.40)
+      use_regulated_linear_velocity_scaling: true
+      use_cost_regulated_linear_velocity_scaling: false   # aisles are 3.6 m wide; cost scaling only slows
+      regulated_linear_scaling_min_radius: 0.9
+      regulated_linear_scaling_min_speed: 0.10
+      use_rotate_to_heading: false      # the executor rotates explicitly with Spin
+      allow_reversing: true             # reverse steps (2026-09-18): RPP backs up when the carrot is behind the base
+      rotate_to_heading_angular_vel: 0.3
+      max_angular_accel: 0.5           # Part B1: halves how fast a correction builds; mux alpha_max stays the hard limit; rollback 1.0
+      max_robot_pose_search_dist: 2.0
+      use_interpolation: true
+
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      use_sim_time: false
+      global_frame: odom
+      robot_base_frame: base_footprint
+      rolling_window: true
+      width: 5
+      height: 5
+      resolution: 0.05
+      update_frequency: 5.0
+      publish_frequency: 2.0
+      transform_tolerance: 0.3
+      footprint: "[[-0.5, -0.35], [1.1, -0.35], [1.1, 0.35], [-0.5, 0.35]]"   # overridden at launch (footprint.yaml)
+      # No static layer: it needs the map frame before an initial pose exists and only
+      # duplicates what the scan already shows; clearance against the saved map is
+      # validated by the executor/route validator, not by the costmap.
+      plugins: [obstacle_layer, inflation_layer]
+      obstacle_layer:
+        plugin: nav2_costmap_2d::ObstacleLayer
+        enabled: true
+        observation_sources: scan
+        scan:
+          # /scan_gated, not /scan: the obstacle layer reads scans through a tf2
+          # MessageFilter targeting odom. Raw scans arrive 20-40 ms before their odom
+          # transform and take the filter's asynchronous path, which froze this
+          # process's TF listener seconds after activation (2026-09-17, twice: the
+          # controller then saw no map frame and 'reached' every goal without moving).
+          # scan_gate_node releases scans only once odom covers their stamp.
+          topic: /scan_gated
+          max_obstacle_height: 2.0
+          clearing: true
+          marking: true
+          data_type: LaserScan
+          raytrace_max_range: 6.0
+          raytrace_min_range: 0.0
+          obstacle_max_range: 5.0
+          obstacle_min_range: 0.0
+      inflation_layer:
+        plugin: nav2_costmap_2d::InflationLayer
+        cost_scaling_factor: 3.0
+        inflation_radius: 0.55
+      always_send_full_costmap: true
+
+behavior_server:
+  ros__parameters:
+    use_sim_time: false
+    costmap_topic: local_costmap/costmap_raw
+    footprint_topic: local_costmap/published_footprint
+    cycle_frequency: 20.0              # 10 Hz let a 0.05 rad/s Spin overrun by up to 2 deg (vehicle 2026-09-17)
+    behavior_plugins: [spin]
+    spin:
+      plugin: nav2_behaviors/Spin     # Humble spelling; navigation_layer.launch.py overrides it per ROS_DISTRO (Jazzy: nav2_behaviors::Spin)
+    global_frame: odom
+    robot_base_frame: base_footprint
+    transform_tolerance: 0.1
+    simulate_ahead_time: 2.0
+    max_rotational_vel: 0.37           # autonomous turn cap = route.VEHICLE_W_MAX (0.24 09-17, 0.34 09-18, +10 % 09-19)
+    min_rotational_vel: 0.05           # low enough for the 2 deg stopping tolerance
+    # Spin's own stopping profile is w = sqrt(2 * acc_lim * remaining): at 0.5 it still asks
+    # 0.19 rad/s with 2 deg to go and the vehicle coasts past. At 0.12 it was down to 0.09
+    # rad/s there and decelerated from 0.24 over the last 14 deg; residual < 0.3 deg.
+    # Scaled with the speed (2026-09-18): from 0.34 it decelerates over the last 20 deg and
+    # asks 0.11 rad/s with 2 deg to go; a 45 deg turn still reaches full speed. Rollback 0.12.
+    rotational_acc_lim: 0.17
+
+lifecycle_manager_navigation:
+  ros__parameters:
+    use_sim_time: false
+    autostart: true
+    node_names: [controller_server, behavior_server]
+    bond_timeout: 20.0     # startup load on the N97: the whole launch dies if a bond is missed

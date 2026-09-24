@@ -1,0 +1,8 @@
+# Simulation only: teleport the fake base's ground truth (kidnapped-robot tests).
+# Reported wheel positions are untouched, so odometry does NOT jump - only reality does.
+float64 x_m
+float64 y_m
+float64 yaw_rad
+---
+bool ok
+string message

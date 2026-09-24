@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block title %}AGV — monitor{% endblock %}
+{% block body %}
+
+{# Moved off the shared rail: loop timing, frames per tick and the watchdog
+   countdown are for somebody tuning the control loop, not for an operator, and
+   they were taking four of the six rail slots on every page. This is the page
+   that page exists for. #}
+<section class="sensor">
+  <h2>Control loop <small>bus thread · target {{ (1000 * scan_period_s) | round(0) | int }} ms tick</small></h2>
+  <div class="tel-grid">
+    <div class="tel"><span>Loop</span><b id="loop-work">–</b><i id="loop-period">ms work</i></div>
+    <div class="tel"><span>Frames</span><b id="loop-frames">–</b><i id="loop-starved">per tick</i></div>
+    <div class="tel"><span>Watchdog</span><b id="wd">–</b><i>s left</i></div>
+  </div>
+  <p class="mon-note">
+    <b>Work</b> is time the bus thread spent doing things; <b>period</b> is the
+    interval it actually achieved. Splitting them says whether a late tick is
+    the controller or the bus. A <b>starved</b> tick is one where the loop was
+    armed but no new TPDO1 had arrived, so the PID would be acting on a frame it
+    has already used.
+  </p>
+</section>
+
+<section class="sensor">
+  <h2>Drives <small>{{ bitrate_kbps }} kbps · heartbeat
+      {% if heartbeat_ms %}{{ heartbeat_ms }} ms{% else %}off{% endif %}</small></h2>
+  {# The bus identity, moved off the header pill on every page: which adapter
+     can0 resolved to is a commissioning and fault-finding fact, and this is the
+     fault-finding page. The pill now carries armed state, which is what an
+     operator reads it for. #}
+  <div class="tel-grid">
+    <div class="tel"><span>Bus</span><b id="bus-how">–</b><i id="bus-state">—</i></div>
+  </div>
+  <div class="mon-grid" id="mon-state"></div>
+</section>
+
+<section class="sensor">
+  <h2>IMU <small>node {{ imu_node }} · 2034h · 2033h · 2030h · SDO, one object per
+      {{ imu_period_ms }} ms</small></h2>
+  {# Display only. Nothing steers from this yet and it is not a health source;
+     it is here so the gyro can be watched before gyro-odometry is built on it.
+     See the imu.* tuning note in config.py and drivers/canbus/read_imu.py. #}
+  {% if imu_enabled %}
+  <div class="tel-grid" id="mon-imu">
+    <div class="tel"><span>Yaw rate</span><b id="imu-gz">–</b><i>°/s · gyro z</i></div>
+    <div class="tel"><span>Heading</span><b id="imu-yaw">–</b><i>° · relative, drifts</i></div>
+    <div class="tel"><span>Gyro x</span><b id="imu-gx">–</b><i>°/s</i></div>
+    <div class="tel"><span>Gyro y</span><b id="imu-gy">–</b><i>°/s</i></div>
+    <div class="tel"><span>Accel x</span><b id="imu-ax">–</b><i>g</i></div>
+    <div class="tel"><span>Accel y</span><b id="imu-ay">–</b><i>g</i></div>
+    <div class="tel"><span>Accel z</span><b id="imu-az">–</b><i id="imu-az-note">g · 1.00 at rest</i></div>
+    <div class="tel"><span>Link</span><b id="imu-link">–</b><i id="imu-link-note">—</i></div>
+  </div>
+  <p class="mon-note">
+    Yaw rate is the value that matters: the wheel encoders sit on the motor side
+    of the 30:1 gearhead, so backlash on every reversal lands as heading error
+    that only a gyro can see. <b>Heading</b> is the sensor's own integrated yaw
+    — relative, and it drifts a few degrees a minute, so read it for motion,
+    not for direction. |accel| at rest is a free scale check.
+  </p>
+  {% else %}
+  <div class="mon-none">imu.enabled is false in the profile</div>
+  {% endif %}
+</section>
+
+<section class="sensor">
+  <h2>Alarms <small>EMCY · pushed on 0x080+n</small></h2>
+  <div id="mon-alarms" class="mon-alarms">
+    <div class="mon-none">no alarm reported since start-up</div>
+  </div>
+</section>
+
+<section class="sensor">
+  <h2>Power <small>40A4h · 40A3h · 409Bh</small></h2>
+  <div class="mon-grid" id="mon-power"></div>
+  <p class="mon-note">
+    Negative current is <b>regeneration</b>. An upward voltage spike while
+    braking is regen the battery is refusing to take.
+  </p>
+</section>
+
+<section class="sensor">
+  <h2>Thermal <small>407Ch · 407Dh</small></h2>
+  <div class="mon-grid" id="mon-thermal"></div>
+</section>
+
+<section class="sensor">
+  <h2>Load and deviation <small>406Bh · 406Ch · 4073h · 4075h</small></h2>
+  <div class="mon-grid" id="mon-load"></div>
+  <p class="mon-note">
+    Rising load factor at constant duty means drivetrain drag, a dragging brake
+    or a failing bearing. Deviation is the drive's own motor-side encoder,
+    upstream of the 1:30 gearhead — <b>not</b> the SIL 3 wheel encoders.
+  </p>
+</section>
+
+<section class="sensor">
+  <h2>Provisional <small>bit layout not yet bench-verified</small></h2>
+  <div class="mon-grid" id="mon-raw"></div>
+  <p class="mon-note">
+    407Bh information status and 4056h comms error are shown raw. The
+    information bit layout is cross-referenced from the Function Edition's
+    Modbus tables and the monitoring plan says to confirm it on the bench, so
+    no warning is asserted from it yet.
+  </p>
+</section>
+
+<section class="sensor">
+  <h2>Write policy <small>monitoring plan section 8</small></h2>
+  <div class="mon-policy">
+    <div>
+      <h3>Permitted</h3>
+      <ul>{% for i in allowed %}<li><code>{{ i }}</code></li>{% endfor %}</ul>
+    </div>
+    <div>
+      <h3>Refused in code</h3>
+      <ul>{% for i in forbidden %}<li><code>{{ i }}</code></li>{% endfor %}
+        <li><code>4000h–4FFFh</code> parameters</li>
+        <li><code>6040h</code> bit 7 fault reset</li>
+      </ul>
+    </div>
+  </div>
+  <p class="mon-note">
+    Enforced on every write path, not by convention. <code>403Eh</code> bit 6 is
+    <b>FREE</b>: it releases the holding brake on both drive wheels.
+  </p>
+</section>
+{% endblock %}
+
+{% block script %}
+<script src="{{ url_for('static', filename='monitor.js') }}"></script>
+{% endblock %}
