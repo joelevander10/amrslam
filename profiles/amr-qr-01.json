@@ -134,7 +134,7 @@
   "can": {
     "bitrate": 125000,
     "channel": "can0",
-    "adapter_serial": "",
+    "adapter_serial": "208231785842",
     "left_node": 1,
     "right_node": 2,
     "sensor_node": 10,
@@ -216,7 +216,7 @@
     "enc_mode": "auto",
     "enc_event_ms": 20,
     "enc_timeout_s": 0.2,
-    "imu_port": "/dev/ttyUSB0",
+    "imu_port": "/dev/amr_imu",
     "imu_baud": 9600,
     "imu_timeout_s": 0.5,
     "imu_gyro_sign": 1.0,

@@ -5,7 +5,9 @@
 # same for ttyACM0), copy to /etc/udev/rules.d/, `sudo udevadm control --reload && sudo
 # udevadm trigger`, then set qr_base.imu_port to /dev/amr_imu in profiles/amr-qr-01.json.
 #
-# WitMotion (usually a CH340 1a86:7523 or CP210x 10c4:ea60 USB-serial)
-SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", SYMLINK+="amr_imu", MODE="0660", GROUP="dialout"
-# CANable / slcan adapter (usually 16d0:117e); add ATTRS{serial}=="..." if there are two
-SUBSYSTEM=="tty", ATTRS{idVendor}=="16d0", ATTRS{idProduct}=="117e", SYMLINK+="amr_can", MODE="0660", GROUP="dialout", TAG+="systemd"
+# Read on the AMR QR PC (udevadm info, 2026-09-24):
+# WitMotion IMU: CP210x USB-serial 10c4:ea60 (the only CP210x on this PC; add
+# ATTRS{serial}=="..." here if a second one is ever plugged in)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", SYMLINK+="amr_imu", MODE="0660", GROUP="dialout"
+# CANable (slcan firmware) 16d0:117e, serial 208231785842
+SUBSYSTEM=="tty", ATTRS{idVendor}=="16d0", ATTRS{idProduct}=="117e", ATTRS{serial}=="208231785842", SYMLINK+="amr_can", MODE="0660", GROUP="dialout", TAG+="systemd"
