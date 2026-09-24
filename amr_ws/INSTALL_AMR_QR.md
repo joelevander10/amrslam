@@ -220,8 +220,14 @@ ros2 topic echo /amr/panel_state --once     # valid: true, mode_auto: false
 
 Terminal 3 — keyboard drive, slow speeds. The panel must be MANUAL, which it is at boot.
 ```bash
-ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -r cmd_vel:=/cmd_vel_teleop
+ros2 run amr_base wasd_teleop
 ```
+**Hold** W / S (forward / back), A / D (turn left / right), or the arrow keys; releasing
+the key stops. Q / E and Z / C drive arcs, space stops, `+` / `-` and `]` / `[` change the
+linear and turn speed (start 0.10 m/s, 0.30 rad/s). `wasd_teleop` is a new entry point:
+after the `git pull` that adds it, rebuild once with
+`colcon build --symlink-install --packages-select amr_base` and source again.
+(`teleop_twist_keyboard` also works: `i` forward, `,` back, `j` / `l` turn, `k` stop.)
 
 What to check:
 - Forward turns both wheels forward. Left turns the left wheel back and the right
