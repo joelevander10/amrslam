@@ -6,6 +6,7 @@
     ros2 run amr_base qr_calibrate imu-setup --rate 50 --baud 115200 --go
                                                       configure the WitMotion unit: output rate,
                                                       content (acc+gyro+angle) and baud, saved in it
+    ros2 run amr_base qr_calibrate brake-off          0 V, FWD/REV low, brakes released (vehicle free)
     ros2 run amr_base qr_calibrate breakaway --wheel left --go
                                                       ramp 0 -> v until the wheel turns: ff_offset_v
     ros2 run amr_base qr_calibrate ff --wheel both --volts 0.8,1.2,1.6,2.0 --go
@@ -16,7 +17,9 @@ No ROS node, no mux, no panel authority: the motion commands here drive the coil
 analog outputs DIRECTLY. That is why they need --go, a typed confirmation that the drive
 wheels are OFF THE GROUND, the E-stop released (read from the DI image and re-checked
 every sample), and why they refuse to run beside qr_base_node (the same owner locks).
-Every exit path - normal, Ctrl-C, exception - writes 0 V and drops FWD/REV (brake on).
+Every exit path - normal, Ctrl-C, exception - writes 0 V, drops FWD/REV, brakes until
+the wheels stop and then RELEASES the brakes, so the vehicle can be pushed afterwards.
+`qr_calibrate brake-off` does the same on its own (e.g. after a crash left a brake on).
 
 Voltages are capped at qr_base.v_max_v from the profile, forward direction only by default
 (--reverse for the other). Uses AGV_PROFILE like every node.
@@ -264,6 +267,39 @@ def cmd_imu_setup(args) -> int:
     return 1
 
 
+def cmd_brake_off(_args) -> int:
+    """All motor outputs to their free state: 0 V, FWD/REV low, brakes released."""
+    dio = _dio_client()
+    ao = AnalogOut(
+        config.QR_AO_IP,
+        config.QR_AO_PORT,
+        config.QR_AO_DEVICE_ID,
+        0.2,
+        config.QR_AO_REGISTER_BASE,
+        config.QR_AO_COUNTS_PER_VOLT,
+        config.QR_AO_FULL_SCALE_V,
+        config.QR_AO_CH_LEFT,
+        config.QR_AO_CH_RIGHT,
+    )
+    ok = ao.write(0.0, 0.0)
+    print(f"  analog 0 V: {'ok' if ok else 'FAILED ' + ao.detail}")
+    chans = [
+        (config.QR_DO_LEFT_FWD, "left FWD"),
+        (config.QR_DO_LEFT_REV, "left REV"),
+        (config.QR_DO_RIGHT_FWD, "right FWD"),
+        (config.QR_DO_RIGHT_REV, "right REV"),
+        (config.QR_DO_LEFT_BRK, "left BRAKE"),
+        (config.QR_DO_RIGHT_BRK, "right BRAKE"),
+    ]
+    for ch, name in chans:  # direction coils first, brakes last
+        r = dio.write_coil(config.DIO_DO_BASE + ch, False, device_id=config.DIO_DEVICE_ID)
+        ok = ok and not r.isError()
+        print(f"  DO{ch:02d} {name:11s} -> off {'' if not r.isError() else 'FAILED ' + str(r)}")
+    ao.close()
+    dio.close()
+    return 0 if ok else 1
+
+
 # ------------------------------------------------------------------ motion (on blocks)
 
 
@@ -306,13 +342,40 @@ class Rig:
         if _estop_active(di):
             raise RuntimeError("E-STOP active - aborted")
 
-    def stop(self) -> None:
+    def stop(self, release: bool = True, settle_s: float = 1.5) -> None:
+        """0 V, FWD/REV low, brake ON until the wheels are still - then brake OFF.
+
+        The coils LATCH in the module: whatever this leaves is what the vehicle keeps after
+        the tool exits. Braking stops the wheels quickly; releasing afterwards leaves the
+        vehicle free to push, as the QR controller's shutdown_system() and qr_base_node's
+        clean exit do. release=False keeps the brake on (not used by any command).
+        """
         self._safe(lambda: self.ao.write(0.0, 0.0))
         for side in SIDES:
             fwd, rev, brk = self.coils[side]
             self._safe(lambda f=fwd: self._coil(f, False))
             self._safe(lambda r=rev: self._coil(r, False))
             self._safe(lambda b=brk: self._coil(b, True))
+        if not release:
+            return
+        end = time.monotonic() + settle_s
+        try:
+            while time.monotonic() < end:  # wait for rest (or the time limit), then free them
+                try:
+                    _pump(self.router, self.encs, 0.1)
+                    still = all(
+                        e.rad_s is not None and abs(e.rad_s) < config.QR_ZERO_RAD_S for e in self.encs.wheels
+                    )
+                except Exception:  # noqa: BLE001 - no encoders: just wait the time out
+                    still = False
+                if still:
+                    break
+        except KeyboardInterrupt:  # a second Ctrl-C must not leave the brakes latched on
+            pass
+        for side in SIDES:
+            _fwd, _rev, brk = self.coils[side]
+            self._safe(lambda b=brk: self._coil(b, False))
+        print("  outputs off: 0 V, FWD/REV low, brakes released (the vehicle can be pushed)")
 
     @staticmethod
     def _safe(fn) -> bool:
@@ -492,6 +555,7 @@ def main(argv=None) -> int:
     sub.add_parser("io")
     sub.add_parser("enc")
     sub.add_parser("imu")
+    sub.add_parser("brake-off")
     ims = sub.add_parser("imu-setup")
     ims.add_argument("--rate", type=int, default=50, help="Hz: 10, 20, 50, 100, 200")
     ims.add_argument("--baud", type=int, default=115200)
@@ -514,7 +578,7 @@ def main(argv=None) -> int:
     _need_qr()
     locks = []
     try:
-        if args.cmd in ("io", "breakaway", "ff"):
+        if args.cmd in ("io", "brake-off", "breakaway", "ff"):
             locks.append(ownerlock.acquire("dio", f"qr_calibrate {args.cmd}"))
         if args.cmd in ("enc", "breakaway", "ff"):
             locks.append(ownerlock.acquire("can", f"qr_calibrate {args.cmd}"))
@@ -527,6 +591,7 @@ def main(argv=None) -> int:
         "enc": cmd_enc,
         "imu": cmd_imu,
         "imu-setup": cmd_imu_setup,
+        "brake-off": cmd_brake_off,
         "breakaway": cmd_breakaway,
         "ff": cmd_ff,
     }[args.cmd]

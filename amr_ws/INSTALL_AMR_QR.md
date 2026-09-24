@@ -192,6 +192,12 @@ If the unit ignores the commands, the tool says so: use the WitMotion PC softwar
 ros2 run amr_base qr_calibrate breakaway --wheel both --go
 ros2 run amr_base qr_calibrate ff --wheel both --go          # type YES when asked
 ```
+When a run ends (finished, Ctrl-C or an error) the tool brakes until the wheels stop,
+then releases the brakes so the vehicle can be pushed. If anything ever leaves a brake or
+a direction output on (a crash, `kill -9`), free everything with:
+```bash
+ros2 run amr_base qr_calibrate brake-off
+```
 Copy the printed `ff_motor_rpm_per_volt` and `ff_offset_v` into the profile. The tool
 also prints the largest `vehicle.motor_max_rpm` the loader accepts; raise
 `motor_max_rpm` (and `v_max_v` if needed) up to it.
