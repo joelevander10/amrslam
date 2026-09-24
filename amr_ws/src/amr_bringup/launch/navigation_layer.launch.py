@@ -40,6 +40,21 @@ def spin_plugin(distro: str | None = None) -> str:
     return "nav2_behaviors/Spin" if distro in ("humble", "iron") else "nav2_behaviors::Spin"
 
 
+def start_gate() -> dict:
+    """How close the vehicle must stand to a route's start pose for START.
+
+    The AMR QR is placed by hand-jog / pushing, where 0.10 m / 5 deg was hard to hit
+    (operator request 2026-09-24): 0.20 m / 10 deg. 0.20 m is the most the executor
+    tolerates anyway - within the first converge_m of a step the cross-track limit is
+    2 x cross_track_limit_m (0.10 by default), so a wider gate would only fault a moment
+    after START. Other vehicles keep the executor's default."""
+    from amr_base.agv_repo import config  # noqa: PLC0415 - the vehicle profile (AGV_PROFILE)
+
+    if config.PLATFORM == config.PLATFORM_QR:
+        return {"start_gate_m": 0.20, "start_gate_deg": 10.0}
+    return {}
+
+
 def _costmap_footprint_file(footprint: str, generation: int) -> str:
     """Node-scoped ROS params YAML carrying the selected footprint to the local costmap."""
     state_dir = os.environ.get("AMR_STATE_DIR", os.path.expanduser("~/.amr"))
@@ -235,7 +250,9 @@ def _compose(context):
             executable="route_executor_node",
             name="route_executor",
             output="screen",
-            parameters=[{"maps_dir": maps_dir, "footprint_yaml": footprint_yaml, **active_map}],
+            parameters=[
+                {"maps_dir": maps_dir, "footprint_yaml": footprint_yaml, **active_map, **start_gate()}
+            ],
         ),
         "route_executor",
     )

@@ -125,8 +125,8 @@ Keep the vehicle in **MANUAL** until step 6.
    forward and back and turn a little to help it converge.
 3. **Confirm.** When **Can confirm** reads `YES` (scan match ≥ 0.6) and you can see the
    scan on the walls, press **Confirm: scans align**. Localisation becomes `READY`.
-4. **Position the vehicle** on the route's start with the jog pad. It must be within
-   **0.10 m and 5°**.
+4. **Position the vehicle** on the route's start with the jog pad (or by pushing it in
+   push mode, then **Brakes ON**). It must be within **0.20 m and 10°**.
 5. **Load** the mission, then press **Load (READY)**. Run state becomes `READY`.
 6. **Go.** Clear the area and stay within reach of the E-stop.
    - Press **START** once: the Selector tile shows **AUTO**.
