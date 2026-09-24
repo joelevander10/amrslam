@@ -1,0 +1,12 @@
+# AMR QR overrides on top of slam_mapping.yaml (loaded after it by mapping_layer.launch.py).
+#
+# Speckle in the map (2026-09-24 survey): single occupied cells scattered in open space
+# from sporadic nanoScan3 returns. slam_toolbox marks a cell occupied when at least
+# occupancy_threshold of the beams that reached it ended there, after min_pass_through
+# beams. A wall is hit by nearly every beam that reaches it; a stray return is one hit
+# among many pass-throughs, so a higher ratio drops it. Too high thins walls seen only
+# at grazing angles - if a wall comes out dotted, step back towards 0.1 / 2.
+slam_toolbox:
+  ros__parameters:
+    occupancy_threshold: 0.25
+    min_pass_through: 3

@@ -29,6 +29,17 @@ from amr_bringup.launch_helpers import required
 SURVEY_SERVICES = ("start", "returned", "save", "abort")
 
 
+def slam_param_files() -> list:
+    """slam_mapping.yaml, then slam_mapping.<AGV_PROFILE>.yaml if the vehicle has overrides."""
+    cfg = os.path.join(get_package_share_directory("amr_bringup"), "config")
+    files = [os.path.join(cfg, "slam_mapping.yaml")]
+    profile = os.environ.get("AGV_PROFILE") or "agv-01"
+    overlay = os.path.join(cfg, f"slam_mapping.{profile}.yaml")
+    if profile != "agv-01" and os.path.isfile(overlay):
+        files.append(overlay)
+    return files
+
+
 def slam_is_lifecycle() -> bool:
     """True when the installed slam_toolbox is a lifecycle node (2.7 and later: Iron, Jazzy)."""
     try:
@@ -40,7 +51,7 @@ def slam_is_lifecycle() -> bool:
         return os.environ.get("ROS_DISTRO", "humble") != "humble"
 
 
-def _slam(slam_yaml: str) -> list:
+def _slam(slam_params: list) -> list:
     if not slam_is_lifecycle():
         return required(
             Node(
@@ -48,7 +59,7 @@ def _slam(slam_yaml: str) -> list:
                 executable="async_slam_toolbox_node",
                 name="slam_toolbox",
                 output="screen",
-                parameters=[slam_yaml],
+                parameters=slam_params,
             ),
             "slam_toolbox",
         )
@@ -65,7 +76,7 @@ def _slam(slam_yaml: str) -> list:
         name="slam_toolbox",
         namespace="",
         output="screen",
-        parameters=[slam_yaml, {"use_lifecycle_manager": False}],
+        parameters=[*slam_params, {"use_lifecycle_manager": False}],
     )
 
     def transition(t: int) -> EmitEvent:
@@ -90,8 +101,7 @@ def _slam(slam_yaml: str) -> list:
 def _compose(context):
     internal = LaunchConfiguration("internal").perform(context).lower() == "true"
     remaps = [(f"/amr/survey/{s}", f"/amr/internal/survey/{s}") for s in SURVEY_SERVICES] if internal else []
-    slam_yaml = os.path.join(get_package_share_directory("amr_bringup"), "config", "slam_mapping.yaml")
-    actions = _slam(slam_yaml)
+    actions = _slam(slam_param_files())
     actions += required(
         Node(
             package="amr_mission",
