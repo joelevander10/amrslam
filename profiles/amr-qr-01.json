@@ -212,7 +212,7 @@
     "enc_counts_per_rev": 8192.0,
     "enc_range_counts": 0,
     "enc_invert_left": false,
-    "enc_invert_right": false,
+    "enc_invert_right": true,
     "enc_mode": "auto",
     "enc_event_ms": 20,
     "enc_timeout_s": 0.2,
