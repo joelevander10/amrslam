@@ -107,8 +107,12 @@ def test_config_profile():
           or (all(v is not None for v in config.PP_EXPECT.values())
               and config.PP_VENDOR_REF.strip() != ""),
           f"enabled={config.PP_ENABLED} expect={config.PP_EXPECT}")
+    # expect is nulled explicitly: agv-01 now ships every pp.expect value filled in,
+    # so "enabled" alone no longer leaves anything unset to be refused.
     refuses("pp enabled with unset drive values is refused",
-            lambda d: d["pp"].update(enabled=True, vendor_ref="OM ticket 1"), "null value")
+            lambda d: d["pp"].update(enabled=True, vendor_ref="OM ticket 1",
+                                     expect={k: None for k in d["pp"]["expect"]}),
+            "null value")
 
     def pp_all_set(d, ref):
         d["pp"]["expect"] = {k: 1 for k in d["pp"]["expect"]}

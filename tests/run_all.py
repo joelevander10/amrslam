@@ -13,9 +13,17 @@ Raise EXPECTED_CHECKS deliberately when checks are added; never lower it to make
 a run go green.
 """
 import importlib
+import os
 import pathlib
 import sys
 import threading
+
+# The suite is written against the gvievo-01 profile ("the real profile loads" means
+# agv-01, and the mutation tests start from its JSON). A shell on another vehicle
+# exports its own AGV_PROFILE (the AMR QR's ~/.bashrc sets amr-qr-01), which would
+# turn 17 of these checks red for no reason. Pin it here, before config is imported;
+# test_qr_profile loads amr-qr-01 explicitly where it needs it.
+os.environ["AGV_PROFILE"] = "agv-01"
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 

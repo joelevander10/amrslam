@@ -107,8 +107,8 @@ through the symlinks, so after a profile edit you only restart the nodes; no reb
 **10. Offline tests** (no hardware)
 ```bash
 cd ~/agv_can && python3 tests/run_all.py | tail -2
-# 923 checks. The one allowed FAIL, "pp enabled with unset drive values is refused",
-# was already failing before the AMR QR work.
+# 923 checks, "all checks passed". The suite pins AGV_PROFILE=agv-01 itself, so the
+# amr-qr-01 export from step 7 does not affect it.
 cd amr_ws && python3 -m pytest -q src/amr_base/test/test_qr_*.py src/amr_description/test/
 ```
 

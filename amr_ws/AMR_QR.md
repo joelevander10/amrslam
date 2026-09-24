@@ -150,7 +150,7 @@ Top speed sebelum kalibrasi: **0.28 m/s** (`motor_max_rpm` 900 dengan asumsi 300
 
 | Suite | Hasil |
 |---|---|
-| `tests/run_all.py` | 923 check. 1 FAIL **sudah ada sebelum perubahan ini**: `pp enabled with unset drive values is refused` (profil agv-01 sudah mengisi semua `pp.expect`, jadi premis test itu basi) |
+| `tests/run_all.py` | 923 check, semua lulus. Test `pp enabled with unset drive values is refused` yang premisnya basi sudah diperbaiki, dan runner mem-pin `AGV_PROFILE=agv-01` |
 | `amr_base/test/test_qr_*.py` | 33 lulus: encoder (wrap 24-bit, TPDO/SDO), IMU (checksum, wrap, batch), wheel loop (interlock, anti-windup, konvergensi plant, **negative control**: tanda encoder salah → runaway), panel, analog, dan **qr_base_node end-to-end dengan hardware simulasi** |
 | `amr_description/test/test_vehicle.py` | 5 lulus: URDF ↔ profil ↔ footprint konsisten |
 | Test amr_ws lain | Sama dengan baseline. Yang gagal hanya karena tidak ada `rclpy`/`xacro` di mesin test |
