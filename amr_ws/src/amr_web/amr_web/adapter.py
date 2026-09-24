@@ -202,6 +202,10 @@ class RosAdapter(Node):
             "abort": self.create_client(Trigger, "/amr/abort", callback_group=g),
             "resume": self.create_client(Trigger, "/amr/resume", callback_group=g),
             "ack": self.create_client(Trigger, "/amr/ack_fault", callback_group=g),
+            # push mode (AMR QR): disarm = 0 V, coils low, brakes RELEASED; arm = back to rest
+            # with brakes. Neither moves the vehicle: motion still needs a held jog.
+            "brakes_release": self.create_client(Trigger, "/drives/disarm", callback_group=g),
+            "brakes_engage": self.create_client(Trigger, "/drives/arm", callback_group=g),
             # supervisor (unified plan §4.2)
             "mode": self.create_client(RequestMode, "/amr/mode/request", callback_group=g),
             "survey": self.create_client(RequestSurvey, "/amr/supervisor/survey", callback_group=g),
@@ -682,6 +686,12 @@ class RosAdapter(Node):
 
     def ack_fault(self) -> tuple[bool, str]:
         return self._trigger("ack")
+
+    def brakes_release(self) -> tuple[bool, str]:
+        return self._trigger("brakes_release")
+
+    def brakes_engage(self) -> tuple[bool, str]:
+        return self._trigger("brakes_engage")
 
 
 class Spinner:

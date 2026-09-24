@@ -61,6 +61,8 @@ class Adapter(Protocol):
     def abort(self) -> tuple[bool, str]: ...
     def prepare_resume(self) -> tuple[bool, str]: ...
     def ack_fault(self) -> tuple[bool, str]: ...
+    def brakes_release(self) -> tuple[bool, str]: ...
+    def brakes_engage(self) -> tuple[bool, str]: ...
     # supervisor (unified plan §4.2, §6.2)
     def supervisor_identity(self) -> tuple[str, int]: ...
     def request_mode(
@@ -805,5 +807,14 @@ def create_app(
     @app.post("/api/mission/ack")
     def api_mission_ack():
         return _call(adapter.ack_fault)
+
+    # push mode: release / re-apply the brakes (drives disarmed / armed). No velocity here.
+    @app.post("/api/brakes/release")
+    def api_brakes_release():
+        return _call(adapter.brakes_release)
+
+    @app.post("/api/brakes/engage")
+    def api_brakes_engage():
+        return _call(adapter.brakes_engage)
 
     return app

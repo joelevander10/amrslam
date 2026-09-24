@@ -1,11 +1,20 @@
 {% extends "base.html" %}
 {% block title %}AMR — manual{% endblock %}
 {% block body %}
-<div class="warn-box"><b>Arming is the physical panel's job</b>: the selector resting in MANUAL energises the drives at zero. This page cannot arm, clear a drive alarm or change the operating mode. The drives de-energise on a service stop; nothing here does that.</div>
+<div class="warn-box">This page cannot clear a drive alarm or change the operating mode. <b>Push mode</b> below releases the brakes so the vehicle can be pushed by hand (for example to survey a map); the motors get no voltage while it is on.</div>
 <section>
   <h2>Vehicle <small>supervisor · mux</small></h2>
   <div id="manual-state" class="tel-grid"></div>
   <p id="manual-reason" class="note"></p>
+</section>
+<section>
+  <h2>Push mode <small>brakes · /drives/disarm, /drives/arm</small></h2>
+  <div id="push-state" class="tel-grid"></div>
+  <p class="note">Brakes off: motors at 0 V, direction outputs low, <b>the vehicle rolls freely</b> - do not use on a slope. The jog pad does nothing until the brakes are on again. The E-stop still applies the brakes.</p>
+  <div class="bar">
+    <button id="btn-brakes-release" class="big">Brakes OFF (push)</button>
+    <button id="btn-brakes-engage" class="big">Brakes ON (drive)</button>
+  </div>
 </section>
 <section>
   <h2>Manual jog <small>/amr/manual_command · held</small></h2>
@@ -15,6 +24,15 @@
 {% block scripts %}<script src="/static/jogpad.js"></script>
 <script>
 jogpad(document.getElementById('jog'));
+async function brakes(path, what) {
+  const { status, data } = await api(path);
+  if (status === 200 && data && data.ok) log(`${what}: ${data.message}`);  // failures are logged by api()
+}
+document.getElementById('btn-brakes-release').onclick = () => {
+  if (!window.confirm('Release the brakes? The vehicle will roll freely until you press "Brakes ON".')) return;
+  brakes('/api/brakes/release', 'brakes off');
+};
+document.getElementById('btn-brakes-engage').onclick = () => brakes('/api/brakes/engage', 'brakes on');
 onState(st => {
   const m = st.mode, mx = st.mux, l = st.lease;
   tiles('manual-state', [
@@ -22,6 +40,10 @@ onState(st => {
     ['Manual allowed', yesno(m && m.manual_available), 'by supervisor', m && m.manual_available ? '' : 'warn'],
     ['Command source', mx ? mx.source : '–', mx ? (mx.inhibited ? 'inhibited' : '—') : 'no mux state', mx && mx.inhibited ? 'warn' : ''],
     ['Generation', l ? String(l.generation) : '–', l ? 'lease' : 'no lease', l ? '' : 'warn'],
+  ]);
+  const d = st.drives, pushing = d && !d.operational && d.left === 'disarmed';
+  tiles('push-state', [
+    ['Brakes', !d ? '–' : pushing ? 'OFF · push' : (d.operational ? 'ON · drive' : 'ON'), d ? `${d.left} · ${d.right}` : 'no drive status', !d ? 'bad' : pushing ? 'warn' : ''],
   ]);
   document.getElementById('manual-reason').textContent = [mx && mx.reason ? `mux: ${mx.reason}` : '', m && m.reason ? m.reason : ''].filter(Boolean).join(' · ');
 });

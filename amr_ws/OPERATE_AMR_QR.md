@@ -77,6 +77,9 @@ On the **Manual**, **Maps** or **Run** page (selector must be MANUAL):
    - `not ready: vehicle is moving`: stop, press again.
    - `not ready: IMU not calibrated`: wait a few seconds still, press again.
 4. Drive the whole area **slowly** with the jog pad. Watch **Live map** grow.
+   - Or **push** it: on the **Manual** page press **Brakes OFF (push)** (motors at 0 V,
+     brakes released), push the vehicle slowly by hand, and press **Brakes ON (drive)**
+     when done. Level floor only - it rolls freely. The encoders keep the odometry.
    - Drive every aisle the routes will use, and a little beyond.
    - Loop back over areas you have already mapped, so SLAM can close the loop.
    - Avoid fast spins. If walls look doubled, slow down.

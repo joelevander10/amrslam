@@ -246,6 +246,15 @@ def test_coordinator_endpoints_delegate_and_never_touch_wheels(env):
     )  # press, refresh, release (the /manual page is not an API)
 
 
+def test_push_mode_brake_endpoints_delegate(env):
+    client, stub, *_ = env
+    for path, name in (("/api/brakes/release", "brakes_release"), ("/api/brakes/engage", "brakes_engage")):
+        r = client.post(path, json={})
+        assert r.status_code == 200 and r.json["ok"], path
+        assert stub.calls[-1][0] == name
+    assert client.get("/api/brakes/release").status_code == 405  # a GET never changes the brakes
+
+
 def test_mode_and_survey_are_asynchronous_operations(env):
     client, stub, *_ = env
     r = client.post(
