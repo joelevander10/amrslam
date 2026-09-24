@@ -154,7 +154,7 @@ PAUSED or BLOCKED. Abort it first.
 | You see | Meaning | Do |
 |---|---|---|
 | Run `BLOCKED`, E-stop | E-stop pressed during a run | Release E-stop, press **START** |
-| Run `BLOCKED`, obstacle | Something in the path | Clear it; continues after 2 s |
+| Run `BLOCKED`, obstacle | Something in the path (the executor's own lidar check; the scanner's protective field is not used on the AMR QR) | Clear it; continues after 2 s |
 | Run `FAULT` | Sensor, drive, localisation or a tolerance exceeded | Read the reason. With the vehicle still, press **STOP** in MANUAL (= Reset) or **Acknowledge fault**. Then localise / reposition / load / START again |
 | Localisation `LOST` | Sensor stale, pose uncertain or jumped | Set the initial pose again and **Confirm** |
 | Drives `FAULT: ... stalled` | A wheel was commanded but did not turn for 2 s: blocked wheel, driver alarm or disabled, no motor power | Fix the cause, then `ros2 service call /drives/ack_fault std_srvs/srv/Trigger` |

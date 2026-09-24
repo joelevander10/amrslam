@@ -40,8 +40,10 @@ def spin_plugin(distro: str | None = None) -> str:
     return "nav2_behaviors/Spin" if distro in ("humble", "iron") else "nav2_behaviors::Spin"
 
 
-def start_gate() -> dict:
-    """How close the vehicle must stand to a route's start pose for START.
+def executor_overrides() -> dict:
+    """Per-vehicle route executor parameters.
+
+    Start gate - how close the vehicle must stand to a route's start pose for START.
 
     The AMR QR is placed by hand-jog / pushing, where 0.10 m / 5 deg was hard to hit
     (operator request 2026-09-24): 0.20 m / 10 deg. 0.20 m is the most the executor
@@ -51,7 +53,10 @@ def start_gate() -> dict:
     from amr_base.agv_repo import config  # noqa: PLC0415 - the vehicle profile (AGV_PROFILE)
 
     if config.PLATFORM == config.PLATFORM_QR:
-        return {"start_gate_m": 0.20, "start_gate_deg": 10.0}
+        # use_protective_field false: the QR's nanoScan3 reported its protective field violated
+        # with the area empty (2026-09-24, run held on "lidar stop"). The old QR controller never
+        # used the scanner outputs either; the executor's own scan check still stops the run.
+        return {"start_gate_m": 0.20, "start_gate_deg": 10.0, "use_protective_field": False}
     return {}
 
 
@@ -251,7 +256,7 @@ def _compose(context):
             name="route_executor",
             output="screen",
             parameters=[
-                {"maps_dir": maps_dir, "footprint_yaml": footprint_yaml, **active_map, **start_gate()}
+                {"maps_dir": maps_dir, "footprint_yaml": footprint_yaml, **active_map, **executor_overrides()}
             ],
         ),
         "route_executor",

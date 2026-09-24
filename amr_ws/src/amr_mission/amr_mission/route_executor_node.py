@@ -204,6 +204,10 @@ class RouteExecutor(Node):
         self.declare_parameter("safety_window_s", 1.0)
         self.declare_parameter("drives_age_limit_s", 0.5)
         self.declare_parameter("field_output_index", 0)  # /output_paths status[i]: protective field
+        # false: ignore the scanner's protective field (/output_paths). The AMR QR: its nanoScan3
+        # config came from the old controller and reported the field violated with nothing in
+        # it (2026-09-24); runs rely on the executor's own swept-envelope check and the E-stop.
+        self.declare_parameter("use_protective_field", True)
         self.declare_parameter("controller_abort_retries", 3)
         # R08: bound on waiting for a goal's acceptance, and for an obsolete (cancelled) goal to
         # report terminal before a replacement goal may be issued.
@@ -303,7 +307,12 @@ class RouteExecutor(Node):
         )
         self.create_subscription(Odometry, "/odometry/filtered", self._on_odom, 10, callback_group=io)
         self.create_subscription(DriveStatus, "/drives/status", self._on_drives, 10, callback_group=io)
-        if OutputPaths is not None:
+        if not self.get_parameter("use_protective_field").value:
+            self.get_logger().warn(
+                "use_protective_field=false: the scanner's protective field is IGNORED; obstacles "
+                "stop the run through the executor's own scan check only"
+            )
+        elif OutputPaths is not None:
             self.create_subscription(
                 OutputPaths, "/output_paths", self._on_output_paths, SENSOR_DATA, callback_group=io
             )
