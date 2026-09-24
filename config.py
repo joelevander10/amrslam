@@ -383,7 +383,9 @@ qr_base.*
     is winding up against it (integral capped at i_max_v). Wire such a stop
     signal into a spare DI if the vehicle has one.
 
-    Encoders: CiA 406 position 0x6004, 24-bit, enc_range_counts per wrap,
+    Encoders: CiA 406 position 0x6004; enc_range_counts is where it wraps,
+    0 = read each encoder's own 6002h at start (the AMR QR's two units differ:
+    the right one read 27.6 M, past the 24 bits of the EDS default),
     enc_counts_per_rev per WHEEL turn (on the axle, no gearbox). enc_mode
     auto listens for TPDO1 (event timer set to enc_event_ms at start) and
     polls by SDO while none arrive. The QR controller subtracted raw counts,
@@ -1231,8 +1233,10 @@ def _validate_qr(ns, check):
     check(g("QR_ENC_COUNTS_PER_REV") > 0, "qr_base.enc_counts_per_rev must be > 0")
     # Unwrapping takes a delta modulo the range and trusts it only below half a
     # range; a range under two wheel turns would make that ambiguous at speed.
-    check(g("QR_ENC_RANGE_COUNTS") >= 2 * g("QR_ENC_COUNTS_PER_REV"),
-          "qr_base.enc_range_counts must be at least 2 x enc_counts_per_rev")
+    check(g("QR_ENC_RANGE_COUNTS") == 0
+          or g("QR_ENC_RANGE_COUNTS") >= 2 * g("QR_ENC_COUNTS_PER_REV"),
+          "qr_base.enc_range_counts must be 0 (read 6002h from each encoder) or at least "
+          "2 x enc_counts_per_rev")
     check(g("QR_ENC_MODE") in QR_ENC_MODES,
           f"qr_base.enc_mode must be one of {list(QR_ENC_MODES)}, got {g('QR_ENC_MODE')!r}")
     check(5 <= g("QR_ENC_EVENT_MS") <= 200, "qr_base.enc_event_ms must be in 5..200 ms")

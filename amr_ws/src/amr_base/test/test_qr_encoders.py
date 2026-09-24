@@ -7,7 +7,16 @@ import can
 import pytest
 
 from amr_base import canopen
-from amr_base.qr_encoders import SDO, TPDO, EncoderPair, SpeedEstimator, Unwrapper, WheelEncoder
+from amr_base.qr_encoders import (
+    FALLBACK_RANGE,
+    SDO,
+    TPDO,
+    EncoderPair,
+    SpeedEstimator,
+    Unwrapper,
+    WheelEncoder,
+    range_from_6002,
+)
 
 RANGE = 1 << 24
 CPR = 8192.0
@@ -55,8 +64,9 @@ def test_wheel_encoder_units_and_invert():
 class ScriptedBus:
     """Answers SDO downloads (1800h) and uploads (6004h) per node; can queue TPDOs."""
 
-    def __init__(self, positions=None, fail_config=()):
+    def __init__(self, positions=None, fail_config=(), objects=None):
         self.positions = dict(positions or {})
+        self.objects = dict(objects or {})  # (node, index) -> u32, answered to SDO uploads
         self.fail_config = set(fail_config)
         self.rx = []
         self.sent = []
@@ -73,6 +83,9 @@ class ScriptedBus:
                 self.rx.append(can.Message(arbitration_id=0x580 + node, data=bytes([cs]) + d[1:4] + bytes(4)))
             elif d[0] == 0x40 and idx == 0x6004 and node in self.positions:
                 val = struct.pack("<I", self.positions[node])
+                self.rx.append(can.Message(arbitration_id=0x580 + node, data=bytes([0x43]) + d[1:4] + val))
+            elif d[0] == 0x40 and (node, idx) in self.objects:
+                val = struct.pack("<I", self.objects[(node, idx)])
                 self.rx.append(can.Message(arbitration_id=0x580 + node, data=bytes([0x43]) + d[1:4] + val))
             _ = sub
 
@@ -133,3 +146,32 @@ def test_auto_mode_polls_only_the_wheel_without_recent_tpdo():
     assert pair.right.source == SDO
     pair.poll(1.2)  # left TPDO now 0.2 s old (> 3 periods): SDO for both
     assert pair.sdo_reads == 3
+
+
+def test_range_from_6002_reads_all_ones_as_a_power_of_two():
+    assert range_from_6002(0x00FFFFFF) == 1 << 24  # EDS default style: largest position
+    assert range_from_6002(1 << 25) == 1 << 25  # CiA 406 style: number of steps
+    assert range_from_6002(100_000_000) == 100_000_000
+    assert range_from_6002(None) is None and range_from_6002(0) is None
+
+
+def test_auto_range_per_encoder_from_6002_and_32_bit_fallback():
+    # the AMR QR on 2026-09-24: left raw 14 013 020, right raw 27 601 874 - past 24 bits
+    bus = ScriptedBus(objects={(1, 0x6002): 0x1FFFFFF, (1, 0x6001): 8192, (2, 0x6001): 8192})
+    t = [0.0]
+    pair = EncoderPair(
+        canopen.Router(bus), 1, 2, CPR, 0, False, False, "tpdo", 20, log=lambda s: None, clock=lambda: t[0]
+    )
+    pair.start()
+    assert pair.left.range_counts == 1 << 25
+    assert pair.right.range_counts == FALLBACK_RANGE  # node 2 did not answer 6002h
+    assert pair.info[1] == {"units_per_rev": 8192, "range_6002": 0x1FFFFFF, "range": 1 << 25}
+    for raw in (27_601_874, 27_601_874 + 8192):
+        bus.rx.append(can.Message(arbitration_id=0x182, data=struct.pack("<I", raw)))
+    pair.router.pump(0.01)
+    assert pair.right.counts == 8192 and pair.right.unwrap.rejected == 0
+    # left wraps at 2^25 correctly
+    for raw in ((1 << 25) - 100, 50):
+        bus.rx.append(can.Message(arbitration_id=0x181, data=struct.pack("<I", raw)))
+    pair.router.pump(0.01)
+    assert pair.left.counts == 150

@@ -113,6 +113,12 @@ def _encoders():
     )
     encs.start()
     print(f"encoders on {how}")
+    for side, e in zip(SIDES, encs.wheels, strict=True):
+        i = encs.info.get(e.node, {})
+        print(
+            f"  {side}: node {e.node}  6001h units/rev {i.get('units_per_rev')}  "
+            f"6002h range {i.get('range_6002')}  -> unwrapping at {e.range_counts}"
+        )
     return router, encs
 
 
@@ -134,7 +140,8 @@ def cmd_enc(_args) -> int:
             for name, e in zip(SIDES, encs.wheels, strict=True):
                 sp = e.rad_s
                 speed = "" if sp is None else f"{sp:+7.3f} rad/s {sp * config.WHEEL_DIA_M / 2:+6.3f} m/s"
-                cols.append(f"{name}: raw {e.raw!s:>9} counts {e.counts!s:>9} {speed} [{e.source}]")
+                bad = f" REJECTED {e.unwrap.rejected}" if e.unwrap.rejected else ""
+                cols.append(f"{name}: raw {e.raw!s:>9} counts {e.counts!s:>9} {speed} [{e.source}]{bad}")
             print("   ".join(cols))
     except KeyboardInterrupt:
         return 0

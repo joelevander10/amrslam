@@ -17,9 +17,11 @@ Two acquisition paths, chosen by qr_base.enc_mode:
     auto : tpdo, and an SDO poll for any node whose TPDO has not been seen for 3 periods.
 
 Units and signs are applied ONCE, here:
-    * the 24-bit value is unwrapped (delta modulo enc_range_counts, trusted only below half
-      a range) - the QR controller subtracted raw values, which jumps by a whole range at
-      the wrap;
+    * the position is unwrapped (delta modulo the wrap range, trusted only below half a
+      range) - the QR controller subtracted raw values, which jumps by a whole range at the
+      wrap. The range is read from each encoder's 6002h at start when qr_base.enc_range_counts
+      is 0 (auto): on the AMR QR the two units report different ranges (the right one sat
+      at 27.6 M, beyond the 24 bits the EDS default suggests);
     * qr_base.enc_invert_* flips a wheel so that vehicle-forward is positive;
     * counts -> wheel radians with enc_counts_per_rev (on the axle: no gearbox term).
 """
@@ -41,6 +43,9 @@ from drive_forward import sdo_write  # noqa: E402
 from verify_drivers import sdo_read, u32  # noqa: E402
 
 POSITION = 0x6004
+UNITS_PER_REV = 0x6001  # CiA 406 measuring units per revolution
+TOTAL_RANGE = 0x6002  # CiA 406 total measuring range (where the position wraps)
+FALLBACK_RANGE = 1 << 32  # a plain 32-bit counter
 TPDO1_COMM = 0x1800
 NMT_START = 0x01
 SUB_INHIBIT, SUB_EVENT = 3, 5
@@ -135,6 +140,13 @@ class WheelEncoder:
         self.unwrap = Unwrapper(self.range_counts)
         self.speed = SpeedEstimator(self.window_s)
 
+    def set_range(self, range_counts: int) -> None:
+        """New wrap range: the continuous count restarts from the next reading."""
+        self.range_counts = int(range_counts)
+        self.unwrap = Unwrapper(self.range_counts)
+        self.speed.reset()
+        self.counts = None
+
     def feed(self, raw: int, t: float, source: str) -> None:
         c = self.unwrap.update(int(raw))
         self.raw = int(raw)
@@ -161,6 +173,19 @@ class WheelEncoder:
     def rad_s(self) -> float | None:
         cps = self.speed.counts_per_s()
         return None if cps is None else cps * 2.0 * math.pi / self.counts_per_rev
+
+
+def range_from_6002(value: int | None) -> int | None:
+    """Wrap range from a 6002h reading, or None if the reading is unusable.
+
+    CiA 406 defines 6002h as the NUMBER of measuring steps (positions 0..value-1), but
+    many units report the largest position instead (the EDS default 0x00FFFFFF). An
+    all-ones value is therefore read as a power-of-two range; guessing wrong costs one
+    count at the wrap, nothing else.
+    """
+    if value is None or value < 2:
+        return None
+    return value + 1 if (value + 1) & value == 0 else value
 
 
 def decode_position(data: bytes) -> int | None:
@@ -196,8 +221,12 @@ class EncoderPair:
         self.sdo_timeout = sdo_timeout_s
         self.log = log
         self.clock = clock
-        self.left = WheelEncoder(left_node, counts_per_rev, range_counts, invert_left)
-        self.right = WheelEncoder(right_node, counts_per_rev, range_counts, invert_right)
+        self.auto_range = int(range_counts) == 0
+        self.counts_per_rev = counts_per_rev
+        start_range = FALLBACK_RANGE if self.auto_range else int(range_counts)
+        self.left = WheelEncoder(left_node, counts_per_rev, start_range, invert_left)
+        self.right = WheelEncoder(right_node, counts_per_rev, start_range, invert_right)
+        self.info: dict[int, dict] = {}  # node -> {"units_per_rev", "range_6002", "range"}
         self.sdo_reads = 0
         self.sdo_timeouts = 0
         self.tpdo_configured: dict[int, bool] = {}
@@ -220,7 +249,11 @@ class EncoderPair:
     # ---- setup ----
 
     def start(self) -> None:
-        """Configure TPDO1 on both encoders (tpdo/auto) and start them. Never raises in auto."""
+        """Read each encoder's range, configure TPDO1 (tpdo/auto), start them.
+
+        Never raises in auto mode."""
+        for enc in self.wheels:
+            self._identify(enc)
         for enc in self.wheels:
             ok = True
             if self.mode in ("auto", TPDO):
@@ -234,6 +267,38 @@ class EncoderPair:
                 can.Message(arbitration_id=0x000, data=[NMT_START, enc.node], is_extended_id=False)
             )
         self.status = self.mode
+
+    def _read_u32(self, node: int, index: int) -> int | None:
+        status, payload, _note, _ms = sdo_read(self.router, node, index, 0, timeout=0.3, collision_window=0)
+        return u32(payload) if status is True and payload is not None else None
+
+    def _identify(self, enc: WheelEncoder) -> None:
+        """6001h / 6002h of one encoder; with auto range, 6002h sets the wrap."""
+        upr = self._read_u32(enc.node, UNITS_PER_REV)
+        tmr = self._read_u32(enc.node, TOTAL_RANGE)
+        used = enc.range_counts
+        if self.auto_range:
+            r = range_from_6002(tmr)
+            if r is None or r < 2 * self.counts_per_rev:
+                self.log(
+                    f"encoder node {enc.node}: 6002h unreadable or too small ({tmr}); "
+                    f"unwrapping as a 32-bit counter"
+                )
+                r = FALLBACK_RANGE
+            enc.set_range(r)
+            used = r
+        elif tmr is not None and range_from_6002(tmr) != used:
+            self.log(
+                f"encoder node {enc.node}: 6002h says range {range_from_6002(tmr)} but the profile "
+                f"sets enc_range_counts {used} - set it to 0 (auto) unless you know better"
+            )
+        if upr is not None and abs(upr - self.counts_per_rev) > 1:
+            self.log(
+                f"encoder node {enc.node}: 6001h = {upr} units/rev, profile enc_counts_per_rev "
+                f"{self.counts_per_rev:g} (the profile value is what odometry uses)"
+            )
+        self.info[enc.node] = {"units_per_rev": upr, "range_6002": tmr, "range": used}
+        self.log(f"encoder node {enc.node}: 6001h {upr}, 6002h {tmr} -> wrap range {used}")
 
     def _configure_tpdo(self, node: int) -> bool:
         period_100us = self.event_ms * 10

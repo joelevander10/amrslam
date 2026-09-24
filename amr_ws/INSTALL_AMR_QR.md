@@ -159,7 +159,10 @@ ros2 run amr_base qr_calibrate io
 ```
 
 b. Encoders: push the vehicle FORWARD by hand. Both speeds must read **positive**. If one
-reads negative, set `enc_invert_<side>: true` in the profile.
+reads negative, set `enc_invert_<side>: true` in the profile. The first lines show each
+encoder's 6001h / 6002h and the wrap range used; with `enc_range_counts: 0` it is read
+from the encoder itself. A `REJECTED` count on a line means readings are being thrown
+away (a range that does not match the unit) - report it.
 ```bash
 ros2 run amr_base qr_calibrate enc
 ```

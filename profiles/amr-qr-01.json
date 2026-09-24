@@ -210,7 +210,7 @@
     "estop_active_low": true,
     "auto_hold_s": 0.0,
     "enc_counts_per_rev": 8192.0,
-    "enc_range_counts": 16777216,
+    "enc_range_counts": 0,
     "enc_invert_left": false,
     "enc_invert_right": false,
     "enc_mode": "auto",
