@@ -84,6 +84,11 @@ def main() -> None:
         rclpy.spin(node)
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
+    except RuntimeError:
+        # Ctrl-C landing inside take_message surfaces as a pybind "Unable to convert call
+        # argument" error (seen on Jazzy, 2026-09-24); only a real error while running counts
+        if rclpy.ok():
+            raise
     finally:
         node.destroy_node()
         rclpy.try_shutdown()

@@ -460,7 +460,7 @@ class QrBaseNode(Node):
 
         dio_age = snap.get("rx_age_s")
         dio_ok = bool(snap.get("comms_ok")) and dio_age is not None and dio_age <= IO_FRESH_S
-        ao_ok = self.ao.t_ok is not None and now - self.ao.t_ok <= IO_FRESH_S
+        ao_ok = self.ao.alive(now, IO_FRESH_S)
         do = snap.get("do") or []
 
         def coils_low(name: str) -> bool | None:

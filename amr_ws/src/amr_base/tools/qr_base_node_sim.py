@@ -251,28 +251,40 @@ class FakeDio:
                 state["do"][ch] = False
 
 
-class FakeAO:
-    def __init__(self, *a, **k):
-        self.ok, self.t_ok, self.detail, self.volts, self.writes, self.errors = (
-            False,
-            None,
-            "sim",
-            (0, 0),
-            0,
-            0,
-        )
+class FakeModbus:
+    """The analog module's Modbus side; the REAL AnalogOut runs on top of it (its skip /
+    refresh logic is what the node's I/O interlock has to live with)."""
 
-    def write(self, vl, vr):
-        with lock:
-            state["volts"] = [vl, vr]
-        self.ok, self.t_ok, self.volts = True, time.monotonic(), (vl, vr)
+    class _Ok:
+        @staticmethod
+        def isError():
+            return False
+
+    def connect(self):
         return True
-
-    def zero(self):
-        return self.write(0.0, 0.0)
 
     def close(self):
         pass
+
+    def _set(self, addr, val):
+        ch = addr - config.QR_AO_REGISTER_BASE
+        i = 0 if ch == config.QR_AO_CH_LEFT else 1
+        with lock:
+            state["volts"][i] = val / config.QR_AO_COUNTS_PER_VOLT
+
+    def write_registers(self, addr, vals, device_id=None):
+        for k, v in enumerate(vals):
+            self._set(addr + k, v)
+        return self._Ok()
+
+    def write_register(self, addr, val, device_id=None):
+        self._set(addr, val)
+        return self._Ok()
+
+
+class FakeAO(qbn.AnalogOut):
+    def __init__(self, *a, **k):
+        super().__init__(*a, client_factory=FakeModbus, **k)
 
 
 class FakeBus:
@@ -376,9 +388,15 @@ def check(name, cond, detail=""):
 
 check.failed = 0
 
-time.sleep(1.0)
+# idle at 0 V for longer than the analog refresh (0.5 s): the real AnalogOut skips
+# unchanged writes, and the I/O interlock must not read that as a lost module
+time.sleep(1.5)
 st = last("/drives/status")
-check("armed and operational after start", st is not None and st.operational, st and st.left_state)
+check(
+    "armed and operational after start (idle past the analog refresh)",
+    st is not None and st.operational,
+    st and st.left_state,
+)
 ps = last("/amr/panel_state")
 check("panel valid, MANUAL at boot", ps.valid and not ps.mode_auto)
 

@@ -97,6 +97,12 @@ class AnalogOut:
         self.detail = f"{self.ip}:{self.port}"
         return True
 
+    def alive(self, now: float, grace_s: float) -> bool:
+        """Link state for interlocks: the last write succeeded and the next refresh is not
+        overdue. Unchanged values are only re-sent every refresh_s, so the age of the last
+        write alone says nothing until refresh_s has passed."""
+        return self.ok and self.t_ok is not None and now - self.t_ok <= self.refresh_s + grace_s
+
     @staticmethod
     def _check(r, what: str) -> None:
         if r is None or r.isError():

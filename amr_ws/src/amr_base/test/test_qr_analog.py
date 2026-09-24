@@ -79,3 +79,23 @@ def test_separate_channels_and_failure_backoff():
     t[0] = 0.6
     ao.write(1.0, 1.0)
     assert ("reg", 65, 1000) in log
+
+
+def test_alive_through_the_skipped_writes_of_an_unchanged_value():
+    # the AMR QR on 2026-09-24: armed at 0 V, the unchanged value is only re-sent every
+    # 0.5 s, and a 0.3 s freshness check on the last write faulted the drives each start
+    log, t = [], [0.0]
+    ao = make(log, t)
+    assert not ao.alive(0.0, 0.3)  # nothing written yet
+    assert ao.write(0.0, 0.0)
+    for step in range(1, 40):  # 2 s of 50 Hz ticks at the same value
+        t[0] = step * 0.05
+        assert ao.write(0.0, 0.0)
+        assert ao.alive(t[0], 0.3), t[0]
+    assert len([e for e in log if e[0] == "regs"]) < 10  # still skipping, not writing each tick
+    # a failed write is dead at once, not after the grace
+    log2, t2 = [], [0.0]
+    bad = make(log2, t2, fail=True)
+    assert not bad.write(1.0, 1.0) and not bad.alive(0.0, 0.3)
+    # and a link that stopped being written goes dead after refresh + grace
+    assert not ao.alive(t[0] + ao.refresh_s + 0.31, 0.3)
