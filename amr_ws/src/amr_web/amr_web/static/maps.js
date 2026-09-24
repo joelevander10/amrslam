@@ -2,7 +2,18 @@
 const $ = id => document.getElementById(id);
 const busy = (on) => ['btn-survey-start', 'btn-survey-returned', 'btn-survey-save', 'btn-survey-abort'].forEach(id => $(id).disabled = on);
 function op(path, body) { busy(true); return operation(path, body, () => { busy(false); loadMaps().catch(() => {}); }); }
-$('btn-survey-start').onclick = () => op('/api/survey/start', { map_id: $('survey-map-id').value.trim(), description: $('survey-desc').value.trim() });
+const MAP_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;  // same rule as the supervisor (readiness.check_map_id)
+$('btn-survey-start').onclick = () => {
+  const mapId = $('survey-map-id').value.trim();
+  if (!MAP_ID_RE.test(mapId)) {
+    // the grey placeholder is not a value: an empty field was the usual cause
+    log(mapId ? `map id "${mapId}": letters, digits, '_' and '-' only (start with a letter or digit)`
+              : 'type a Map id first (e.g. line_section)', 'bad');
+    $('survey-map-id').focus();
+    return;
+  }
+  op('/api/survey/start', { map_id: mapId, description: $('survey-desc').value.trim() });
+};
 $('btn-survey-returned').onclick = () => op('/api/survey/returned');
 $('btn-survey-save').onclick = () => op('/api/survey/save', { note: $('survey-note').value.trim() });
 $('btn-survey-abort').onclick = () => op('/api/survey/abort');

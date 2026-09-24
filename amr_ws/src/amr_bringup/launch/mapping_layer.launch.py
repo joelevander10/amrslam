@@ -1,9 +1,14 @@
 """mapping_layer.launch.py: live SLAM + survey coordinator, nothing else (unified plan U1).
 
-One survey = one fresh instance of this launch: slam_toolbox (Humble) has no
-reset, and the coordinator's graph reference dies with the process. Both nodes
-are REQUIRED - either exiting ends the layer, which the supervisor reads as a
+One survey = one fresh instance of this launch: slam_toolbox has no reset, and
+the coordinator's graph reference dies with the process. Both nodes are
+REQUIRED - either exiting ends the layer, which the supervisor reads as a
 fault unless it asked for the stop.
+
+slam_toolbox after Humble (Jazzy, 2.8) is a LIFECYCLE node: started as a plain Node it
+sits unconfigured, publishes no map->odom, and the supervisor faults the layer after
+30 s ("new layer not ready"; AMR QR on Jazzy, 2026-09-24). There it is launched as a
+LifecycleNode and driven configure -> activate here, like slam_toolbox's own launch files.
 
     generation:=N   stamped into MappingState so consumers can drop old layers
     internal:=true  remap the coordinator's services under /amr/internal/survey/*
@@ -11,6 +16,7 @@ fault unless it asked for the stop.
 """
 
 import os
+from xml.etree import ElementTree
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -23,20 +29,69 @@ from amr_bringup.launch_helpers import required
 SURVEY_SERVICES = ("start", "returned", "save", "abort")
 
 
+def slam_is_lifecycle() -> bool:
+    """True when the installed slam_toolbox is a lifecycle node (2.7 and later: Iron, Jazzy)."""
+    try:
+        xml = os.path.join(get_package_share_directory("slam_toolbox"), "package.xml")
+        version = ElementTree.parse(xml).getroot().findtext("version") or ""
+        major, minor = (int(x) for x in version.split(".")[:2])
+        return (major, minor) >= (2, 7)
+    except Exception:  # noqa: BLE001 - not installed (static tests): go by the distro
+        return os.environ.get("ROS_DISTRO", "humble") != "humble"
+
+
+def _slam(slam_yaml: str) -> list:
+    if not slam_is_lifecycle():
+        return required(
+            Node(
+                package="slam_toolbox",
+                executable="async_slam_toolbox_node",
+                name="slam_toolbox",
+                output="screen",
+                parameters=[slam_yaml],
+            ),
+            "slam_toolbox",
+        )
+    from launch.actions import EmitEvent, LogInfo, RegisterEventHandler  # noqa: PLC0415
+    from launch.events import matches_action  # noqa: PLC0415
+    from launch_ros.actions import LifecycleNode  # noqa: PLC0415
+    from launch_ros.event_handlers import OnStateTransition  # noqa: PLC0415
+    from launch_ros.events.lifecycle import ChangeState  # noqa: PLC0415
+    from lifecycle_msgs.msg import Transition  # noqa: PLC0415
+
+    slam = LifecycleNode(
+        package="slam_toolbox",
+        executable="async_slam_toolbox_node",
+        name="slam_toolbox",
+        namespace="",
+        output="screen",
+        parameters=[slam_yaml, {"use_lifecycle_manager": False}],
+    )
+
+    def transition(t: int) -> EmitEvent:
+        return EmitEvent(event=ChangeState(lifecycle_node_matcher=matches_action(slam), transition_id=t))
+
+    return required(slam, "slam_toolbox") + [
+        transition(Transition.TRANSITION_CONFIGURE),
+        RegisterEventHandler(
+            OnStateTransition(
+                target_lifecycle_node=slam,
+                start_state="configuring",
+                goal_state="inactive",
+                entities=[
+                    LogInfo(msg="[mapping_layer] slam_toolbox configured, activating"),
+                    transition(Transition.TRANSITION_ACTIVATE),
+                ],
+            )
+        ),
+    ]
+
+
 def _compose(context):
     internal = LaunchConfiguration("internal").perform(context).lower() == "true"
     remaps = [(f"/amr/survey/{s}", f"/amr/internal/survey/{s}") for s in SURVEY_SERVICES] if internal else []
     slam_yaml = os.path.join(get_package_share_directory("amr_bringup"), "config", "slam_mapping.yaml")
-    actions = required(
-        Node(
-            package="slam_toolbox",
-            executable="async_slam_toolbox_node",
-            name="slam_toolbox",
-            output="screen",
-            parameters=[slam_yaml],
-        ),
-        "slam_toolbox",
-    )
+    actions = _slam(slam_yaml)
     actions += required(
         Node(
             package="amr_mission",

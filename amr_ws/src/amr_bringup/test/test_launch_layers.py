@@ -117,7 +117,14 @@ def test_mapping_layer_is_only_slam_and_coordinator():
     c = compose("mapping_layer.launch.py")
     assert set(c["exes"]) == MAPPING_EXES
     assert c["includes"] == []
-    assert c["handlers"] == 2  # slam and the session are required; survey_move is not
+    # slam and the session are required; survey_move is not. A lifecycle slam_toolbox
+    # (after Humble) adds the configured -> activate handler.
+    import importlib.util  # noqa: PLC0415
+
+    spec = importlib.util.spec_from_file_location("ml", os.path.join(LAUNCH, "mapping_layer.launch.py"))
+    ml = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ml)
+    assert c["handlers"] == (3 if ml.slam_is_lifecycle() else 2)
 
 
 def test_navigation_layer_has_no_base_web_or_sim(tmp_path):
