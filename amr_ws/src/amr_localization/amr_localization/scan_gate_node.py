@@ -4,11 +4,14 @@ their stamp, and no faster than `min_period_s` (see scan_gate.py for why).
 slam_toolbox, AMCL, the local costmap, the localization monitor and the route
 executor read /scan_gated; only the web live view stays on raw /scan.
 
-despeckle:=true (the AMR QR) also drops lone returns (speckle.py) from the released
-scans, so they reach neither the map nor localisation. Expired
+mask_file:=<yaml> (the AMR QR: ~/.amr/scan_mask.yaml, learnt by scan_mask_learn) drops
+the phantom returns of a scratched optics cover (scan_mask.py); despeckle:=true then drops
+lone returns (speckle.py). Neither reaches the map nor localisation. Expired
 scans are counted and logged, never published: a scan whose transform never
 came is not the consumer's problem.
 """
+
+import os
 
 import rclpy
 from rclpy.duration import Duration
@@ -20,6 +23,7 @@ from sensor_msgs.msg import LaserScan
 from tf2_ros import Buffer, TransformListener
 
 from amr_localization.scan_gate import ScanGate
+from amr_localization.scan_mask import apply_mask, load
 from amr_localization.speckle import despeckle
 
 SENSOR_DATA = QoSProfile(
@@ -54,6 +58,20 @@ class ScanGateNode(Node):
             else None
         )
         self._speckle_removed = self._speckle_scans = 0
+        self.declare_parameter("mask_file", "")
+        self.mask = []
+        path = p("mask_file").value
+        if path and os.path.isfile(path):
+            self.mask = load(path)  # a malformed file is an error, not a silent no-mask
+            self.get_logger().info(
+                f"scan mask {path}: "
+                + ", ".join(
+                    f"{s.from_deg:+.1f}..{s.to_deg:+.1f} deg < {s.max_range_m:.2f} m" for s in self.mask
+                )
+            )
+        elif path:
+            self.get_logger().info(f"no scan mask ({path} absent)")
+        self._mask_removed = 0
         self.odom_frame = p("odom_frame").value
         self.gate = ScanGate(
             min_period_s=p("min_period_s").value,
@@ -84,6 +102,10 @@ class ScanGateNode(Node):
             return frame is not None and self.tf_buffer.can_transform(self.odom_frame, frame, Time(seconds=t))
 
         for m in self.gate.poll(self._now(), transformable):
+            if self.mask:
+                ranges, removed = apply_mask(m.ranges, m.angle_min, m.angle_increment, self.mask)
+                m.ranges = ranges
+                self._mask_removed += removed
             if self.speckle is not None:
                 ranges, removed = despeckle(m.ranges, m.range_min, m.range_max, **self.speckle)
                 m.ranges = ranges
@@ -92,6 +114,11 @@ class ScanGateNode(Node):
             self._pub.publish(m)
 
     def _report(self) -> None:
+        if self._mask_removed:
+            self.get_logger().info(
+                f"scan mask: {self._mask_removed} phantom returns removed in the last 30 s"
+            )
+            self._mask_removed = 0
         if self._speckle_scans:
             self.get_logger().info(
                 f"despeckle: {self._speckle_removed} lone returns removed from "

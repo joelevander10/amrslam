@@ -25,6 +25,7 @@ setup(
             "imu_bias_node = amr_localization.imu_bias_node:main",
             "localization_monitor_node = amr_localization.localization_monitor_node:main",
             "scan_gate_node = amr_localization.scan_gate_node:main",
+            "scan_mask_learn = amr_localization.scan_mask_learn:main",
         ],
     },
 )

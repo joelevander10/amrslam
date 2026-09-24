@@ -200,7 +200,18 @@ def _compose(context):
             name="scan_gate",
             output="screen",
             # the AMR QR's nanoScan3 leaves lone returns in open space (2026-09-24 surveys)
-            parameters=[{"despeckle": config.PLATFORM == config.PLATFORM_QR}],
+            parameters=[
+                {
+                    "despeckle": config.PLATFORM == config.PLATFORM_QR,
+                    # phantom beams of this scanner's scratched window, learnt on the robot
+                    # (ros2 run amr_localization scan_mask_learn --write); absent = no mask
+                    "mask_file": os.path.join(
+                        os.environ.get("AMR_STATE_DIR", os.path.expanduser("~/.amr")), "scan_mask.yaml"
+                    )
+                    if config.PLATFORM == config.PLATFORM_QR
+                    else "",
+                }
+            ],
         ),
         "scan_gate",
     )
