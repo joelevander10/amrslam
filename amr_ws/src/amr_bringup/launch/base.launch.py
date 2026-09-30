@@ -205,6 +205,9 @@ def _compose(context):
                     "despeckle": config.PLATFORM == config.PLATFORM_QR,
                     # returns that turn with the vehicle (its body, a bracket, a window scratch)
                     "robot_fixed": config.PLATFORM == config.PLATFORM_QR,
+                    "robot_fixed_file": os.path.join(
+                        os.environ.get("AMR_STATE_DIR", os.path.expanduser("~/.amr")), "robot_fixed.yaml"
+                    ),
                     # phantom beams of this scanner's scratched window, learnt on the robot
                     # (ros2 run amr_localization scan_mask_learn --write); absent = no mask
                     "mask_file": os.path.join(

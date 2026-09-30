@@ -84,6 +84,9 @@ class ScanGateNode(Node):
             else None
         )
         self._rf_removed = 0
+        self.declare_parameter("robot_fixed_file", "")
+        self._rf_file = str(p("robot_fixed_file").value)
+        self._rf_loaded = False
         self._rf_reported: dict = {}
         self._last_geom: tuple[float, float] | None = None
         self.odom_frame = p("odom_frame").value
@@ -121,6 +124,9 @@ class ScanGateNode(Node):
                 m.ranges = ranges
                 self._mask_removed += removed
             self._last_geom = (m.angle_min, m.angle_increment)
+            if self.robot_fixed is not None and not self._rf_loaded:
+                self._rf_loaded = True
+                self._rf_load(m)
             if self.robot_fixed is not None:
                 yaw = self._scanner_yaw(m)
                 if yaw is not None:
@@ -135,6 +141,41 @@ class ScanGateNode(Node):
                 self._speckle_removed += removed
                 self._speckle_scans += 1
             self._pub.publish(m)
+
+    def _rf_load(self, m) -> None:
+        if not self._rf_file or not os.path.isfile(self._rf_file):
+            return
+        try:
+            import yaml  # noqa: PLC0415
+
+            with open(self._rf_file) as fh:
+                d = yaml.safe_load(fh)
+            n = self.robot_fixed.load_dict(d, len(m.ranges), m.angle_min, m.angle_increment, self._now())
+        except Exception as e:  # noqa: BLE001 - a bad file is ignored, learning starts over
+            self.get_logger().warn(
+                f"robot-fixed: could not read {self._rf_file} ({e}); learning from scratch"
+            )
+            return
+        self._rf_reported = dict(self.robot_fixed.flagged)
+        self.get_logger().info(
+            f"robot-fixed: {n} learnt beams loaded from {self._rf_file}"
+            if n
+            else f"robot-fixed: {self._rf_file} is for another scan geometry; learning from scratch"
+        )
+
+    def _rf_save(self) -> None:
+        if not self._rf_file or self._last_geom is None:
+            return
+        try:
+            import yaml  # noqa: PLC0415
+
+            os.makedirs(os.path.dirname(self._rf_file) or ".", exist_ok=True)
+            tmp = self._rf_file + ".tmp"
+            with open(tmp, "w") as fh:
+                yaml.safe_dump(self.robot_fixed.to_dict(*self._last_geom), fh, sort_keys=False)
+            os.replace(tmp, self._rf_file)
+        except OSError as e:
+            self.get_logger().warn(f"robot-fixed: could not save {self._rf_file} ({e})")
 
     def _scanner_yaw(self, m) -> float | None:
         """The scanner's heading in odom at the scan's stamp (released scans are transformable)."""
@@ -151,6 +192,7 @@ class ScanGateNode(Node):
         if rf is not None:
             if rf.flagged != self._rf_reported:
                 self._rf_reported = dict(rf.flagged)
+                self._rf_save()
                 g = self._last_geom
                 self.get_logger().info(
                     f"robot-fixed returns: {len(rf.flagged)} beams learnt"

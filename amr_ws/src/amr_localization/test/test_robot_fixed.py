@@ -99,3 +99,17 @@ def test_a_heading_jump_is_not_a_turn():
     f.update(world_scan(0.0, phantom={5: 0.3}), 0.1, 30.0, 0.0, 0.0)
     f.update(world_scan(0.0, phantom={5: 0.3}), 0.1, 30.0, math.radians(100.0), 0.1)
     assert f.flagged == {}
+
+
+def test_learnt_flags_survive_a_restart_on_the_same_geometry_only():
+    f = RobotFixedFilter()
+    spin(f, 100, {5: 0.30, 6: 0.31})
+    d = f.to_dict(0.0, math.radians(1.0))
+    g = RobotFixedFilter()
+    assert g.load_dict(d, N, 0.0, math.radians(1.0), 0.0) == 2
+    out, n = g.update(world_scan(0.0, phantom={5: 0.30, 6: 0.31}), 0.1, 30.0, 0.0, 0.1)
+    assert n == 2 and math.isnan(out[5]) and math.isnan(out[6])  # filtered from the first scan
+    h = RobotFixedFilter()
+    assert h.load_dict(d, N + 1, 0.0, math.radians(1.0), 0.0) == 0  # another scanner config
+    assert h.load_dict(d, N, 0.1, math.radians(1.0), 0.0) == 0
+    assert h.load_dict(None, N, 0.0, math.radians(1.0), 0.0) == 0

@@ -19,6 +19,10 @@ what a smooth wall can fake: a wall seen near its normal keeps its range within 
 tolerance for at most ~30 deg of turning. Enough rotation -> the beam is flagged at that range; afterwards
 only readings near that range are dropped (a real object farther or nearer on the same
 beam still passes). A flag lapses when its range has not been seen for unflag_s.
+
+What was learnt is saved (to_dict / load_dict, ~/.amr/robot_fixed.yaml on the robot) and
+reloaded at start for the same scan geometry, so the vehicle does not have to turn 90 deg
+after every restart before its phantoms stop counting as obstacles.
 """
 
 from __future__ import annotations
@@ -115,6 +119,31 @@ class RobotFixedFilter:
                 elif now - self._seen[i] > self.unflag_s:
                     del self.flagged[i], self._seen[i]
         return out, removed
+
+    def to_dict(self, angle_min: float, angle_inc: float) -> dict:
+        return {
+            "beams": self.n,
+            "angle_min": round(float(angle_min), 6),
+            "angle_increment": round(float(angle_inc), 9),
+            "flags": {int(i): round(float(r), 3) for i, r in sorted(self.flagged.items())},
+        }
+
+    def load_dict(self, d: dict | None, n: int, angle_min: float, angle_inc: float, now: float) -> int:
+        """Flags from to_dict() if they were learnt on the same scan geometry; returns how many."""
+        if not d or int(d.get("beams", -1)) != n:
+            return 0
+        if abs(float(d.get("angle_min", 1e9)) - angle_min) > 1e-4:
+            return 0
+        if abs(float(d.get("angle_increment", 1e9)) - angle_inc) > 1e-7:
+            return 0
+        if len(self._slots) != n:
+            self._resize(n)
+        for i, r in (d.get("flags") or {}).items():
+            i, r = int(i), float(r)
+            if 0 <= i < n and math.isfinite(r) and r > 0:
+                self.flagged[i] = r
+                self._seen[i] = now
+        return len(self.flagged)
 
     def sectors(self, angle_min: float, angle_inc: float) -> list[tuple[float, float, float]]:
         """Flagged beams as (from_deg, to_deg, max_range_m) runs, for the log."""
