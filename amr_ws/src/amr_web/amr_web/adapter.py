@@ -164,7 +164,7 @@ class RosAdapter(Node):
         self.create_subscription(OccupancyGrid, "/map", self.live.on_grid, LATCHED, callback_group=g)
         self.create_subscription(
             LaserScan,
-            "/scan",
+            live_scan_topic(),
             self._on_scan,
             QoSProfile(depth=2, reliability=QoSReliabilityPolicy.BEST_EFFORT),
             callback_group=g,
@@ -692,6 +692,21 @@ class RosAdapter(Node):
 
     def brakes_engage(self) -> tuple[bool, str]:
         return self._trigger("brakes_engage")
+
+
+def live_scan_topic() -> str:
+    """The scan the live view draws. The AMR QR shows /scan_gated - what mapping, localisation
+    and obstacle detection actually use, after its phantom filters (window scratches, body,
+    lone returns) - so a return the robot ignores is not drawn as if it mattered. Other
+    vehicles show the raw /scan."""
+    try:
+        import amr_base.agv_repo  # noqa: F401, PLC0415 - puts the repo on sys.path
+
+        import config  # noqa: PLC0415
+
+        return "/scan_gated" if config.PLATFORM == config.PLATFORM_QR else "/scan"
+    except Exception:  # noqa: BLE001 - no profile (tests, laptop): the raw scan
+        return "/scan"
 
 
 class Spinner:

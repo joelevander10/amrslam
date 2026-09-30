@@ -5,12 +5,15 @@ slam_toolbox, AMCL, the local costmap, the localization monitor and the route
 executor read /scan_gated; only the web live view stays on raw /scan.
 
 mask_file:=<yaml> (the AMR QR: ~/.amr/scan_mask.yaml, learnt by scan_mask_learn) drops
-the phantom returns of a scratched optics cover (scan_mask.py); despeckle:=true then drops
-lone returns (speckle.py). Neither reaches the map nor localisation. Expired
+the phantom returns of a scratched optics cover (scan_mask.py); robot_fixed:=true drops
+returns that turn WITH the vehicle - its body, a bracket, a scratch - learnt while it runs
+(robot_fixed.py); despeckle:=true then drops lone returns (speckle.py). None of them reaches
+the map, localisation or obstacle detection. Expired
 scans are counted and logged, never published: a scan whose transform never
 came is not the consumer's problem.
 """
 
+import math
 import os
 
 import rclpy
@@ -22,6 +25,7 @@ from rclpy.time import Time
 from sensor_msgs.msg import LaserScan
 from tf2_ros import Buffer, TransformListener
 
+from amr_localization.robot_fixed import RobotFixedFilter
 from amr_localization.scan_gate import ScanGate
 from amr_localization.scan_mask import apply_mask, load
 from amr_localization.speckle import despeckle
@@ -72,6 +76,16 @@ class ScanGateNode(Node):
         elif path:
             self.get_logger().info(f"no scan mask ({path} absent)")
         self._mask_removed = 0
+        self.declare_parameter("robot_fixed", False)
+        self.declare_parameter("robot_fixed_turn_deg", 90.0)
+        self.robot_fixed = (
+            RobotFixedFilter(need_rot_rad=math.radians(float(p("robot_fixed_turn_deg").value)))
+            if p("robot_fixed").value
+            else None
+        )
+        self._rf_removed = 0
+        self._rf_reported: dict = {}
+        self._last_geom: tuple[float, float] | None = None
         self.odom_frame = p("odom_frame").value
         self.gate = ScanGate(
             min_period_s=p("min_period_s").value,
@@ -106,6 +120,15 @@ class ScanGateNode(Node):
                 ranges, removed = apply_mask(m.ranges, m.angle_min, m.angle_increment, self.mask)
                 m.ranges = ranges
                 self._mask_removed += removed
+            self._last_geom = (m.angle_min, m.angle_increment)
+            if self.robot_fixed is not None:
+                yaw = self._scanner_yaw(m)
+                if yaw is not None:
+                    ranges, removed = self.robot_fixed.update(
+                        m.ranges, m.range_min, m.range_max, yaw, self._now()
+                    )
+                    m.ranges = ranges
+                    self._rf_removed += removed
             if self.speckle is not None:
                 ranges, removed = despeckle(m.ranges, m.range_min, m.range_max, **self.speckle)
                 m.ranges = ranges
@@ -113,7 +136,33 @@ class ScanGateNode(Node):
                 self._speckle_scans += 1
             self._pub.publish(m)
 
+    def _scanner_yaw(self, m) -> float | None:
+        """The scanner's heading in odom at the scan's stamp (released scans are transformable)."""
+        try:
+            q = self.tf_buffer.lookup_transform(
+                self.odom_frame, m.header.frame_id, Time.from_msg(m.header.stamp)
+            ).transform.rotation
+        except Exception:  # noqa: BLE001 - tf2 raises several types; no yaw = no update this scan
+            return None
+        return math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+
     def _report(self) -> None:
+        rf = self.robot_fixed
+        if rf is not None:
+            if rf.flagged != self._rf_reported:
+                self._rf_reported = dict(rf.flagged)
+                g = self._last_geom
+                self.get_logger().info(
+                    f"robot-fixed returns: {len(rf.flagged)} beams learnt"
+                    + (
+                        ": " + ", ".join(f"{a:+.1f}..{b:+.1f} deg @ {r:.2f} m" for a, b, r in rf.sectors(*g))
+                        if g is not None and rf.flagged
+                        else ""
+                    )
+                )
+            if self._rf_removed:
+                self.get_logger().info(f"robot-fixed: {self._rf_removed} returns removed in the last 30 s")
+                self._rf_removed = 0
         if self._mask_removed:
             self.get_logger().info(
                 f"scan mask: {self._mask_removed} phantom returns removed in the last 30 s"
