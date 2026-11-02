@@ -40,7 +40,7 @@ outputs (§6).
 2. The service starts by itself (`amr.service`). Open `http://<robot-ip>:5001/` on the
    tablet or laptop. The page opens in the **operator** view (Home · Run · Manual ·
    Alarms); **Home** must say `READY`. For Maps, Routes, Status and the rest, switch to the
-   **engineer** view: press `Op` in the header and type the PIN (**1805** by default,
+   **engineer** view: press `Op` in the header and type the PIN (**2809** by default,
    kept in `~/.amr/web.json`).
 3. The **Status** page and the left rail should show:
 

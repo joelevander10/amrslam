@@ -49,7 +49,7 @@ all chosen server-side from the alarm catalogue (`agv_core/alarms.py`, section 4
 
 The **engineer** view adds Status, Maps, Routes, Monitor, I/O, Params and
 Commission. Press `Op` in the header and type the PIN; press `Eng` to go back.
-The PIN is **1805** by default and lives in `~/.amr/web.json` (0600, created on
+The PIN is **2809** by default and lives in `~/.amr/web.json` (0600, created on
 first run) or in `AMR_WEB_ENGINEER_PIN`, never in the repository. It is a mistake
 guard, not security: every endpoint is still reachable directly on the network,
 and the vehicle is protected by the physical panel and the supervisor's lease, as

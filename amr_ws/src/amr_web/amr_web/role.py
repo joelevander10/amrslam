@@ -27,7 +27,7 @@ import os
 import secrets
 
 OPERATOR, ENGINEER = "operator", "engineer"
-DEFAULT_PIN = "1805"
+DEFAULT_PIN = "2809"
 FILENAME = "web.json"
 
 
