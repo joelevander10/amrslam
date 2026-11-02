@@ -23,9 +23,7 @@ import math
 import time
 from dataclasses import dataclass
 
-import amr_base.agv_repo  # noqa: F401  (puts the repo layer dirs on sys.path)
-
-import read_imu  # repo module
+from agv_core.drivers.canbus import read_imu  # repo module
 
 OBJ_GYRO_Z = (read_imu.OBJ_GYRO, 3)
 OBJ_STAMP = read_imu.OBJ_STAMP
@@ -51,15 +49,35 @@ def parse_mapping(entries: list[int]) -> list[MapEntry]:
     return out
 
 
-def decode_mapped(data: bytes, mapping: list[MapEntry]) -> dict[tuple[int, int], int]:
-    """Slice a PDO payload by its mapping. Values are UNSIGNED; scale later."""
-    out, bit = {}, 0
-    raw = int.from_bytes(bytes(data).ljust(8, b"\0"), "little")
+def mapping_bits(mapping: list[MapEntry]) -> int:
+    """Total mapped payload width. Raises on a mapping this decoder cannot
+    honour (unaligned or wider than one CAN frame)."""
+    bits = 0
     for m in mapping:
-        if m.bits % 8:
+        if m.bits % 8 or m.bits == 0:
             raise ValueError(
                 f"mapping entry {m.index:04X}h:{m.sub:02X} is {m.bits} bits; only byte-aligned handled"
             )
+        bits += m.bits
+    if bits > 64:
+        raise ValueError(f"mapping is {bits} bits, more than one PDO carries")
+    return bits
+
+
+def decode_mapped(data: bytes, mapping: list[MapEntry]) -> dict[tuple[int, int], int]:
+    """Slice a PDO payload by its mapping. Values are UNSIGNED; scale later.
+
+    A frame shorter than the mapping is REJECTED, not zero-padded: a padded
+    short frame decodes as a yaw rate of exactly 0.0 with a fresh receipt
+    time, which is a fabricated measurement (review 2026-09-21, F04).
+    """
+    need = mapping_bits(mapping)
+    data = bytes(data)
+    if len(data) * 8 < need:
+        raise ValueError(f"PDO is {len(data)} bytes, mapping needs {need // 8}")
+    out, bit = {}, 0
+    raw = int.from_bytes(data.ljust(8, b"\0"), "little")
+    for m in mapping:
         out[(m.index, m.sub)] = (raw >> bit) & ((1 << m.bits) - 1)
         bit += m.bits
     return out
@@ -132,6 +150,10 @@ class MlsImu:
         self.tracker = StampTracker()
         self.samples = 0
         self.misses = 0
+        self.rejected = 0  # malformed TPDO payloads (F04)
+        self.last_reject = ""
+        self.restarts = 0  # rediscoveries after an absent start (F08)
+        self._rediscover_at: float | None = None
         self._next_poll = 0.0
         self._polls = 0
         self._consecutive = 0
@@ -139,15 +161,24 @@ class MlsImu:
     # One late reply (a busy bus) is retried at the next poll; only a sensor
     # that keeps not answering is backed off.
     MISSES_BEFORE_BACKOFF = 5
+    # A sensor that did not answer at start is probed again this often, with
+    # one short SDO timeout per probe, so a late-booting MLS is picked up
+    # without restarting the bus owner and without starving its loop.
+    REDISCOVER_S = 5.0
+    PROBE_TIMEOUT_S = 0.05
 
     # -- start --
 
-    def start(self) -> str:
+    def start(self, now: float | None = None) -> str:
+        now = time.monotonic() if now is None else now
+        self._rediscover_at = None
         enabled = self.link.read(self.node, *read_imu.OBJ_ENABLE)
         if enabled is None:
-            self.log(f"MLS node {self.node} did not answer 2006h:02 - IMU off")
+            self.log(f"MLS node {self.node} did not answer 2006h:02 - IMU off, probing again")
             self.mode = "off"
+            self._rediscover_at = now + self.REDISCOVER_S
             return self.mode
+        self.tracker = StampTracker()  # a re-start must not chain onto the old stamps
         if enabled == 0:
             self.log("MLS 2006h:02 MEMS = 0: the IMU is disabled in the sensor configuration")
         raw = self.link.read(self.node, TPDO_GYRO_COMM, 1)
@@ -156,7 +187,16 @@ class MlsImu:
             count = self.link.read(self.node, TPDO_GYRO_MAP, 0) or 0
             entries = [self.link.read(self.node, TPDO_GYRO_MAP, i) or 0 for i in range(1, count + 1)]
             self.mapping = parse_mapping(entries)
-            if (OBJ_GYRO_Z[0], OBJ_GYRO_Z[1]) in {(m.index, m.sub) for m in self.mapping}:
+            try:
+                mapping_bits(self.mapping)
+            except ValueError as e:
+                self.log(f"MLS TPDO 0x{cob:03X} mapping unusable ({e}); polling instead")
+                self.mapping = []
+            gyro = next((m for m in self.mapping if (m.index, m.sub) == OBJ_GYRO_Z), None)
+            if gyro is not None and gyro.bits != 16:
+                self.log(f"MLS TPDO 0x{cob:03X} maps 2034h:03 as {gyro.bits} bits, not 16; polling instead")
+                gyro = None
+            if gyro is not None:
                 self.cob_id = cob
                 self.link.router.add(cob, self._on_tpdo)
                 self.mode = "tpdo"
@@ -173,7 +213,14 @@ class MlsImu:
     # -- TPDO path --
 
     def _on_tpdo(self, m) -> None:
-        fields = decode_mapped(m.data, self.mapping)
+        try:
+            fields = decode_mapped(m.data, self.mapping)
+        except ValueError as e:
+            # Nothing else moves: no sample, no receipt time, no stamp chain.
+            # Downstream freshness expires on its own.
+            self.rejected += 1
+            self.last_reject = str(e)
+            return
         t = time.monotonic()
         stamp = fields.get(OBJ_STAMP)
         if not self.tracker.accept(stamp, t):
@@ -184,6 +231,13 @@ class MlsImu:
     # -- SDO path --
 
     def poll(self, now: float) -> None:
+        if self.mode == "off" and self._rediscover_at is not None and now >= self._rediscover_at:
+            self._rediscover_at = now + self.REDISCOVER_S
+            probe = self.link.read(self.node, *read_imu.OBJ_ENABLE, timeout=self.PROBE_TIMEOUT_S)
+            if probe is not None:
+                self.restarts += 1
+                self.start(now)
+            return
         if self.mode != "sdo" or now < self._next_poll:
             return
         self._next_poll = now + self.poll_period

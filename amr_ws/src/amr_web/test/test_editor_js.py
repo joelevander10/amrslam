@@ -12,20 +12,15 @@ NODE = shutil.which("node")
 
 
 @pytest.mark.skipif(NODE is None, reason="node not installed")
-def test_editor_speed_control_shows_stored_value_and_defaults_to_055():
+def test_editor_has_no_speed_setting_and_drops_old_speed_keys():
     harness = pathlib.Path(__file__).with_name("editor_harness.js")
     r = subprocess.run([NODE, str(harness)], capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, r.stderr
     out = json.loads(r.stdout.strip().splitlines()[-1])
     assert "error" not in out, out
-    assert float(out["new_draft_speed"]) == 0.55, out
-    assert [float(v) for v in out["new_draft_long"]] == [0.85, 4.0], out
-    assert float(out["new_draft_arc"]) == 0.40, out
-    assert float(out["loaded_arc_shown"]) == 0.40, out  # shown for a file without it...
-    assert float(out["loaded_speed_shown"]) == 0.3, out
-    assert out["loaded_long_shown"] == "", out  # a route without a boost shows none
-    assert out["saved_limits"] == {"linear_mps": 0.3}, out  # ...never written back; stored values survive
-    assert float(out["reset_speed"]) == 0.55 and float(out["reset_long"]) == 0.85, out
+    assert "no steps" in out["new_draft_rows"], out
+    assert out["saved_limits"] == {"angular_rad_s": 0.3}, out  # the old file's speeds are not written back
+    assert out["reset_saved"] == {}, out  # a new draft carries no speed at all
 
 
 @pytest.mark.skipif(NODE is None, reason="node not installed")
@@ -50,25 +45,15 @@ def test_editor_straights_typed_in_mm_and_shown_in_mm():
 
 
 @pytest.mark.skipif(NODE is None, reason="node not installed")
-def test_editor_marks_boosted_long_straights_and_saves_the_boost_limits():
+def test_editor_does_not_mark_long_straights_any_more():
     harness = pathlib.Path(__file__).with_name("editor_harness.js")
     r = subprocess.run([NODE, str(harness)], capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, r.stderr
     out = json.loads(r.stdout.strip().splitlines()[-1])
     assert "error" not in out, out
-    rows = out["boost_rows"]
-    assert "4000<i>mm</i>" in rows and "4500<i>mm</i>" in rows
-    assert rows.count("▲0.85") == 1 and rows.index("▲0.85") > rows.index(
-        "4000<i>mm</i>"
-    )  # only the 4.5 m one
-    assert out["boost_saved_limits"] == {
-        "linear_mps": 0.55,
-        "long_linear_mps": 0.85,
-        "long_min_length_m": 4.0,
-        "arc_linear_mps": 0.40,
-    }
-    assert "▲" not in out["boost_off_rows"]
-    assert out["boost_off_limits"]["long_linear_mps"] is None  # empty field = null in the file, not 0.85
+    rows = out["long_rows"]
+    assert "4000<i>mm</i>" in rows and "4500<i>mm</i>" in rows and "▲" not in rows
+    assert "◂0.30" in out["reverse_rows"]  # reverse at half the 0.60 trackless speed
 
 
 @pytest.mark.skipif(NODE is None, reason="node not installed")
@@ -94,7 +79,7 @@ def test_editor_arc_step_bounds_and_end_pose():
     assert "error" not in out, out
     assert out["arc_refused"] is True  # R 0.5 and 30 deg
     assert "arc L" in out["arc_rows"] and "90° R 1.00" in out["arc_rows"]
-    assert "≤0.40" in out["arc_rows"]  # arc_linear_mps 0.40 holds at R 1.0 (0.9 x 0.45 x 1.0 = 0.405)
+    assert "≤0.41" in out["arc_rows"]  # the 0.60 speed, held to 0.9 x 0.45 x R 1.0 = 0.405 by the turn cap
     assert out["arc_saved_step"] == {
         "id": "s7",
         "type": "arc",
@@ -106,7 +91,7 @@ def test_editor_arc_step_bounds_and_end_pose():
     assert out["after_arc_to"] == pytest.approx({"x_m": 11.3, "y_m": 2.0})
 
 
-def test_browser_jog_caps_are_the_2026_09_19_manual_speeds():
+def test_browser_jog_caps_are_the_2026_10_02_manual_speeds():
     from amr_web import jog
 
-    assert (jog.V_MAX, jog.W_MAX) == (0.40, 0.39)
+    assert (jog.V_MAX, jog.W_MAX) == (0.50, 0.39)  # = the pendant's pendant_v / pendant_w

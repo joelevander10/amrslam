@@ -7,6 +7,7 @@ uint8 NONE=0
 uint8 MANUAL=1          # bitmask: jog / stamped browser commands under physical MANUAL
 uint8 AUTONOMOUS=2      # executor permit may be honoured (NAVIGATION only)
 uint8 COMMISSIONING=4   # exclusive IDLE substate (U8)
+uint8 LINE=8            # exclusive: line follower may hold a permit (LINE mode only)
 std_msgs/Header header
 string instance
 uint32 generation

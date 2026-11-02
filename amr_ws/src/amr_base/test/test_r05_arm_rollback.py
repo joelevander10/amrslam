@@ -3,6 +3,8 @@ software DISARMED state while hardware cleanup is owed, and a deliberate exit
 zeroes before retiring 1016h without giving up the measured order (1016h
 before the speed-zero wait, commit 6515799)."""
 
+import time
+
 import pytest
 from test_canopen import FakeBus, _link
 
@@ -124,3 +126,38 @@ def test_heartbeat_is_kept_alive_through_the_arm_and_disarm_transactions():
     bus.order.clear()
     link.disarm()
     assert bus.order.count(("hb", None, None)) >= sum(k[0] == "sdo" for k in bus.order)
+
+
+def test_idle_hook_runs_between_the_sdos_of_arm_engage_and_release_but_never_in_fault():
+    # 2026-10-09: the MLS IMU poll was starved for 0.35 s by engage -> localisation LOST at Start
+    bus = FakeBus()
+    bus.objects[(10, 0x2034, 3)] = 7  # the hook's own SDO (an IMU read) on another node
+    link = _link(bus)
+    calls = []
+
+    def hook():
+        calls.append(link.state)
+        link.read(10, 0x2034, 3)  # re-enters read() -> idle(): must not recurse
+
+    link.idle_hook = hook
+    link.arm(20, 100, 500, 30.0, False, False)
+    assert link.state == ARMED and len(calls) > 3
+    drive_sdo = sum(1 for m in bus.sent if m.arbitration_id in (0x601, 0x602))
+    assert len(calls) == sum(1 for m in bus.sent if m.arbitration_id == 0x60A)  # one read per call
+    assert len(calls) <= drive_sdo  # one call per drive transfer, no recursion
+    calls.clear()
+    link.idle()
+    assert len(calls) == 1
+    link.fault("test")
+    calls.clear()
+    link.idle()
+    link.fault_tick(time.monotonic(), 1.0)  # stop retries use _raw_write: no hook
+    assert calls == []
+
+
+def test_idle_hook_exception_does_not_break_the_sequence():
+    bus = FakeBus()
+    link = _link(bus)
+    link.idle_hook = lambda: 1 / 0
+    link.arm(20, 100, 500, 30.0, False, False)
+    assert link.state == ARMED and not link._in_idle

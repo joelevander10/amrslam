@@ -50,8 +50,8 @@ class CompiledStep:
     signed_angle_rad: float = 0.0  # rotate, full magnitude, +ccw
     time_allowance_s: float = 0.0  # rotate
     duration_est_s: float = 0.0
-    v_mps: float = 0.0  # straight: the speed this step runs at (limits.linear_mps, or the
-    # long-straight boost when length_m > long_min_length_m and long_linear_mps is set)
+    v_mps: float = 0.0  # straight/arc: the speed this step runs at (the trackless speed;
+    # half of it in reverse, less on a tight arc)
     reverse: bool = False  # travel is backwards along the heading (type REVERSE), facing forward
     centre: tuple[float, float] | None = None  # arc: circle centre
     radius_m: float = 0.0  # arc
@@ -77,18 +77,13 @@ def arc_pose(
 
 
 def arc_speed(lim, radius: float) -> float:
-    """An arc's speed: the route's arc_linear_mps (never above its base linear_mps, whatever
-    the straight before it ran at), or less so the yaw rate v/R stays under the arc turn
-    ceiling (the mux clamps w to the permit; v alone would run the arc wide). Never the boost."""
-    v = min(float(lim.arc_linear_mps), float(lim.linear_mps))
-    return min(v, ARC_YAW_RATE_RATIO * VEHICLE_ARC_W_MAX * radius)
+    """An arc's speed: the trackless speed, or less so the yaw rate v/R stays under the arc
+    turn ceiling (the mux clamps w to the permit; v alone would run the arc wide)."""
+    return min(float(lim.linear_mps), ARC_YAW_RATE_RATIO * VEHICLE_ARC_W_MAX * radius)
 
 
 def step_speed(lim, length_m: float) -> float:
-    """The one place that decides a straight's speed: validation, the editor's result and
-    the executor all read it from the compiled step. Strictly LONGER than the threshold."""
-    if lim.long_linear_mps is not None and length_m > lim.long_min_length_m:
-        return float(lim.long_linear_mps)
+    """A forward straight's speed: the one trackless speed, whatever its length."""
     return float(lim.linear_mps)
 
 
@@ -104,18 +99,13 @@ class CompiledRoute:
 def compile_route(route: Route, spacing: float = SAMPLE_SPACING_M) -> CompiledRoute:
     lim = route.limits
     for name in (
-        "linear_mps",
         "angular_rad_s",
         "position_tolerance_m",
         "heading_tolerance_deg",
-        "long_min_length_m",
     ):
         v = getattr(lim, name)
         if not (isinstance(v, (int, float)) and math.isfinite(v) and v > 0.0):
             raise RouteError(f"limits.{name} must be a finite positive number, got {v!r}")
-    b = lim.long_linear_mps
-    if b is not None and not (isinstance(b, (int, float)) and math.isfinite(b) and b >= lim.linear_mps):
-        raise RouteError(f"limits.long_linear_mps must be a finite number >= linear_mps or null, got {b!r}")
     x, y, yaw = route.start.x_m, route.start.y_m, route.start.yaw_rad
     if not all(math.isfinite(v) for v in (x, y, yaw)):
         raise RouteError("start pose must be finite")

@@ -1,0 +1,18 @@
+# LAN1 (enp2s0) -> RFID reader at 192.168.1.200
+#
+# Link-local subnet ONLY. Deliberately no gateway4/routes and no nameservers:
+# this box already has two default routes (usb0, wlp1s0) and this interface
+# must never compete with them. The reader is a direct peer on 192.168.1.0/24.
+#
+# optional: true  -> boot does not block waiting for this link if the
+#                    reader is unplugged or powered off.
+network:
+  version: 2
+  ethernets:
+    renderer: networkd
+    enp2s0:
+      dhcp4: no
+      dhcp6: no
+      addresses:
+        - 192.168.1.10/24
+      optional: true

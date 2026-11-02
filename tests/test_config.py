@@ -1,16 +1,10 @@
 """The vehicle profile: loading, validation, and the derived constants."""
 import math
 import os
-import pathlib
-import struct
-import sys
-import threading
 
-from helpers import FAIL, ROOT, check
+from helpers import check
 
-import config
-import kinematics
-import motion
+from agv_core import config, kinematics
 
 
 def rows_by_path(sections):
@@ -72,19 +66,24 @@ def test_config_profile():
     check("the real profile loads", config.PROFILE_NAME == "agv-01",
           config.PROFILE_NAME)
     refuses("a typo'd key is refused",
-            lambda d: d["manual"].update({"full_rmp": d["manual"].pop("full_rpm")}),
+            lambda d: d["vehicle"].update({"track_mm": d["vehicle"].pop("track_m")}),
             "unknown key")
     refuses("a missing key is refused",
-            lambda d: d["manual"].pop("half_ratio"), "missing key")
+            lambda d: d["vehicle"].pop("gear_ratio"), "missing key")
     refuses("an unknown section is refused",
             lambda d: d.update({"extra": {}}), "unknown top-level")
     # *** A whole retired section must not come back by accident. *** The
     # autopilot block was deleted with tape following; a profile still carrying
     # it is a profile from before the retirement, and running it would mean
     # loading gains nothing reads.
-    refuses("a leftover autopilot section is refused",
+    # The autopilot section came BACK on 2026-09-21 for the ROS LINE layer
+    # (dual-product plan, Increment 1), so a profile carrying it is now valid.
+    # What is still refused is a PARTIAL one: the loader demands every key,
+    # because a half-restored gain set is how a vehicle ends up steering on a
+    # default nobody chose.
+    refuses("a partial autopilot section is refused",
             lambda d: d.update({"autopilot": {"k_ratio": 11.3}}),
-            "unknown top-level")
+            "missing key")
     refuses("a leftover branch_latch table is refused",
             lambda d: d.update({"branch_latch": []}), "unknown top-level")
     refuses("a leftover stop_until_start_button table is refused",
@@ -92,10 +91,15 @@ def test_config_profile():
             "unknown top-level")
     refuses("a leftover auto watchdog is refused",
             lambda d: d["timing"].update(auto_watchdog_s=1.5), "unknown key")
-    refuses("a jog speed above the motor limit is refused",
-            lambda d: d["manual"].update(full_rpm=9000), "manual.full_rpm")
+    refuses("a blind-run speed above the motor limit is refused",
+            lambda d: d["blind_run"].update(max_rpm=9000), "blind_run.max_rpm")
     refuses("a bool where a number belongs is refused",
-            lambda d: d["manual"].update(half_ratio=True), "expected a number")
+            lambda d: d["vehicle"].update(gear_ratio=True), "expected a number")
+    # 2026-10-02: manual.* (read only by the deleted motion.py) and drivers.ramp.manual
+    # (drive_node always arms with "auto") were removed as dead speed parameters.
+    refuses("the retired manual section is refused",
+            lambda d: d.update({"manual": {"full_rpm": 1200, "half_ratio": 0.6}}),
+            "unknown top-level")
     # *** Profile position is LOCKED until the vendor has answered. *** The
     # 400 W geared motor needs motion extension, which pp cannot select; a pp
     # section switched on without the verified drive values or the vendor
@@ -107,12 +111,12 @@ def test_config_profile():
           or (all(v is not None for v in config.PP_EXPECT.values())
               and config.PP_VENDOR_REF.strip() != ""),
           f"enabled={config.PP_ENABLED} expect={config.PP_EXPECT}")
-    # expect is nulled explicitly: agv-01 now ships every pp.expect value filled in,
-    # so "enabled" alone no longer leaves anything unset to be refused.
-    refuses("pp enabled with unset drive values is refused",
-            lambda d: d["pp"].update(enabled=True, vendor_ref="OM ticket 1",
-                                     expect={k: None for k in d["pp"]["expect"]}),
-            "null value")
+    # The vehicle's own profile may already carry every value (agv-01 does since
+    # 2026-09-18), so the test unsets them itself rather than assume a locked base.
+    def pp_unset(d):
+        d["pp"]["expect"] = {k: None for k in d["pp"]["expect"]}
+        d["pp"].update(enabled=True, vendor_ref="OM ticket 1")
+    refuses("pp enabled with unset drive values is refused", pp_unset, "null value")
 
     def pp_all_set(d, ref):
         d["pp"]["expect"] = {k: 1 for k in d["pp"]["expect"]}
@@ -176,6 +180,69 @@ def test_config_profile():
     # mis-wiring it in the profile are refused: a channel the module does not
     # have would write nothing, and a horn enabled without the DIO scan has
     # nobody to write it.
+    # dio.motion_on (2026-10-02): DO00 and DO08 on while the motors turn.
+    check("DO00 and DO08 follow the motors", config.DIO_MOTION_ON == [0, 8], str(config.DIO_MOTION_ON))
+    check("DO01 is the alarm horn", config.DIO_ALARM_ON == [1], str(config.DIO_ALARM_ON))
+    check("DO00 is the movement horn", config.DIO_MOVEMENT_HORN == [0], str(config.DIO_MOVEMENT_HORN))
+    # Drive power (2026-10-08): under MANUAL the drives are powered only while DI08 is HIGH.
+    check("DI08 is the Manual Arm input", config.PANEL_DI_MANUAL_ARM == 8, str(config.PANEL_DI_MANUAL_ARM))
+    refuses("a Manual Arm input shared with a panel button is refused",
+            lambda d: d["panel"].update(di_manual_arm=d["panel"]["di_start"]), "distinct")
+    refuses("a Manual Arm input on a pendant channel is refused",
+            lambda d: d["panel"].update(di_manual_arm=d["pendant"]["di_fwd"]), "pendant channel")
+    refuses("the retired panel.manual_auto_arm is refused",
+            lambda d: d["panel"].update(manual_auto_arm=True), "unknown key")
+    # Line sensor (mls-marker-plan, 2026-10-09): markers off until the bench passes.
+    # 2026-10-23: markers are always on; no profile switch, so no MLS_MARKERS name either.
+    check("the MLS is expected on variant 3 with codes 1-3, markers always on",
+          config.MLS_VARIANT == 3 and not hasattr(config, "MLS_MARKERS")
+          and config.MLS_MARKER_CODES == [1, 2, 3] and config.MLS_POLARITY_LOCK is False,
+          f"{config.MLS_VARIANT} {config.MLS_MARKER_CODES}")
+    refuses("an MLS variant outside 2006h:01's 0..7 is refused",
+            lambda d: d["mls"].update(variant=8), "mls.variant")
+    for bad, why in (([], "at least one"), ([1, 1], "duplicate"), ([0], "1..7"), ([8], "1..7"),
+                     (["2"], "integers"), ([True], "integers"), (2, "integers")):
+        refuses(f"mls.marker_codes {bad!r} is refused",
+                lambda d, bad=bad: d["mls"].update(marker_codes=bad), why)
+    refuses("the retired mls.markers_enabled is refused (markers are always on)",
+            lambda d: d["mls"].update(markers_enabled=True), "unknown key")
+    check("the MLS event-flag reset is off until the bench found its value (E0.5)",
+          config.MLS_EVENT_CLEAR == -1, str(config.MLS_EVENT_CLEAR))
+    refuses("an mls.event_clear other than -1, 0 or 1 is refused",
+            lambda d: d["mls"].update(event_clear=2), "mls.event_clear")
+    refuses("an unknown key in the mls block is refused",
+            lambda d: d["mls"].update(marker_width_mm=15), "unknown key")
+    refuses("a profile without the mls block is refused",
+            lambda d: d.pop("mls"), "missing top-level")
+    # Tape-graph localization (tracked plan 3): off until P1; thresholds provisional until P0.
+    check("tape localization is off and its station limit fits +-10 cm",
+          config.TAPE_LOC_ENABLED is False and 2 * config.TAPE_LOC_SIGMA_STATION_M <= 0.05
+          and config.TAPE_LOC_AMCL_PARAMS in ("default", "lean"),
+          f"{config.TAPE_LOC_ENABLED} {config.TAPE_LOC_SIGMA_STATION_M}")
+    refuses("a station sigma limit above 5 cm is refused",
+            lambda d: d["tape_loc"].update(sigma_station_m=0.08), "+-10 cm")
+    refuses("a junction sigma limit not above the station limit is refused",
+            lambda d: d["tape_loc"].update(sigma_junction_m=0.02), "sigma_junction_m")
+    refuses("an unknown AMCL parameter set is refused",
+            lambda d: d["tape_loc"].update(amcl_params="fast"), "default or lean")
+    refuses("tape localization on a trackless profile is refused",
+            lambda d: (d.update(tracked=False), d["tape_loc"].update(enabled=True)), "trackless")
+    refuses("a profile without the tape_loc block is refused",
+            lambda d: d.pop("tape_loc"), "missing top-level")
+    refuses("a pre-move timeout not above the warning is refused",
+            lambda d: d["timing"].update(premove_timeout_s=d["timing"]["auto_start_delay_s"]),
+            "premove_timeout_s")
+    refuses("a movement horn that is not a motion output is refused",
+            lambda d: d["dio"].update(movement_horn=[2]), "among dio.motion_on")
+    refuses("one channel as both a motion and an alarm output is refused",
+            lambda d: d["dio"].update(motion_on=[0, 1], alarm_on=[1]), "share a channel")
+    refuses("a motion channel past the end of the module is refused",
+            lambda d: d["dio"].update(motion_on=[0, d["dio"]["num_do"]]), "dio.motion_on")
+    refuses("a motion channel listed twice is refused",
+            lambda d: d["dio"].update(motion_on=[8, 8]), "listed twice")
+    refuses("the horn's channel is refused as a motion channel while the horn is enabled",
+            lambda d: (d["horn"].update(enabled=True, do_channel=0), d["dio"].update(motion_on=[0])),
+            "horn's channel")
     refuses("a horn channel past the end of the module is refused",
             lambda d: d["horn"].update(do_channel=d["dio"]["num_do"]),
             "horn.do_channel")
@@ -183,7 +250,9 @@ def test_config_profile():
             lambda d: d["horn"].update(do_channel=-1), "horn.do_channel")
     refuses("a horn without the DIO scan that writes it is refused",
             lambda d: (d["dio"].update(enabled=False),
-                       d["panel"].update(enabled=False)),
+                       d["panel"].update(enabled=False),
+                       d["pendant"].update(enabled=False),
+                       d["horn"].update(enabled=True, do_channel=2)),
             "horn.enabled")
     check("HORN_HOLD_S outlasts both the tick and the DIO scan",
           config.HORN_HOLD_S >= 5 * config.LOOP_PERIOD_S
@@ -228,12 +297,37 @@ def test_config_profile():
         del os.environ[config.PROFILE_ENV_VAR]
         config.load()
 
+    # 2026-10-08: tag meanings moved to the mission's tag table (agv_core.mission v2).
+    # A profile still carrying them is refused, not silently ignored: its toggle
+    # tags would otherwise look configured and never fire.
+    refuses("a leftover autopilot.speed_toggle_tags is refused",
+            lambda d: d["autopilot"].update(speed_toggle_tags=["00A1"]), "unknown key")
+    refuses("a leftover autopilot.speed_toggle_lockout_s is refused",
+            lambda d: d["autopilot"].update(speed_toggle_lockout_s=4.0), "unknown key")
+    refuses("a leftover autopilot.u_turn_stop_distance_m is refused",
+            lambda d: d["autopilot"].update(u_turn_stop_distance_m=0.4), "unknown key")
+    # 2026-10-08 (tracked-speed-plan-1): the slow zone's keys went with the toggle.
+    for key, val in (("auto_slow_ratio", 0.5), ("slow_k_ratio", 25.0), ("slow_kd", 5.0),
+                     ("gain_blend_s", 0.4)):
+        refuses(f"a leftover autopilot.{key} is refused",
+                lambda d, k=key, v=val: d["autopilot"].update({k: v}), "unknown key")
+    refuses("HIGH at or below NORMAL is refused",
+            lambda d: d["autopilot"].update(auto_high_ratio=1.0), "auto_high_ratio")
+    refuses("HIGH above the motor limit is refused",
+            lambda d: d["autopilot"].update(auto_rpm=3000, auto_high_ratio=1.7), "motor_max_rpm")
+    refuses("a curve guard error limit beyond the sensor range is refused",
+            lambda d: d["autopilot"].update(curve_guard_e_mm=150.0), "curve_guard_e_mm")
+    refuses("a zero high ramp is refused",
+            lambda d: d["autopilot"].update(high_ramp_s=0.0), "high_ramp_s")
+    refuses("a U-turn window with min >= max is refused",
+            lambda d: d["autopilot"].update(u_turn_min_deg=230.0), "u_turn_min_deg")
+
     # A rejected profile must leave the live one untouched - this is what makes
     # load() safe to call again later from a reload endpoint.
-    load_with(lambda d: d["manual"].update(full_rpm=9000))
+    load_with(lambda d: d["blind_run"].update(max_rpm=9000))
     check("a rejected profile leaves the live one intact",
-          config.MANUAL_FULL_RPM == 1200,
-          f"MANUAL_FULL_RPM={config.MANUAL_FULL_RPM}")
+          config.BLIND_MAX_RPM != 9000,
+          f"BLIND_MAX_RPM={config.BLIND_MAX_RPM}")
 
 
 def test_derived_constants():
@@ -246,7 +340,8 @@ def test_derived_constants():
     would just break the suite every time someone edits the profile, which is
     the whole point of the profile existing."""
     print("\nderived constants follow their inputs")
-    close = lambda a, b: abs(a - b) < abs(b) * 1e-6
+    def close(a, b):
+        return abs(a - b) < abs(b) * 1e-6
     check("MPS_PER_RPM", close(config.MPS_PER_RPM, 3.14159265e-4),
           f"{config.MPS_PER_RPM:.6e}")
     check("RPM_PER_MPS", close(config.RPM_PER_MPS, 3183.0989),
@@ -256,11 +351,6 @@ def test_derived_constants():
           f"{config.RAD_S_PER_RPM_DIFF:.6e} (track {config.TRACK_M} m)")
     check("MAX_SPEED_MPS", close(config.MAX_SPEED_MPS, 1.2566371),
           f"{config.MAX_SPEED_MPS:.4f}")
-    check("MANUAL_HALF_RPM is full_rpm * half_ratio, rounded",
-          config.MANUAL_HALF_RPM
-          == round(config.MANUAL_FULL_RPM * config.MANUAL_HALF_RATIO),
-          f"{config.MANUAL_FULL_RPM} x {config.MANUAL_HALF_RATIO} "
-          f"-> {config.MANUAL_HALF_RPM}")
     check("ACCEL/DECEL track the auto ramp block",
           config.ACCEL_RPM_S == config.RAMP["auto"]["accel"]
           and config.DECEL_RPM_S == config.RAMP["auto"]["decel"],
@@ -275,13 +365,6 @@ def test_derived_constants():
     check("NODES maps the configured driver IDs",
           config.NODES == {config.LEFT: "left", config.RIGHT: "right"},
           str(config.NODES))
-    # motion's table is built from the profile now, not from module literals.
-    full, half = config.MANUAL_FULL_RPM, config.MANUAL_HALF_RPM
-    check("manual jog table is built from the profile",
-          motion.velocities("forward_left") == (half, full)
-          and motion.velocities("forward") == (full, full)
-          and motion.velocities("stop") == (0, 0),
-          f"fwd-left {motion.velocities('forward_left')}")
 
 
 def test_params_view():
@@ -313,7 +396,7 @@ def test_params_view():
 
     derived = {r["key"] for s in sections if s["name"] == "derived"
                for r in s["rows"]}
-    for const in ("MPS_PER_RPM", "MAX_SPEED_MPS", "MANUAL_HALF_RPM",
+    for const in ("MPS_PER_RPM", "MAX_SPEED_MPS",
                   "ACCEL_RPM_S", "RAD_S_PER_RPM_DIFF"):
         check(f"{const} is shown as derived", const in derived)
     # Derived values cannot be edited, so they must not be offered as if they
@@ -323,9 +406,9 @@ def test_params_view():
               for s in sections if s["name"] == "derived" for r in s["rows"]))
 
     check("the profile's own values are shown",
-          rows["manual.full_rpm"]["value"] == config._fmt(config.MANUAL_FULL_RPM)
+          rows["vehicle.track_m"]["value"] == config._fmt(config.TRACK_M)
           and rows["can.channel"]["value"] == config.CAN_CHANNEL,
-          rows["manual.full_rpm"]["value"])
+          rows["vehicle.track_m"]["value"])
 
     # Units are read off the exported name's suffix. The ones worth pinning are
     # the ones a naive suffix rule gets wrong.
@@ -348,8 +431,8 @@ def test_params_view():
     check("a whole float drops its .0",
           rows["vehicle.motor_max_rpm"]["value"] == "4000",
           rows["vehicle.motor_max_rpm"]["value"])
-    # An empty string is a SETTING here (rfid.init_hex empty means the reader is
-    # never told to start), so it must never render as a blank cell.
+    # An empty value is a SETTING here (rfid.ignore_tags empty means nothing is
+    # discarded), so it must never render as a blank cell.
     check("no cell is blank", all(r["value"] for s in sections
                                   for r in s["rows"]))
 

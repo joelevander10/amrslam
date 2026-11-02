@@ -58,6 +58,25 @@ def test_bias_tracks_drift_between_moves():
     assert est.bias == pytest.approx(2 * BIAS)
 
 
+def test_a_window_of_unreported_motion_is_rejected_and_the_bias_kept():
+    # 2026-10-23 10:16:25: wheels "still", gyro +0.9052 deg/s for a whole window
+    est = BiasEstimator(window_s=2.0, settle_s=0.3)
+    t, _ = feed(est, 0.0, 2.5, BIAS, True)
+    t, out = feed(est, t, 2.5, math.radians(0.9052), True)
+    assert est.bias == pytest.approx(BIAS) and est.windows == 1
+    assert est.rejected == 1 and est.last_rejected == pytest.approx(math.radians(0.9052))
+    assert out == pytest.approx(math.radians(0.9052) - BIAS)  # the turn passes through as a turn
+    t, _ = feed(est, t, 0.5, 0.2, False)  # a move
+    t, _ = feed(est, t, 2.5, 1.5 * BIAS, True)  # a plausible window is taken again
+    assert est.bias == pytest.approx(1.5 * BIAS) and est.windows == 2
+
+
+def test_an_implausible_first_window_does_not_calibrate():
+    est = BiasEstimator(window_s=2.0, settle_s=0.3)
+    feed(est, 0.0, 2.5, -math.radians(1.0), True)
+    assert not est.calibrated and est.rejected == 1
+
+
 def test_reset():
     est = BiasEstimator(window_s=1.0, settle_s=0.1)
     feed(est, 0.0, 1.2, BIAS, True)

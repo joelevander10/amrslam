@@ -37,9 +37,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import amr_base.agv_repo  # noqa: F401  (puts the repo layer dirs on sys.path)
-
-import panel as panel_core  # repo module: core/panel.py
+from agv_core import panel as panel_core
 
 MANUAL, AUTO = "manual", "auto"
 

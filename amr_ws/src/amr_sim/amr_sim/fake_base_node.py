@@ -13,13 +13,13 @@ import math
 import time
 
 import rclpy
+from agv_core import config
 from nav_msgs.msg import Odometry
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
 
 from amr_base import gating
-from amr_base.agv_repo import config
 from amr_base.diff_drive import Geometry
 from amr_interfaces.msg import ControlLease, DriveStatus, WheelStates, WheelVelocities
 from amr_interfaces.srv import SetPose2D
@@ -74,6 +74,9 @@ class FakeBase(Node):
         self._lease: gating.Lease | None = None
         self._gate_reason: str | None = None
         self._pub_wheels = self.create_publisher(WheelStates, "/wheel_states", SENSOR_DATA)
+        # the 5 Hz display copy drive_node publishes beside it (web Home speed tile)
+        self._pub_wheels_ui = self.create_publisher(WheelStates, "/wheel_states_ui", SENSOR_DATA)
+        self._wheels_ui_t = 0.0
         self._pub_truth = self.create_publisher(Odometry, "/sim/ground_truth", SENSOR_DATA)
         self._pub_status = self.create_publisher(DriveStatus, "/drives/status", RELIABLE_1)
         self.create_subscription(WheelVelocities, "/cmd_wheel_vel", self._on_cmd, RELIABLE_1)
@@ -159,6 +162,9 @@ class FakeBase(Node):
         w.counts_valid = True
         w.counts_per_wheel_rev = cpr
         self._pub_wheels.publish(w)
+        if time.monotonic() - self._wheels_ui_t >= 0.2:
+            self._wheels_ui_t = time.monotonic()
+            self._pub_wheels_ui.publish(w)
 
         s = self.model.truth
         o = Odometry()

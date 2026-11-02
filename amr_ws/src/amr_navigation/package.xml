@@ -7,7 +7,6 @@
   <maintainer email="igp.indi.4.0.00@gmail.com">gvipc</maintainer>
   <license>Proprietary</license>
   <exec_depend>amr_maps</exec_depend>
-  <exec_depend>amr_description</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
   <exec_depend>python3-yaml</exec_depend>
   <test_depend>python3-pytest</test_depend>

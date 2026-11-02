@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>«MODEL» Sheet «N»</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../kit/jis-sheet.css">
+</head>
+<body>
+<!--
+  CONTROL-CIRCUIT TEMPLATE (horizontal rungs between two vertical rails)
+  Copy to sheets/<model>-sheet-<NN>.html, then replace every «…» value.
+  One rung per line number where possible; a parallel (OR) branch sits half a row lower.
+  The example rungs below show every control symbol the kit has — replace them.
+-->
+
+<nav class="toolbar" aria-label="Export">
+  <strong>«MODEL» · Sheet «N» / «TOTAL» · «CONTENT»</strong>
+  <button type="button" class="primary" id="png">Download PNG</button>
+  <button type="button" id="pdf">Print / PDF</button>
+  <span class="status" id="status">A4 portrait · vector</span>
+</nav>
+
+<main class="wrap"><div class="sheet" id="sheet"></div></main>
+
+<script src="https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/dist/html-to-image.js"></script>
+<script src="../kit/jis-sheet.js"></script>
+<script>
+  const META = {
+    customer: '«CUSTOMER»', designer: '«DESIGNER»',
+    content: '«CONTROL CIRCUIT»',
+    approval: '«NAME»', checked: '«NAME»', designed: '«NAME»', drawn: '«NAME»',
+    date: '«DD/MM/YY»', scale: '',
+    title: 'ELECTRIC DIAGRAM',
+    model: '«MODEL»', dwg: '«-00-00-»', sheet: '«N»', of: '«TOTAL»',
+    note: '',
+    refs: [],
+  };
+
+  // rails: left = supply side, right = return side
+  const RAILS = [30, 150];
+
+  // each rung: row (line number), items left→right, optional description at the right
+  const RUNGS = [
+    { row: 1, items: [
+        { k: 'fuse', x: 40, name: '«FU1»', rating: '«2A»' },
+        { k: 'pbnc', x: 55, name: '«PB0 STOP»' },
+        { k: 'pbno', x: 72, name: '«PB1 START»' },
+        { k: 'nc', x: 95, name: '«OL1»', ref: '«0402»' },
+        { k: 'coil', x: 138, name: '«MS1»', refs: ['«0402»', '«0703»'] },
+      ],
+      desc: { en: '«PUMP MOTOR RUN»' },
+      // self-hold contact in parallel with START
+      parallel: { x1: 63, x2: 81, items: [{ k: 'no', x: 72, name: '«MS1»', ref: '«0401»' }] } },
+    { row: 3, items: [
+        { k: 'no', x: 72, name: '«MS1»', ref: '«0401»' },
+        { k: 'lamp', x: 138, name: '«GL»', color: '«GREEN»' },
+      ],
+      desc: { en: '«RUN INDICATOR»' } },
+  ];
+
+  JIS.render(document.getElementById('sheet'), {
+    meta: META,
+    file: '«MODEL»-«DWG»-«NN»',
+    label: '«One sentence describing the sheet»',
+    draw(s) {
+      s.rails(RAILS[0], RAILS[1], 11.6, JIS.G.gridY, ['«R3»', '«S3»']);
+      RUNGS.forEach(r => {
+        const y = s.row(r.row);
+        s.rung(y, RAILS, r.items, r.desc);
+        if (r.parallel) s.parallel(y, y + 6, r.parallel.x1, r.parallel.x2, r.parallel.items);
+      });
+    },
+  });
+</script>
+</body>
+</html>

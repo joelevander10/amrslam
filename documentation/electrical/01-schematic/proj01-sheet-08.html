@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PROJ01 Sheet 8</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../kit/jis-sheet.css">
+</head>
+<body>
+
+<nav class="toolbar" aria-label="Export">
+  <strong>PROJ01 · Sheet 8 / «XX» · Safety PLC XTIO wiring</strong>
+  <button type="button" class="primary" id="png">Download PNG</button>
+  <button type="button" id="pdf">Print / PDF</button>
+  <span class="status" id="status">A4 portrait · vector</span>
+</nav>
+
+<main class="wrap"><div class="sheet" id="sheet"></div></main>
+
+<script src="https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/dist/html-to-image.js"></script>
+<script src="../kit/jis-sheet.js"></script>
+<script>
+  // source: input-sketch/proj01/page08.jpg (upright) + FX3-XTIO front view from the SICK manual
+  const META = {
+    customer: '«CUSTOMER»', designer: '«DESIGNER»',
+    content: 'SAFETY PLC XTIO WIRING',
+    approval: '«NAME»', checked: '«NAME»', designed: '«NAME»', drawn: '«NAME»',
+    date: '«DD/MM/YY»', scale: '',
+    title: 'ELECTRIC DIAGRAM',
+    model: '«MODEL»', dwg: '«-00-00-»', sheet: 8, of: '«XX»',
+    note: '',
+    refs: [],
+  };
+
+  // XTIO terminal → line number; inputs X1–I8 in one block, outputs Q1–Q4 in a separate block below
+  const ROWS = {
+    X1: 2, X2: 3, A1: 4, A2: 5, I1: 6, I2: 7, I3: 8, I4: 9, I5: 10, I6: 11, I7: 12, I8: 13.5,
+    Q1: 17, Q2: 18, Q3: 19, Q4: 20,
+  };
+  const TERMS = Object.keys(ROWS);
+  const SAFE = ['AWG22', 'ORANGE'];                  // safety wiring (E-stop, EDM, HWTO)
+
+  // straight runs to the right edge: terminal, wire label, TB (optional), end label
+  // A1/A2 supply and its TB11/TB12 are drawn on sheet 03; EDM TBs as on sheet 07
+  const RUNS = [
+    { t: 'A1', tb: 'TB11', end: '1P24 (SH.03)', endX: 104 },
+    { t: 'A2', tb: 'TB12', end: '1N24 (SH.03)', endX: 104 },
+    { t: 'I5', w: 'OSSD1', end: 'SAFETY LIDAR OSSD 1' },
+    { t: 'I6', w: 'OSSD2', end: 'SAFETY LIDAR OSSD 2' },
+    { t: 'I3', w: 'EDM-L', tb: 'TB45', end: '(EDM−) LEFT MOTOR / DRIVER 01' },
+    { t: 'I4', w: 'EDM-R', tb: 'TB51', end: '(EDM−) RIGHT MOTOR / DRIVER 02' },
+  ];
+
+  // Q1 / Q2 to HWTO+ of both drivers; the second driver is jumpered on the TB (see sheet 07)
+  const HWTO = [
+    { t: 'Q1', w: 'HWTO1', tb: ['TB43', 'TB49'],
+      end: ['(HWTO1+) LEFT / DRIVER 01', '(HWTO1+) RIGHT / DRIVER 02'] },
+    { t: 'Q2', w: 'HWTO2', tb: ['TB46', 'TB52'],
+      end: ['(HWTO2+) LEFT / DRIVER 01', '(HWTO2+) RIGHT / DRIVER 02'] },
+  ];
+  // Q3 → DI08 of the digital IO module (non-safety status signal)
+  const Q3 = { t: 'Q3', w: 'DI08', tb: 'TB72', end: 'DI08 (SH.09)' };
+
+  JIS.render(document.getElementById('sheet'), {
+    meta: META,
+    file: 'PROJ01-08',
+    textScale: 1.25,          // drawing text +25% (frame and title block unchanged)
+    label: 'Safety PLC FX3-XTIO wiring: 2NC E-stop on X1/X2 → I1/I2, driver EDM on I3/I4, lidar OSSD on I5/I6, 2NO MANUAL/AUTO selector on I7 and DI02, 2NO reset push-button on I8, Q1/Q2 to the driver HWTO inputs, Q3 to DI08 of the digital IO module.',
+    draw(s) {
+      const SX = 36, TBX = 88, EX = 150, JX = 100;
+      const Y = {};
+      TERMS.forEach(t => { Y[t] = s.row(ROWS[t]); });
+      const wl = (x, y, t) => s.text(x, y - 0.6, t, { size: 1.9 });
+      const tb = (x, y, name, left) => {
+        s.ring(x, y, 0.8);
+        s.line(x - 1.2, y + 1.2, x + 1.2, y - 1.2, 0.2);
+        if (left) s.text(x - 1.6, y + 0.6, name, { size: 1.7, anchor: 'end' });
+        else s.text(x, y - 1.6, name, { size: 1.7, anchor: 'middle' });
+      };
+      // cable mark on vertical conductors (label to the right)
+      const wireV = (xs, y, l1, l2) => {
+        const xl = xs[xs.length - 1];
+        s.line(xs[0] - 0.9, y, xl + 1.6, y, 0.18);
+        xs.forEach(x => s.path(`M${x + 1.15} ${y - 0.45} L${x + 1.15} ${y + 0.45} L${x} ${y} Z`, 0.1, '#111'));
+        const w = Math.max(l1.length, l2.length) * 1.2 * s.textScale + 0.4;
+        s.line(xl + 1.6, y, xl + 3.2, y - 1.3, 0.18);
+        s.line(xl + 3.2, y - 1.3, xl + 3.2 + w, y - 1.3, 0.18);
+        s.text(xl + 3.4, y - 1.8, l1, { size: 2 });
+        s.text(xl + 3.4, y + 1.2, l2, { size: 2 });
+      };
+      const arrowL = (x, y) => s.path(`M${x} ${y} L${x + 1.4} ${y - 0.6} L${x + 1.4} ${y + 0.6} Z`, 0.1, '#111');
+
+      /* ---- XTIO terminal strip ---- */
+      s.text(24, 20.5, 'SAFETY PLC', { size: 2.2, weight: 600 });
+      s.text(24, 24.8, 'FX3-XTIO', { size: 2.2 });
+      s.rect(24, Y.X1 - 6, SX - 24, Y.I8 - Y.X1 + 12, 0.3);          // inputs
+      s.text(24, Y.Q1 - 7.6, 'FX3-XTIO', { size: 1.9 });
+      s.rect(24, Y.Q1 - 6, SX - 24, Y.Q4 - Y.Q1 + 12, 0.3);          // outputs
+
+      /* ---- E-stop: X1 → I1, X2 → I2 through two NC poles ---- */
+      const XO = { X1: 140, X2: 130 };                // return verticals
+      s.line(SX, Y.X1, XO.X1, Y.X1); s.line(XO.X1, Y.X1, XO.X1, Y.I1); s.line(SX, Y.I1, XO.X1, Y.I1);
+      s.line(SX, Y.X2, XO.X2, Y.X2); s.line(XO.X2, Y.X2, XO.X2, Y.I2); s.line(SX, Y.I2, XO.X2, Y.I2);
+      s.estop(JX, [Y.X1, Y.X2]);
+      s.text(104, 25, 'EMERGENCY STOP PB', { size: 1.7 });
+      s.text(104, 28.4, '(TURN RELEASE) 2NC', { size: 1.7 });
+      wl(48, Y.X1, 'X1'); wl(48, Y.X2, 'X2');
+      wl(131.5, Y.X1, 'I1'); wl(125.2, Y.X2, 'I2');
+      wl(48, Y.I1, 'I1'); wl(48, Y.I2, 'I2');
+      s.wire(66, [Y.X1, Y.X2], ...SAFE);
+      wireV([XO.X2, XO.X1], 61, ...SAFE);
+
+      /* ---- straight runs ---- */
+      RUNS.forEach(r => {
+        const y = Y[r.t], x2 = r.endX || EX;
+        s.line(SX, y, x2, y);
+        if (r.w) wl(48, y, r.w);
+        s.endLabels(x2, [y], [r.end]);
+      });
+      s.wire(62, [Y.A1, Y.A2], 'AWG22', 'BLUE');
+      s.wire(80, [Y.I5, Y.I6], 'LIDAR CABLE', '');
+      s.wire(66, [Y.I3, Y.I4], ...SAFE);
+      RUNS.forEach(r => { if (r.tb) tb(TBX, Y[r.t], r.tb); });
+
+      /* ---- selector switch 2NO: 1P24 → I7 (13-14), 1N24 → DI02 of the IO module (23-24, via TB59) ---- */
+      const yNC = Y.I7, yNO = Y.I7 + 5.4;
+      s.line(SX, yNC, EX, yNC);
+      s.line(64, yNO, EX, yNO);
+      arrowL(62.6, yNO);
+      s.text(61.6, yNO + 0.7, 'DI02 (SH.09)', { size: 1.9, anchor: 'end' });
+      s.selector(JX, [{ y: yNC, k: 'no' }, { y: yNO, k: 'no' }]);
+      tb(TBX, yNO, 'TB59');
+      s.text(102.6, 137.1, 'SELECTOR SWITCH 2NO (MANUAL / AUTO)', { size: 1.8 });
+      wl(48, yNC, 'MANUAL');
+      s.endLabels(EX, [yNC, yNO], ['1P24', '1N24']);
+
+      /* ---- reset push-button 2NO: 1P24 → I8 (13-14), 1N24 → DI01 of the IO module (23-24, via TB58) ---- */
+      const yR1 = Y.I8, yR2 = Y.I8 + 5.4, RX = 128;
+      s.line(SX, yR1, EX, yR1);
+      s.line(64, yR2, EX, yR2);
+      arrowL(62.6, yR2);
+      s.text(61.6, yR2 + 0.7, 'DI01 (SH.09)', { size: 1.9, anchor: 'end' });
+      s.pushbutton(RX, [{ y: yR1, k: 'no' }, { y: yR2, k: 'no' }], 'PB RESET');
+      tb(TBX, yR2, 'TB58');
+      s.endLabels(EX, [yR1, yR2], ['1P24', '1N24']);
+
+      /* ---- Q1 / Q2 → TB → HWTO+ left and right ---- */
+      // straight from Q1 / Q2; the jumpered terminal sits 5 mm under its line
+      HWTO.forEach(h => { h.y1 = Y[h.t]; h.y2 = h.y1 + 5; });
+      const hy = HWTO.flatMap(h => [h.y1, h.y2]);
+      s.wire(66, HWTO.map(h => h.y1).concat(Y.Q3), ...SAFE);   // XTIO → TB
+      HWTO.forEach(h => {
+        const { y1, y2 } = h;
+        s.line(SX, y1, EX, y1); s.line(TBX, y2, EX, y2);
+        s.line(TBX, y1 + 0.8, TBX, y2 - 0.8, 0.3);     // TB jumper
+        wl(48, y1, h.w);
+        wl(132, y1, h.w); wl(132, y2, h.w);
+      });
+      // Q3 → TB72 → DI08 (sheet 09)
+      s.line(SX, Y.Q3, EX, Y.Q3);
+      wl(48, Y.Q3, Q3.w); wl(132, Y.Q3, Q3.w);
+      s.endLabels(EX, [Y.Q3], [Q3.end]);
+      s.text(48, Y.Q4 + 0.7, 'Q3: TEST PULSES OFF IN FLEXI SOFT CONFIG (FEEDS A STANDARD DI)', { size: 1.6 });
+      s.wire(118, hy.concat(Y.Q3), ...SAFE);            // TB → drivers / DI08
+      HWTO.forEach(h => {
+        const { y1, y2 } = h;
+        tb(TBX, y1, h.tb[0]);
+        tb(TBX, y2, h.tb[1], true);
+        s.endLabels(EX, [y1, y2], h.end);
+      });
+      tb(TBX, Y.Q3, Q3.tb);
+
+      /* ---- terminals last, over the conductor ends ---- */
+      TERMS.forEach(t => {
+        s.ring(SX, Y[t], 0.6);
+        s.text(26, Y[t] + 0.7, t, { size: 1.9, weight: 600 });
+      });
+
+      /* ---- FX3-XTIO front view (after the SICK manual, figure 7) ---- */
+      const FX = 164, FW = 26, cx = i => FX + 3.25 + 6.5 * i;
+      const row4 = (y, labels, o = {}) => labels.forEach((l, i) =>
+        s.text(cx(i), y, l, { size: o.size || 1.5, anchor: 'middle', weight: o.weight }));
+      const leds = y => [0, 1, 2, 3].forEach(i => s.rect(cx(i) - 0.5, y, 1, 1.6, 0.15));
+      s.rect(FX - 2, 14, FW + 4, 74, 0.3);
+      s.rect(FX, 14, FW, 10, 0.25);                   // X1 X2 A1 A2
+      [0, 1].forEach(i => { s.ring(cx(i), 17.6, 1.1); s.line(cx(i) - 0.8, 18.4, cx(i) + 0.8, 16.8, 0.15); });
+      [2, 3].forEach(i => { s.rect(cx(i) - 1.5, 16.3, 3, 2.6, 0.15); });
+      s.text(cx(2), 18.1, '24V', { size: 0.9, anchor: 'middle' });
+      s.text(cx(3), 18.1, '0V', { size: 0.9, anchor: 'middle' });
+      row4(22.4, ['X1', 'X2', 'A1', 'A2']);
+      s.rect(FX, 24, FW, 8, 0.25);                    // I1–I4
+      [0, 1, 2, 3].forEach(i => s.ring(cx(i), 26.9, 1.1));
+      row4(30.8, ['I1', 'I2', 'I3', 'I4']);
+      row4(34.6, ['X1', 'X2', 'A1', 'A2'], { size: 1.1 });
+      leds(35.6); row4(39.3, ['I1', 'I2', 'I3', 'I4'], { size: 1.1 });
+      s.text(FX + 2.2, 42.4, 'MS', { size: 1.1 });
+      s.rect(FX + 2.6, 43, 1, 1.6, 0.15);
+      s.text(FX + 16, 43.6, 'SICK', { size: 2.4, weight: 600, sans: true, anchor: 'middle' });
+      s.text(FX + FW / 2, 52, 'FLEXI soft', { size: 1.5, sans: true, anchor: 'middle' });
+      s.text(FX + FW / 2, 54.6, 'XTIO', { size: 1.5, sans: true, anchor: 'middle' });
+      leds(58); row4(61.3, ['I5', 'I6', 'I7', 'I8'], { size: 1.1 });
+      leds(62.6); row4(65.9, ['Q1', 'Q2', 'Q3', 'Q4'], { size: 1.1 });
+      s.rect(FX, 68, FW, 10, 0.25);                   // I5–I8
+      row4(70.9, ['I5', 'I6', 'I7', 'I8']);
+      [0, 1, 2, 3].forEach(i => s.ring(cx(i), 74.8, 1.1));
+      s.rect(FX, 78, FW, 10, 0.25);                   // Q1–Q4
+      row4(80.9, ['Q1', 'Q2', 'Q3', 'Q4']);
+      [0, 1, 2, 3].forEach(i => s.path(`M${cx(i) - 1.1} ${83} L${cx(i) + 1.1} ${83} L${cx(i)} ${85.4} Z`, 0.15));
+      s.text(FX + FW / 2, 91.5, 'FX3-XTIO (FRONT)', { size: 1.7, anchor: 'middle' });
+    },
+  });
+</script>
+</body>
+</html>

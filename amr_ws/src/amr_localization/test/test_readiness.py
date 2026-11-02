@@ -116,6 +116,21 @@ def test_safety_stop_wheels_excused_while_torque_off_and_graced_briefly():
     assert r.evaluate(3.0, {**FRESH, "wheels": 0.3, "scan": 0.3}) == rd.LOST
 
 
+def test_imu_gap_while_drives_power_up_is_graced():
+    r = _ready()
+    # 2026-10-09: AUTO Start blocked the IMU poll ~0.35 s while the drives engaged
+    assert r.evaluate(3.0, {**FRESH, "imu": 0.4}) == rd.READY
+    assert r.evaluate(3.1, {**FRESH, "imu": 0.4, "wheels": 0.3}) == rd.READY
+    assert r.evaluate(3.2, FRESH) == rd.READY
+    # past the grace, or a never-seen stream: lost
+    assert r.evaluate(3.3, {**FRESH, "imu": 0.9}) == rd.LOST and "imu" in r.reason
+    r = _ready()
+    assert r.evaluate(3.0, {**FRESH, "imu": None}) == rd.LOST
+    # the grace never covers the scan
+    r = _ready()
+    assert r.evaluate(3.0, {**FRESH, "imu": 0.4, "scan": 0.3}) == rd.LOST and "imu" not in r.reason
+
+
 def test_ready_lost_on_sustained_covariance_growth_only():
     r = _ready()
     aligned(r, 3.0)  # scan verification keeps coming throughout (Q07): only covariance is at issue
@@ -306,3 +321,14 @@ def test_q07_invalid_covariance_and_pre_seed_samples_are_not_evidence():
     assert r2.cov is None
     r2.on_amcl_pose(10.5, -1.0, 0.01, 0.002)
     assert r2.cov is None
+
+
+def test_nomotion_updates_are_wanted_only_while_checking():
+    r = rd.Readiness(rd.Limits(settle_s=1.0, initial_grace_s=0.5))
+    assert not r.wants_nomotion_update()  # UNLOCALIZED: no pose to refine
+    r.on_initialpose(0.0)
+    assert r.wants_nomotion_update()
+    r = _ready()
+    assert not r.wants_nomotion_update()
+    r.evaluate(3.0, {**FRESH, "scan": 0.3})
+    assert r.state == rd.LOST and not r.wants_nomotion_update()  # LOST needs a new pose

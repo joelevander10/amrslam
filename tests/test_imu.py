@@ -13,7 +13,7 @@ import math
 
 from helpers import check
 
-import read_imu as imu
+from agv_core.drivers.canbus import read_imu as imu
 
 
 def test_scaling():

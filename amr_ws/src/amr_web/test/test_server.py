@@ -37,8 +37,9 @@ class Stub:
         self.ops["op-mode"] = {"operation_id": "op-mode", "status": 0, "status_name": "PENDING"}
         return True, "op-mode", "accepted"
 
-    def survey_request(self, operation, map_id, description, request_id):
-        self.calls.append(("survey_request", (operation, map_id, description, request_id)))
+    def survey_request(self, operation, map_id, description, request_id, cont=None):
+        args = (operation, map_id, description, request_id) + ((cont,) if cont is not None else ())
+        self.calls.append(("survey_request", args))
         return True, "op-survey", "accepted"
 
     def get_operation(self, oid):
@@ -93,7 +94,9 @@ def env(tmp_path):
     fp = tmp_path / "footprint.yaml"
     fp.write_text(FOOTPRINT_YAML)
     stub = Stub()
-    app = create_app(stub, str(maps), str(fp))
+    # state_dir in the tmp tree: the app writes web.json (the engineer PIN and the
+    # session secret) there, and a test must never touch the vehicle's real ~/.amr.
+    app = create_app(stub, str(maps), str(fp), state_dir=str(tmp_path / "state"))
     app.config["TESTING"] = True
     return app.test_client(), stub, str(maps), rev_dir, mb.verify(rev_dir)
 
@@ -277,6 +280,49 @@ def test_mode_and_survey_are_asynchronous_operations(env):
     assert client.post("/api/survey/bogus", json={}).status_code == 404
 
 
+def test_continue_survey_start_forwards_revision_and_hint(env):
+    client, stub, *_ = env
+    body = {"map_id": "hall", "description": "by rack C", "continue_revision": 2,
+            "hint": {"x_m": 51.8, "y_m": -38.9, "yaw_rad": 0.03}}
+    r = client.post("/api/survey/start", json=body)
+    assert r.status_code == 202 and stub.calls[-1] == (
+        "survey_request", (0, "hall", "by rack C", stub.calls[-1][1][3], (2, 51.8, -38.9, 0.03))
+    )
+    n = len(stub.calls)
+    for bad in (
+        {**body, "hint": None},
+        {**body, "hint": {"x_m": 1.0, "y_m": "x", "yaw_rad": 0.0}},
+        {**body, "hint": {"x_m": float("inf"), "y_m": 0.0, "yaw_rad": 0.0}},
+        {**body, "continue_revision": -1},
+        {**body, "continue_revision": True},
+    ):
+        assert client.post("/api/survey/start", json=bad).status_code == 422
+    assert len(stub.calls) == n  # nothing refused reached the robot
+    # continue_revision 0 is an ordinary new map
+    r = client.post("/api/survey/start", json={**body, "continue_revision": 0})
+    assert r.status_code == 202 and len(stub.calls[-1][1]) == 4
+
+
+def test_maps_say_which_revisions_can_be_continued(env, tmp_path):
+    client, stub, maps, rev_dir, manifest = env
+    assert client.get("/api/maps").json[0]["revisions"][0]["continuable"] is False  # no pose graph
+    pg = tmp_path / "pg"
+    (tmp_path / "pg.posegraph").write_bytes(b"graph")
+    (tmp_path / "pg.data").write_bytes(b"data")
+    stage = mb.staging_dir(maps, "hall", 1)
+    m, g = mb.load(maps, "sim_factory", 1)
+    m.map_id = "hall"
+    mb.stage_bundle(stage, g, str(pg), m)
+    mb.publish(stage, maps, "hall", 1)
+    idx = {x["map_id"]: x for x in client.get("/api/maps").json}
+    assert idx["hall"]["revisions"][0]["continuable"] is True
+    one = client.get("/api/maps/hall/1").json
+    assert one["continuable"] is True and one["review"]["note"] == "t"
+    page = client.get("/survey-continue?map=hall&rev=1")
+    assert page.status_code == 200
+    assert b'id="btn-cs-start"' in page.data and b"survey_continue.js" in page.data
+
+
 def test_state_and_footprint(env):
     client, stub, maps, rev_dir, manifest = env
     assert client.get("/api/state").json["localization"]["state_name"] == "READY"
@@ -323,8 +369,8 @@ def test_r21_malformed_route_payloads_are_422_and_never_stored(env):
         ("repeat_count", 2.5),
         ("repeat_count", "2"),
         ("repeat_count", 101),
-        ("limits", {"linear_mps": 0}),
-        ("limits", {"linear_mps": "fast"}),
+        ("limits", {"angular_rad_s": 0}),
+        ("limits", {"angular_rad_s": "fast"}),
         ("limits", {"bogus": 1.0}),
         ("start", None),
         ("start", {"x_m": 0.0, "y_m": 0.0}),
@@ -436,6 +482,7 @@ def test_pages_fonts_and_style_guards(env):
         "/editor",
         "/review",
         "/run",
+        "/run-tracked",
         "/monitor",
         "/io",
         "/alarms",
@@ -454,10 +501,42 @@ def test_pages_fonts_and_style_guards(env):
         text = f.read_text()
         assert not re.search(r"https?://", text), f"external URL in {f.name}"
         assert not re.search(r"@media[^{]*prefers-color-scheme", text), f"dark-mode query in {f.name}"
+        if f.stem == "demo":
+            continue  # the visitors' page has its own brochure look (plan 2026-09-23-demo-page §5)
         assert "box-shadow" not in text, f.name
         assert "gradient(" not in text, f.name
         for radius in re.findall(r"border-radius\s*:\s*([^;}]+)", text):
             assert radius.strip() in ("50%", "2px", "0"), f"{f.name}: border-radius {radius}"
+
+
+def test_one_layout_three_sizes(env):
+    """amr.css "one layout, three sizes": the laptop and the 7-inch HMI report near-identical
+    CSS viewports, so the app scales itself through the root font size. Every length in
+    the stylesheet must be rem (a px font or width would not follow the knob), the knob
+    must be applied before the stylesheet loads (no flash at the wrong size), and every
+    page must carry the Aa control that cycles it."""
+    import pathlib  # noqa: PLC0415
+    import re  # noqa: PLC0415
+
+    root = pathlib.Path(__file__).resolve().parents[1] / "amr_web"
+    css = (root / "static" / "amr.css").read_text()
+    for size in ("s", "m", "l"):
+        assert f'html[data-ui="{size}"]' in css or (size == "s" and "html { font-size:10px; }" in css)
+    # borders (1-4px hairlines) and the two real-pixel @media breakpoints are the exceptions
+    prop = r"(?:font-size|font|width|height|padding|margin|gap)"
+    lengths = re.finditer(prop + r"\s*:[^;{}]*?\b(\d+(?:\.\d+)?)px", css)
+    px = [m.group(0) for m in lengths if float(m.group(1)) > 4 and not m.group(0).startswith("font-size:1")]
+    px = [x for x in px if x not in ("width:820px", "width:760px")]
+    assert not px, f"px lengths in amr.css do not follow the size knob: {px}"
+    assert "rem" in css and "@media (pointer:coarse)" in css
+
+    base = (root / "templates" / "base.html").read_text()
+    assert base.index("dataset.ui") < base.index('href="/static/amr.css"')
+    assert "(pointer:coarse)" in base and "amr.ui" in base
+    client = env[0]
+    for page in ("/status", "/manual", "/run", "/alarms"):
+        html = client.get(page).data.decode()
+        assert 'id="ui-size"' in html and 'id="pill-link"' in html, page
 
 
 def test_every_element_id_a_page_script_uses_exists_on_that_page(env):
@@ -470,6 +549,10 @@ def test_every_element_id_a_page_script_uses_exists_on_that_page(env):
     client = env[0]
     static = pathlib.Path(__file__).resolve().parents[1] / "amr_web" / "static"
     pat = re.compile(r"""(?:\$|getElementById|tiles?)\(\s*'([A-Za-z][\w-]*)'""")
+    # Some ids exist only in one role (the engineer's Restart button), so a page is
+    # rendered in BOTH and the ids unioned - a handler must match the markup it ships with.
+    from amr_web import role as rolemod  # noqa: PLC0415
+
     for page in (
         "/status",
         "/manual",
@@ -483,10 +566,15 @@ def test_every_element_id_a_page_script_uses_exists_on_that_page(env):
         "/params",
         "/commissioning",
     ):
+        client.post("/api/role", json={"role": "operator"})
         html = client.get(page).data.decode()
         ids = set(re.findall(r'\bid="([^"]+)"', html))
+        client.post("/api/role", json={"role": "engineer", "pin": rolemod.DEFAULT_PIN})
+        eng = client.get(page).data.decode()
+        ids |= set(re.findall(r'\bid="([^"]+)"', eng))
+        html += eng
         code = "\n".join(re.findall(r"<script>(.*?)</script>", html, re.S))
-        for src in re.findall(r'<script src="/static/([\w.]+)"', html):
+        for src in sorted(set(re.findall(r'<script src="/static/([\w.]+)"', html))):
             code += (static / src).read_text()  # amr.js too: the rail ids must exist on every page
         missing = {i for i in pat.findall(code) if i not in ids}
         assert not missing, f"{page}: scripts use ids not on the page: {sorted(missing)}"
@@ -523,23 +611,22 @@ def test_wifi_endpoint(env):
     assert set(body) >= {"iface", "connected", "ssid", "dbm", "bars"}
 
 
-def test_route_without_limits_is_stored_at_055_037_and_an_explicit_030_survives(env):
+def test_route_speed_is_the_vehicle_constant_and_old_speed_keys_are_not_stored(env):
     client, stub, maps, rev_dir, manifest = env
     body = route_payload([S("s1", 3.0, 0.0)], route_id="dflt")
     del body["limits"]
     r = client.post("/api/maps/sim_factory/1/routes/save", json=body)
     assert r.status_code == 200
     r = client.get("/api/maps/sim_factory/1/routes/dflt/1")
-    assert (
-        r.json["route"]["limits"]["linear_mps"] == 0.55 and r.json["route"]["limits"]["angular_rad_s"] == 0.37
-    )
-    assert r.json["route"]["limits"]["arc_linear_mps"] == 0.40
+    assert r.json["route"]["limits"]["angular_rad_s"] == 0.37
+    assert "linear_mps" not in r.json["route"]["limits"]
+    # a payload still carrying a pre-2026-10-02 speed is accepted and the speed is dropped
     r = client.post(
         "/api/maps/sim_factory/1/routes/save", json=route_payload([S("s1", 3.0, 0.0)], route_id="slow")
     )
     assert r.status_code == 200
     r = client.get("/api/maps/sim_factory/1/routes/slow/1")
-    assert r.json["route"]["limits"]["linear_mps"] == 0.3  # the stored value, not the default
+    assert "linear_mps" not in r.json["route"]["limits"]
 
 
 def test_validate_route_with_an_arc_and_a_reverse(env):
@@ -554,8 +641,8 @@ def test_validate_route_with_an_arc_and_a_reverse(env):
     assert steps[1]["radius_m"] == 1.5 and steps[1]["centre"] == pytest.approx([5.0, 1.5])
     q = math.pi / 4
     assert steps[1]["end"] == pytest.approx([5.0 + 1.5 * math.sin(q), 1.5 - 1.5 * math.cos(q), q])
-    assert steps[1]["v_mps"] == pytest.approx(0.3)  # arc 0.40, but never above the route's 0.3 cap
-    assert steps[2]["v_mps"] == pytest.approx(0.15)
+    assert steps[1]["v_mps"] == pytest.approx(0.60)  # R 1.5 allows the full trackless speed (cap 0.6075)
+    assert steps[2]["v_mps"] == pytest.approx(0.30)  # reverse: half
     assert steps[2]["end"][0] == pytest.approx(steps[1]["end"][0] - math.cos(q))
     assert len(stub.previews) == 1  # the preview carries the arc and reverse samples too
     # a 90 deg arc of the same radius turns the nose into the racks: clearance fails on that step
@@ -662,5 +749,85 @@ def test_survey_move_endpoints_forward_to_the_node_and_validate(env):
         assert client.post("/api/survey_move", json=bad).status_code == 422
     assert client.post("/api/survey_move/stop", json={}).status_code == 200
     page = client.get("/maps").data
-    for el in (b'id="sm-dist"', b'id="sm-fwd"', b'id="sm-rev"', b'id="sm-stop"', b'data-deg="-135"'):
+    for el in (
+        b'id="sm-dist"', b'id="sm-fwd"', b'id="sm-rev"', b'id="sm-stop"',
+        b'data-deg="-135"', b'data-deg="20"', b'data-deg="-30"',
+    ):
         assert el in page
+
+
+# ---- F12: payload shape is a 400, never a 500, and never an adapter call -------------
+
+_JSON_POSTS = [
+    "/api/mode",
+    "/api/survey/start",
+    "/api/survey_move",
+    "/api/manual/press",
+    "/api/manual/refresh",
+    "/api/manual/release",
+    "/api/localization/initialpose",
+    "/api/mission/run",
+    "/api/missions",
+    "/api/commissioning/plan",
+    "/api/commissioning/measurement",
+    "/api/maps/sim_factory/1/edit",
+    "/api/maps/sim_factory/1/routes/validate",
+    "/api/maps/sim_factory/1/routes/save",
+]
+
+
+@pytest.mark.parametrize("path", _JSON_POSTS)
+@pytest.mark.parametrize("raw", ["[1]", '"text"', "7", "null", "{not json", "true"])
+def test_wrong_shaped_json_is_a_400_before_any_adapter_call(env, path, raw):
+    """POST [1] to /api/mode used to be a 500 from `.get` on a list."""
+    client, stub, *_ = env
+    before = list(stub.calls)
+    r = client.post(path, data=raw, content_type="application/json")
+    assert r.status_code == 400, (path, raw, r.status_code, r.get_data(as_text=True)[:200])
+    assert r.is_json and r.get_json()["ok"] is False
+    assert stub.calls == before, "an invalid payload reached the adapter"
+
+
+def test_initialpose_rejects_booleans_nonfinite_and_bad_revisions(env):
+    client, stub, *_ = env
+    good = {
+        "x_m": 1.0,
+        "y_m": 2.0,
+        "yaw_rad": 0.1,
+        "map_id": "sim_factory",
+        "map_revision": 1,
+        "generation": 3,
+    }
+    for k, v in (
+        ("x_m", True),
+        ("y_m", "1"),
+        ("yaw_rad", None),
+        ("map_revision", 0),
+        ("map_revision", True),
+        ("map_revision", 1.5),
+        ("map_revision", 10**30 * 1.0),
+        ("generation", -1),
+        ("map_id", 5),
+        ("map_id", ""),
+    ):
+        bad = {**good, k: v}
+        r = client.post("/api/localization/initialpose", json=bad)
+        assert r.status_code == 400, (k, v, r.get_json())
+    r = client.post(
+        "/api/localization/initialpose",
+        data='{"x_m": 1e999, "y_m": 0, "yaw_rad": 0, "map_id": "m", "map_revision": 1, "generation": 0}',
+        content_type="application/json",
+    )
+    assert r.status_code == 400
+
+
+def test_survey_move_value_must_be_a_finite_number(env):
+    client, stub, *_ = env
+    for v in (True, "1", None, [1]):
+        r = client.post("/api/survey_move", json={"kind": "straight", "value": v})
+        assert r.status_code == 422, (v, r.get_json())
+    r = client.post(
+        "/api/survey_move", data='{"kind": "straight", "value": 1e999}', content_type="application/json"
+    )
+    assert r.status_code == 422
+    assert not any(c[0] == "survey_move" for c in stub.calls)

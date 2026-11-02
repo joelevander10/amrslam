@@ -35,12 +35,9 @@ from collections import deque
 from dataclasses import dataclass, field
 
 import can
-
-import amr_base.agv_repo  # noqa: F401  (puts the repo layer dirs on sys.path)
-
-import guard  # repo module: every write passes the same deny-list the drives use
-from drive_forward import sdo_write  # noqa: E402
-from verify_drivers import sdo_read, u32  # noqa: E402
+from agv_core.drivers.canbus import guard  # every write passes the same deny-list the drives use
+from agv_core.drivers.canbus.drive_forward import sdo_write  # noqa: E402
+from agv_core.drivers.canbus.verify_drivers import sdo_read, u32  # noqa: E402
 
 POSITION = 0x6004
 UNITS_PER_REV = 0x6001  # CiA 406 measuring units per revolution

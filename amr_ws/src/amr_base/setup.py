@@ -23,6 +23,7 @@ setup(
             "diff_drive_odom_node = amr_base.diff_drive_odom_node:main",
             "drive_node = amr_base.drive_node:main",
             "panel_node = amr_base.panel_node:main",
+            "rfid_node = amr_base.rfid_node:main",
             "commissioning_node = amr_base.commissioning_node:main",
             "qr_base_node = amr_base.qr_base_node:main",
             "qr_calibrate = amr_base.qr_calibrate:main",

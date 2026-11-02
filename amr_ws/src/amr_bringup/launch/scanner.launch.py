@@ -2,11 +2,14 @@
 
 No URDF here - base.launch.py owns the one robot_state_publisher. The parameter file
 is the vehicle's (AGV_PROFILE): nanoscan3.yaml for gvievo-01, nanoscan3.<profile>.yaml
-otherwise. For a
+otherwise. host_ip "auto" in it is replaced here by this PC's address on the route to
+sensor_ip (the address the scanner must send its UDP data to). For a
 standalone scanner + TF session use lidar.launch.py. ROS owns UDP 6060.
 
-host_ip "auto" in the parameter file is replaced here by this PC's address on the route to
-sensor_ip (the address the scanner must send its UDP data to).
+The driver aborts (exit -6) if the scanner is unreachable when it starts - a
+cable out at boot left it dead until the next service restart (2026-10-02). It
+respawns instead, so plugging the cable back in recovers the data link by itself.
+The STOP path (OSSD pair into the FX3) does not depend on this node.
 """
 
 import os
@@ -36,7 +39,10 @@ def local_ip_towards(ip: str) -> str:
 
 
 def host_ip_override(params_path: str) -> dict:
-    """{"host_ip": <address>} when the file says host_ip "auto", else {}."""
+    """{"host_ip": <address>} when the file says host_ip "auto", else {}.
+
+    No route to the scanner at all (interface down at boot) is not fatal - the driver
+    respawns, as above - so the profile's lidar.host_ip is used instead, with a warning."""
     with open(params_path) as f:
         p = (yaml.safe_load(f) or {}).get("sick_safetyscanners2_node", {}).get("ros__parameters", {})
     if str(p.get("host_ip", "")).lower() != "auto":
@@ -44,10 +50,14 @@ def host_ip_override(params_path: str) -> dict:
     sensor = str(p.get("sensor_ip", ""))
     try:
         host = local_ip_towards(sensor)
+        if host.startswith("127.") or host == sensor:
+            raise OSError(f"got {host}")
     except OSError as e:
-        raise RuntimeError(f"host_ip auto: no route to the scanner {sensor} ({e})") from e
-    if host.startswith("127.") or host == sensor:
-        raise RuntimeError(f"host_ip auto: got {host} for scanner {sensor} - set host_ip by hand")
+        from agv_core import config  # noqa: PLC0415 - the vehicle profile (AGV_PROFILE)
+
+        host = config.LIDAR_HOST_IP
+        print(f"[scanner.launch] host_ip auto: no usable route to {sensor} ({e}); using lidar.host_ip {host}")
+        return {"host_ip": host}
     print(f"[scanner.launch] host_ip auto -> {host} (scanner {sensor})")
     return {"host_ip": host}
 
@@ -64,6 +74,8 @@ def generate_launch_description() -> LaunchDescription:
                 output="screen",
                 emulate_tty=True,
                 parameters=[params, override] if override else [params],
+                respawn=True,
+                respawn_delay=5.0,
             ),
         ]
     )

@@ -5,6 +5,8 @@ uint8 NONE=0
 uint8 TELEOP=1      # manual jog, only while the panel selector is MANUAL
 uint8 FOLLOW=2      # controller_server output on /cmd_vel during a straight
 uint8 ROTATE=3      # behavior_server output on /cmd_vel_rotate during a turn
+uint8 LINE=4        # reserved: the line follower does not use a permit today, it
+                    # holds LEASE_LINE and publishes /amr/line_cmd directly
 
 std_msgs/Header header
 string instance             # supervisor instance this permit was issued under

@@ -1,0 +1,8 @@
+{
+  "mission_name": "mru-straight-markers",
+  "branch_default": "straight",
+  "branch_latch": [],
+  "high_zone": null,
+  "tags": [],
+  "marker_run": {"uturn_code": 2, "home_code": 1, "direction": "cw", "approach_mps": 0.1, "decel_m": 0.3, "max_approach_m": 2.0, "stop_distance_m": 0.5, "label": "T-HOME"}
+}

@@ -34,9 +34,10 @@ BASE_EXES = {
     "ekf_node",
     "robot_state_publisher",
 }
-HW_EXES = {"drive_node", "panel_node", "sick_safetyscanners2_node"}
+HW_EXES = {"drive_node", "panel_node", "sick_safetyscanners2_node", "rfid_node"}
 SIM_EXES = {"fake_base_node", "fake_imu_node", "fake_panel_node", "scan_synth_node"}
 MAPPING_EXES = {"async_slam_toolbox_node", "mapping_session_node", "survey_move_node"}
+LINE_EXES = {"line_follow_node"}
 NAV_EXES = {
     "map_server",
     "amcl",
@@ -69,6 +70,9 @@ def _walk(entities, context, out: dict, depth=0):
             exe = "".join(s.perform(context) for s in exe) if isinstance(exe, list) else str(exe)
             out.setdefault("exes", []).append(exe)
             out.setdefault("params", {})[exe] = list(e._Node__parameters or [])
+            out.setdefault("remaps", {})[exe] = [
+                (_text(a, context), _text(b, context)) for a, b in (e._Node__remappings or [])
+            ]
             continue
         if isinstance(e, IncludeLaunchDescription):
             raw = e.launch_description_source._LaunchDescriptionSource__location  # unexpanded substitutions
@@ -113,18 +117,62 @@ def sim_domain(monkeypatch):
     monkeypatch.setenv("ROS_DOMAIN_ID", str(domains.SIM))
 
 
+@pytest.fixture(autouse=True)
+def gvievo_profile(monkeypatch):
+    """These compositions are gvievo-01's. The AMR QR exports AGV_PROFILE=amr-qr-01 in its
+    shell, so pin agv-01 (env and the loaded profile) unless a test asks for another."""
+    from agv_core import config  # noqa: PLC0415
+
+    monkeypatch.setenv("AGV_PROFILE", "agv-01")
+    config.load(config.profile_path("agv-01"))
+    yield
+    config.load(config.profile_path("agv-01"))
+
+
+def _use_profile(monkeypatch, name: str) -> None:
+    from agv_core import config  # noqa: PLC0415
+
+    monkeypatch.setenv("AGV_PROFILE", name)
+    config.load(config.profile_path(name))
+
+
 def test_mapping_layer_is_only_slam_and_coordinator():
     c = compose("mapping_layer.launch.py")
     assert set(c["exes"]) == MAPPING_EXES
     assert c["includes"] == []
     # slam and the session are required; survey_move is not. A lifecycle slam_toolbox
-    # (after Humble) adds the configured -> activate handler.
+    # (after Humble: Jazzy on the AMR QR) adds its configured -> activate handler.
     import importlib.util  # noqa: PLC0415
 
     spec = importlib.util.spec_from_file_location("ml", os.path.join(LAUNCH, "mapping_layer.launch.py"))
     ml = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(ml)
     assert c["handlers"] == (3 if ml.slam_is_lifecycle() else 2)
+
+
+def test_line_layer_is_only_the_follower():
+    # generation and real are the ONLY arguments _start_line passes; anything
+    # else required here would make the supervisor's spawn fail as SPAWN_FAILED.
+    c = compose("line_layer.launch.py", generation=3, real="true")
+    assert set(c["exes"]) == LINE_EXES
+    assert c["includes"] == []
+    assert c["handlers"] == 1  # the follower is required: no follower, no layer
+    # The mux of generation 3 subscribes to the generation-private line_cmd
+    # topic; the follower must publish there or the mux never sees a command.
+    assert c["remaps"]["line_follow_node"] == [("/amr/line_cmd", "/amr/layers/g3/amr/line_cmd")]
+    params = [_param_dict(p) for p in c["params"]["line_follow_node"] if isinstance(p, dict)]
+    assert any(p.get("field_source") == "scanner" for p in params)
+
+
+def test_line_layer_assumes_the_field_clear_only_in_sim():
+    """The sim has no scanner. A vehicle launch must never carry assume_clear:
+    there a stale /output_paths is UNKNOWN and the layer refuses to arm."""
+    c = compose("line_layer.launch.py", generation=3, real="false")
+    params = [_param_dict(p) for p in c["params"]["line_follow_node"] if isinstance(p, dict)]
+    assert any(p.get("field_source") == "assume_clear" for p in params)
+    d = compose("line_layer.launch.py", generation=3)  # default = real
+    params = [_param_dict(p) for p in d["params"]["line_follow_node"] if isinstance(p, dict)]
+    assert any(p.get("field_source") == "scanner" for p in params)
 
 
 def test_navigation_layer_has_no_base_web_or_sim(tmp_path):
@@ -144,6 +192,17 @@ def test_scanner_layer_has_no_description():
     assert c["exes"] == ["sick_safetyscanners2_node"] and c["includes"] == []
 
 
+def test_scanner_driver_respawns():
+    """It aborts when the scanner is unreachable at start; a cable plugged in later must recover."""
+    ld = get_launch_description_from_any_launch_file(
+        os.path.join(get_package_share_directory("amr_bringup"), "launch", "scanner.launch.py")
+    )
+    nodes = [e for e in ld.entities if isinstance(e, Node)]
+    # launch keeps these private (ExecuteLocal); no public getter in Humble
+    assert len(nodes) == 1 and nodes[0]._ExecuteLocal__respawn is True
+    assert nodes[0]._ExecuteLocal__respawn_delay > 0
+
+
 def test_sim_base_is_fakes_plus_estimation_and_one_description():
     c = compose("base.launch.py", real="false")
     assert set(c["exes"]) == SIM_EXES | BASE_EXES
@@ -159,6 +218,20 @@ def test_real_base_composes_hardware_once(monkeypatch):
     assert c["exes"].count("robot_state_publisher") == 1  # the scanner include no longer brings a second one
     assert c["includes"].count("scanner.launch.py") == 1
     assert "web_node" not in c["exes"]
+
+
+def test_qr_real_base_is_one_qr_base_node_with_the_scan_filters(monkeypatch):
+    """AMR QR (platform qr_analog): qr_base_node owns drives, encoders, IMU and panel - no
+    drive_node, panel_node or rfid_node - and the mux does not gate on its scanner fields."""
+    _use_profile(monkeypatch, "amr-qr-01")
+    monkeypatch.setenv("ROS_DOMAIN_ID", str(domains.VEHICLE))
+    c = compose("base.launch.py", real="true", panel="real")
+    assert set(c["exes"]) == {"qr_base_node", "sick_safetyscanners2_node"} | BASE_EXES
+    assert c["exes"].count("robot_state_publisher") == 1
+    gate = [_param_dict(p) for p in c["params"]["scan_gate_node"] if isinstance(p, dict)]
+    assert any(p.get("despeckle") is True and p.get("robot_fixed") is True for p in gate)
+    mux = [_param_dict(p) for p in c["params"]["cmd_mux_kinematics_node"] if isinstance(p, dict)]
+    assert any(p.get("field_source") == "assume_clear" for p in mux)
 
 
 def test_wrappers_compose_base_web_and_exactly_one_layer(tmp_path):

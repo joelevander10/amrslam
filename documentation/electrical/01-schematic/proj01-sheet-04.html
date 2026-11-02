@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PROJ01 Sheet 4</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../kit/jis-sheet.css">
+</head>
+<body>
+
+<nav class="toolbar" aria-label="Export">
+  <strong>PROJ01 · Sheet 4 / «XX» · 24V power distribution (part 2)</strong>
+  <button type="button" class="primary" id="png">Download PNG</button>
+  <button type="button" id="pdf">Print / PDF</button>
+  <span class="status" id="status">A4 portrait · vector</span>
+</nav>
+
+<main class="wrap"><div class="sheet" id="sheet"></div></main>
+
+<script src="https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/dist/html-to-image.js"></script>
+<script src="../kit/jis-sheet.js"></script>
+<script>
+  // source: input-sketch/proj01/page04.jpg (photographed rotated 90° CCW); part 2 of page03
+  const META = {
+    customer: '«CUSTOMER»', designer: '«DESIGNER»',
+    content: '24V POWER DISTRIBUTION (PART 2)',
+    approval: '«NAME»', checked: '«NAME»', designed: '«NAME»', drawn: '«NAME»',
+    date: '«DD/MM/YY»', scale: '',
+    title: 'ELECTRIC DIAGRAM',
+    model: '«MODEL»', dwg: '«-00-00-»', sheet: 4, of: '«XX»',
+    note: '',
+    refs: [],
+  };
+
+  // loads fed straight from 1P24 / 1N24 through a terminal pair
+  const LOADS = [
+    { row: 2,  tb: ['TB15', 'TB16'], wout: ['DISPLAY SPECIAL POWER CABLE', ''],
+      name: ['DISPLAY', 'BARREL JACK'] },
+    { row: 5,  tb: ['TB17', 'TB18'], wout: ['MLSE POWER & COMM CABLE', ''],
+      name: ['LINE SENSOR 01', 'SICK MLSE'] },
+  ];
+
+  // fans share one terminal pair and are daisy-chained
+  const FANS = { tb: ['TB19', 'TB20'], rows: [8, 10.5, 13],
+    names: [['FAN 01', 'NMB-MAT'], ['FAN 02', 'NMB-MAT'], ['FAN 03', 'NMB-MAT']] };
+
+  // motor-driver network supply (driver power itself is on sheet 02)
+  const DRIVERS = [
+    { row: 15, tb: ['TB21', 'TB22'], net: ['NET-VIN-01', 'NET-GND-01'], name: ['DRIVER 01', 'BLVD-KRD'] },
+    { row: 18, tb: ['TB23', 'TB24'], net: ['NET-VIN-02', 'NET-GND-02'], name: ['DRIVER 02', 'BLVD-KRD'] },
+  ];
+
+  JIS.render(document.getElementById('sheet'), {
+    meta: META,
+    file: 'PROJ01-04',
+    textScale: 1.25,          // drawing text +25% (frame and title block unchanged)
+    label: '24 V power distribution part 2: 1P24/1N24 from sheet 03 to the display, line sensor, cooling fans and driver network supply.',
+    draw(s) {
+      const bus = [23.8, 29.8];              // 1P24 / 1N24
+      const TBX = 72, DX = 140, DW = 36;
+      const pair = r => [s.row(r), s.row(r) + 5];
+
+      // terminal block terminal: circle with slash (no kit symbol)
+      const tb = (x, y, name) => {
+        s.ring(x, y, 0.8);
+        s.line(x - 1.2, y + 1.2, x + 1.2, y - 1.2, 0.2);
+        s.text(x, y - 1.6, name, { size: 1.7, anchor: 'middle' });
+      };
+      // device box with terminals on its left edge
+      // w = box width; with terminal names the device name is centred in the space right of them
+      const box = (ys, t, name, w = DW) => {
+        s.rect(DX, ys[0] - 5, w, ys[1] - ys[0] + 10, 0.3);
+        ys.forEach((y, i) => { s.dot(DX, y); if (t) s.text(DX + 1.5, y + 0.7, t[i], { size: 1.9 }); });
+        const cx = t ? DX + 17 + (w - 17) / 2 : DX + w / 2;
+        name.forEach((n, i) => s.text(cx, ys[0] + 1.2 + 4.2 * i, n,
+          { size: 2.2, weight: i === 0 ? 600 : 500, anchor: 'middle' }));
+      };
+      // conductors from the bus with tap dots
+      const tap = ys => ys.forEach((y, i) => { s.line(bus[i], y, DX, y); s.dot(bus[i], y); });
+      // wire labels (cable markers): bus → TB and TB → device; optional labels at the device end
+      const NET = ['1P24', '1N24'];
+      const wl = (ys, end) => ys.forEach((y, i) => {
+        s.text(56, y - 0.6, NET[i], { size: 1.9 });
+        s.text(TBX + 4, y - 0.6, NET[i], { size: 1.9 });
+        if (end) s.text(DX - 1.5, y - 0.6, end[i], { size: 1.9, anchor: 'end' });
+      });
+
+      s.bus(bus, 23, JIS.G.gridY, ['1P24', '1N24'], 'tee');
+      bus.forEach(x => {
+        s.line(x - 0.9, 23, x + 0.9, 23, 0.3);
+        s.text(x, 19.4, '0303', { size: 1.5, anchor: 'middle' });
+      });
+
+      LOADS.forEach(l => { const ys = pair(l.row); tap(ys); box(ys, null, l.name); wl(ys); });
+
+      // fans: + drop at x 112 and − drop at x 118 feed each fan (crossings are not connected)
+      const fy = FANS.rows.map(pair), dropP = 112, dropN = 118, last = fy.length - 1;
+      tap(fy[0]);
+      s.line(dropP, fy[0][0], dropP, fy[last][0]);
+      s.line(dropN, fy[0][1], dropN, fy[last][1]);
+      fy.forEach((ys, k) => {
+        if (k > 0) { s.line(dropP, ys[0], DX, ys[0]); s.line(dropN, ys[1], DX, ys[1]); }
+        if (k < last) { s.dot(dropP, ys[0]); s.dot(dropN, ys[1]); }
+        box(ys, null, FANS.names[k]);
+        ys.forEach((y, i) => s.text(DX - 1.5, y - 0.6, NET[i], { size: 1.9, anchor: 'end' }));
+      });
+      wl(fy[0]);
+
+      DRIVERS.forEach(d => {
+        const ys = pair(d.row);
+        tap(ys);
+        box(ys, ['20/NET-VIN', '21/NET-GND'], d.name, 46);
+        wl(ys, d.net);
+      });
+
+      // cable marks and terminals last, so they cut the conductors
+      LOADS.forEach(l => {
+        const ys = pair(l.row);
+        s.wire(46, ys, 'AWG22', 'BLUE');
+        s.wire(94, ys, l.wout[0], l.wout[1]);
+        ys.forEach((y, i) => tb(TBX, y, l.tb[i]));
+      });
+      s.wire(46, fy[0], 'AWG22', 'BLUE');
+      fy[0].forEach((y, i) => tb(TBX, y, FANS.tb[i]));
+      fy.forEach(ys => s.wire(124, ys, 'FAN CABLE', ''));
+      DRIVERS.forEach(d => {
+        const ys = pair(d.row);
+        s.wire(46, ys, 'AWG22', 'BLUE');
+        s.wire(100, ys, 'AWG23', 'BLUE');
+        ys.forEach((y, i) => tb(TBX, y, d.tb[i]));
+      });
+    },
+  });
+</script>
+</body>
+</html>

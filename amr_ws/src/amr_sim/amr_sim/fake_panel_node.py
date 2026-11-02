@@ -14,15 +14,15 @@ The real adapter (T12) wraps core/panel.PanelScan over drivers/dio.DioLink and
 publishes the same message.
 """
 
+import time
+
 import rclpy
+from agv_core import panel as panel_core  # repo module: core/panel.py
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from std_srvs.srv import SetBool, Trigger
 
-from amr_base import agv_repo  # noqa: F401 - puts the agv_can repo on sys.path
 from amr_interfaces.msg import PanelState
-
-import panel as panel_core  # repo module: core/panel.py
 
 PENDANT_PARAMS = ("pendant_fwd", "pendant_rvs", "pendant_left", "pendant_right")
 
@@ -40,6 +40,10 @@ class FakePanel(Node):
         self._start_pending = False
         self._reset_pending = False
         self._pub = self.create_publisher(PanelState, "/amr/panel_state", 10)
+        # 10 Hz copy for displays (CPU, 2026-10-02): the web shows the selector at 2 Hz.
+        # Edges ride only the full topic - nothing that acts on Start/Reset reads this one.
+        self._pub_ui = self.create_publisher(PanelState, "/amr/panel_state_ui", 10)
+        self._ui_t = 0.0
         self.create_service(SetBool, "/sim/panel/set_mode", self._set_mode)
         self.create_service(SetBool, "/sim/panel/set_valid", self._set_valid)
         self.create_service(Trigger, "/sim/panel/press_start", self._press_start)
@@ -83,6 +87,9 @@ class FakePanel(Node):
         levels = [bool(self.get_parameter(n).value) for n in PENDANT_PARAMS]
         m.pendant_fwd, m.pendant_rvs, m.pendant_left, m.pendant_right = panel_core.pendant_intent(*levels)
         self._pub.publish(m)
+        if time.monotonic() - self._ui_t >= 0.1:
+            self._ui_t = time.monotonic()
+            self._pub_ui.publish(m)
 
 
 def main(args=None) -> None:

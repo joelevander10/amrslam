@@ -28,7 +28,7 @@ from launch.conditions import IfCondition, LaunchConfigurationEquals
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
-from amr_bringup import domains
+from amr_bringup import domains, scanner_fields
 from amr_bringup.launch_helpers import default_world, include, required
 
 
@@ -70,10 +70,12 @@ def _compose(context):
     supervised = cfg("supervised").perform(context).lower() == "true"
     gate = {"require_supervisor": supervised}
 
-    from amr_base.agv_repo import config  # noqa: PLC0415 - the vehicle profile (AGV_PROFILE)
+    from agv_core import config  # noqa: PLC0415 - the vehicle profile (AGV_PROFILE)
 
+    qr = config.PLATFORM == config.PLATFORM_QR
+    state_dir = os.environ.get("AMR_STATE_DIR", os.path.expanduser("~/.amr"))
     actions = [include("amr_description", "description.launch.py")]
-    if real and config.PLATFORM == config.PLATFORM_QR:
+    if real and qr:
         actions += _qr_base(cfg, context, gate)
         if cfg("lidar").perform(context).lower() == "true":
             actions.append(include("amr_bringup", "scanner.launch.py"))
@@ -118,6 +120,18 @@ def _compose(context):
         )
         if cfg("lidar").perform(context).lower() == "true":
             actions.append(include("amr_bringup", "scanner.launch.py"))
+        # RFID reader (2026-10-02): optional - a missing reader leaves plain line
+        # following and SLAM untouched; respawns so a late cable recovers by itself.
+        actions.append(
+            Node(
+                package="amr_base",
+                executable="rfid_node",
+                name="rfid_node",
+                output="screen",
+                respawn=True,
+                respawn_delay=5.0,
+            )
+        )
     else:
         actions += required(
             Node(
@@ -157,18 +171,29 @@ def _compose(context):
             executable="cmd_mux_kinematics_node",
             name="cmd_mux_kinematics",
             output="screen",
-            # Gentle autonomous starts on the vehicle (3.3 s to 0.5 m/s, 0.85 s to 0.34 rad/s); stops
+            # Autonomous starts at 0.3 m/s^2 (2026-10-02, was 0.15): 2.0 s to the 0.60 trackless
+            # speed, 2.5 s to the 0.75 tracked cruise; 0.85 s to 0.34 rad/s. Stops
             # at the hardware-class 0.5 m/s^2 / 1.0 rad/s^2, stated explicitly: leaving delta_max at
             # its "same as alpha_max" default made every Spin coast 2.6 deg past its target
             # (0.19 rad/s stopped at 0.4 rad/s^2, vehicle 2026-09-17).
             # Manual (pendant / browser jog, 2026-09-18): 0.5 m/s, S-curve to 0.3 m/s^2 with
-            # 1.0 m/s^3 (1.9 s to full speed); driving + turning arcs with the slow wheel at 75 %
+            # 1.0 m/s^3 (1.9 s to full speed); driving + turning arcs with the slow wheel at 66 %
             # of the fast one; a spin in place stays at 0.3 rad/s.
             parameters=[
                 {
                     **gate,
                     "teleop_enabled": not supervised,
-                    "a_max": 0.15,
+                    # Scanner fields gate AUTO (2026-10-02). The sim has no scanner, so there
+                    # and ONLY there the fields are assumed clear.
+                    # The AMR QR (2026-09-24): its nanoScan3 configuration came from the old
+                    # controller, which never used the output paths, and they read "occupied"
+                    # with the area empty - every run held on "lidar stop". Until the field set
+                    # is verified in Safety Designer and written to scanner_fields.yaml, the
+                    # QR runs on Nav2's own collision check from the (filtered) scan.
+                    "field_source": "scanner" if real and not qr else "assume_clear",
+                    # path indices, polarity, the x0.5 factor and the warning-2 stop distance: config/scanner_fields.yaml
+                    **scanner_fields.mux_params(scanner_fields.load()),
+                    "a_max": 0.3,
                     "alpha_max": 0.4,
                     "d_max": 0.5,
                     "delta_max": 1.0,
@@ -176,7 +201,7 @@ def _compose(context):
                     "manual_jerk": 1.0,
                     "pendant_v_m_s": 0.5,
                     "pendant_w_rad_s": 0.39,
-                    "pendant_turn_ratio": 0.75,
+                    "pendant_turn_ratio": 0.66,  # manual corner: inner wheel 66 % of the outer
                     "survey_w_max_rad_s": 0.27,  # manual spin cap while surveying (pendant + jog)
                 }
             ],
@@ -199,22 +224,15 @@ def _compose(context):
             executable="scan_gate_node",
             name="scan_gate",
             output="screen",
-            # the AMR QR's nanoScan3 leaves lone returns in open space (2026-09-24 surveys)
+            # AMR QR scan filters (2026-09-24): lone returns, returns that turn with the vehicle
+            # (its body, a bracket, a window scratch - learnt, kept in robot_fixed.yaml) and
+            # the learnt scan mask of the scratched window (scan_mask_learn --write)
             parameters=[
                 {
-                    "despeckle": config.PLATFORM == config.PLATFORM_QR,
-                    # returns that turn with the vehicle (its body, a bracket, a window scratch)
-                    "robot_fixed": config.PLATFORM == config.PLATFORM_QR,
-                    "robot_fixed_file": os.path.join(
-                        os.environ.get("AMR_STATE_DIR", os.path.expanduser("~/.amr")), "robot_fixed.yaml"
-                    ),
-                    # phantom beams of this scanner's scratched window, learnt on the robot
-                    # (ros2 run amr_localization scan_mask_learn --write); absent = no mask
-                    "mask_file": os.path.join(
-                        os.environ.get("AMR_STATE_DIR", os.path.expanduser("~/.amr")), "scan_mask.yaml"
-                    )
-                    if config.PLATFORM == config.PLATFORM_QR
-                    else "",
+                    "despeckle": qr,
+                    "robot_fixed": qr,
+                    "robot_fixed_file": os.path.join(state_dir, "robot_fixed.yaml"),
+                    "mask_file": os.path.join(state_dir, "scan_mask.yaml") if qr else "",
                 }
             ],
         ),

@@ -8,10 +8,22 @@ odometry, EKF, IMU bias, executor, supervisor and web run unchanged:
     WitMotion serial 0x52/0x53        -> /imu/data_raw (sensor_msgs/Imu, yaw rate)
     CK5162E inputs (E-stop/START/STOP)-> /amr/panel_state (virtual selector, qr_panel)
                                        -> /amr/io (IoImage, 5 Hz)
-    arm / fault / E-stop state        -> /drives/status (DriveStatus, 10 Hz)
+    arm / power / fault / E-stop      -> /drives/status (DriveStatus, 10 Hz)
+    5 Hz / 10 Hz display copies       -> /wheel_states_ui, /amr/panel_state_ui
+    /amr/run_state, /amr/line_state   -> drive_power asks (amr_base.arm_policy)
     /diagnostics (1 Hz), /amr/events (transitions only)
 
 Services (std_srvs/Trigger): /drives/arm, /drives/disarm, /drives/ack_fault.
+
+Drive power (gvievo 2026-10-08 power model, read in QR terms - qr_motor.DriveLogic):
+    standby   armed but no power wanted: 0 V, wheels brought to rest, brakes HELD
+    armed     power wanted (arm_policy): the wheel loops drive
+    disarmed  /drives/disarm = PUSH MODE: 0 V, coils low, brakes RELEASED
+arm_policy decides power: under MANUAL always (the QR panel has no Manual Arm input, so
+PanelState.manual_arm is the panel's validity), under AUTO only while a run asks for it
+(RunState.drive_power, from the pre-move warning after Start until the run ends).
+Push mode is reported as link "standby" with both states "Ready to switch on" - power off
+on purpose, not an emergency - and the reason in power_reason.
 
 Threads - each device has exactly one:
     dio      drivers/dio.DioLink: Modbus scan of the CK5162E, expiring coil claims
@@ -39,6 +51,12 @@ import threading
 import time
 
 import rclpy
+from agv_core import (
+    config,
+    ownerlock,  # noqa: E402
+)
+from agv_core.drivers import dio  # noqa: E402
+from agv_core.drivers.canbus.verify_drivers import open_bus  # noqa: E402
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 from rclpy.duration import Duration
 from rclpy.executors import ExternalShutdownException
@@ -47,9 +65,7 @@ from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import Imu
 from std_srvs.srv import Trigger
 
-from amr_base import canopen, gating, qr_motor
-from amr_base.agv_repo import config
-from amr_base.legacy_guard import refuse_if_legacy_running
+from amr_base import arm_policy, canopen, gating, qr_motor
 from amr_base.qr_analog import AnalogOut
 from amr_base.qr_encoders import EncoderPair
 from amr_base.qr_panel import VirtualSelector
@@ -59,20 +75,21 @@ from amr_interfaces.msg import (
     DriveStatus,
     Event,
     IoImage,
+    LineState,
     PanelState,
+    RunState,
     WheelStates,
     WheelVelocities,
 )
-
-import dio  # noqa: E402  (repo module: drivers/dio.py)
-import ownerlock  # noqa: E402
-from verify_drivers import open_bus  # noqa: E402
 
 SENSOR_DATA = QoSProfile(
     depth=5, reliability=QoSReliabilityPolicy.BEST_EFFORT, durability=QoSDurabilityPolicy.VOLATILE
 )
 RELIABLE_1 = QoSProfile(
     depth=1, reliability=QoSReliabilityPolicy.RELIABLE, durability=QoSDurabilityPolicy.VOLATILE
+)
+LATCHED = QoSProfile(
+    depth=1, reliability=QoSReliabilityPolicy.RELIABLE, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL
 )
 BIG = 1e6
 IO_FRESH_S = 0.3  # a DIO image or analog write older than this is not a live I/O link
@@ -120,6 +137,8 @@ class QrBaseNode(Node):
         dp("gyro_var", 1e-5)  # (rad/s)^2, placeholder until measured parked (imu_bias logs sigma)
         dp("imu_frame", "imu_frame")
         dp("can_retry_s", 2.0)
+        dp("power_panel_timeout_s", 1.0)  # arm_policy: a panel image older than this = no power
+        dp("power_ask_timeout_s", 2.5)  # arm_policy: a LineState/RunState request older than this
         p = self.get_parameter
         self.period = 1.0 / float(p("rate_hz").value)
         self.cmd_timeout = float(p("cmd_timeout_s").value)
@@ -132,6 +151,13 @@ class QrBaseNode(Node):
             require_supervisor=bool(p("require_supervisor").value),
             lease_timeout_s=float(p("lease_timeout_s").value),
         )
+        self._power_params = arm_policy.Params(
+            panel_timeout_s=float(p("power_panel_timeout_s").value),
+            ask_timeout_s=float(p("power_ask_timeout_s").value),
+        )
+        self._asks: dict[str, arm_policy.Ask] = {}
+        self._power: tuple[bool, str] = (False, "starting")
+        self._ui_wheels_t = self._ui_panel_t = 0.0
 
         lp = loop_params()
         self.logic = qr_motor.DriveLogic(
@@ -195,6 +221,9 @@ class QrBaseNode(Node):
         self._last_out: qr_motor.Output | None = None
 
         self._pub_wheels = self.create_publisher(WheelStates, "/wheel_states", SENSOR_DATA)
+        # display copies, as drive_node / panel_node publish them (the web reads these)
+        self._pub_wheels_ui = self.create_publisher(WheelStates, "/wheel_states_ui", SENSOR_DATA)
+        self._pub_panel_ui = self.create_publisher(PanelState, "/amr/panel_state_ui", 10)
         self._pub_status = self.create_publisher(DriveStatus, "/drives/status", RELIABLE_1)
         self._pub_diag = self.create_publisher(DiagnosticArray, "/diagnostics", 5)
         self._pub_event = self.create_publisher(Event, "/amr/events", 50)
@@ -203,6 +232,8 @@ class QrBaseNode(Node):
         self._pub_io = self.create_publisher(IoImage, "/amr/io", 5)
         self.create_subscription(WheelVelocities, "/cmd_wheel_vel", self._on_cmd, RELIABLE_1)
         self.create_subscription(ControlLease, "/amr/control_lease", self._on_lease, RELIABLE_1)
+        self.create_subscription(LineState, "/amr/line_state", lambda m: self._on_ask("line", m), LATCHED)
+        self.create_subscription(RunState, "/amr/run_state", lambda m: self._on_ask("run", m), LATCHED)
         self.create_service(Trigger, "/drives/arm", lambda q, r: self._request("arm", r))
         self.create_service(Trigger, "/drives/disarm", lambda q, r: self._request("disarm", r))
         self.create_service(Trigger, "/drives/ack_fault", lambda q, r: self._request("ack", r))
@@ -256,6 +287,14 @@ class QrBaseNode(Node):
                 self._bad_cmds += 1
         if not ok:
             self.get_logger().warn(f"/cmd_wheel_vel not finite ({wl}, {wr}): zero", throttle_duration_sec=1.0)
+
+    def _on_ask(self, source: str, msg) -> None:
+        """A layer's drive_power, timed by its own stamp: a latched message from a layer that
+        has since died arrives fresh but is not (arm_policy.Ask)."""
+        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        age = self.get_clock().now().nanoseconds * 1e-9 - stamp if stamp > 0 else BIG
+        with self._lock:
+            self._asks[source] = arm_policy.Ask(source, time.monotonic() - age, bool(msg.drive_power))
 
     def _request(self, what: str, res):
         done, box = threading.Event(), {}
@@ -404,7 +443,18 @@ class QrBaseNode(Node):
                 if io_n == 0:
                     self._publish_io(snap)
 
-                out = self.logic.tick(self._inputs(now, snap, frame))
+                with self._lock:
+                    asks = tuple(self._asks.values())
+                power = arm_policy.want_power(
+                    now,
+                    arm_policy.Panel(now, frame.valid, frame.mode_auto, frame.valid),
+                    asks,
+                    self._power_params,
+                )
+                if power[0] != self._power[0]:
+                    self.get_logger().info(f"power {'wanted' if power[0] else 'not wanted'}: {power[1]}")
+                self._power = power
+                out = self.logic.tick(self._inputs(now, snap, frame, power[0]))
                 if out.event:
                     lvl = Event.ERROR if "FAULT" in out.event else Event.INFO
                     # one severity per call site: rclpy refuses to change it between calls
@@ -438,7 +488,7 @@ class QrBaseNode(Node):
             finally:
                 done.set()
 
-    def _inputs(self, now: float, snap: dict, frame) -> qr_motor.Inputs:
+    def _inputs(self, now: float, snap: dict, frame, power: bool = True) -> qr_motor.Inputs:
         with self._lock:
             cmd, gen, lease = self._cmd, self._cmd_gen, self._lease
         reason = gating.drive_gate(now, lease, gen, self._gate)
@@ -477,6 +527,7 @@ class QrBaseNode(Node):
             left_coils_low=coils_low("left"),
             right_coils_low=coils_low("right"),
             io_ok=dio_ok and ao_ok,
+            power=power,
             # No trusted panel image = E-stop state unknown = treated as pressed.
             estop=frame.estop or not frame.valid,
         )
@@ -535,7 +586,13 @@ class QrBaseNode(Node):
         m.reset_edge = frame.reset_edge
         m.seq = frame.seq
         m.pendant_fwd, m.pendant_rvs, m.pendant_left, m.pendant_right = frame.pendant
+        # No Manual Arm input on the QR panel: MANUAL is armed whenever the image is trusted.
+        m.manual_arm = bool(frame.valid)
         self._safe_publish(self._pub_panel, m)
+        now = time.monotonic()
+        if now - self._ui_panel_t >= 0.1:
+            self._ui_panel_t = now
+            self._safe_publish(self._pub_panel_ui, m)
 
     def _publish_io(self, snap: dict) -> None:
         m = IoImage()
@@ -585,6 +642,9 @@ class QrBaseNode(Node):
             m.counts_valid = bool(m.left_valid and m.right_valid)
         m.counts_per_wheel_rev = float(cpr)
         self._safe_publish(self._pub_wheels, m)
+        if now - self._ui_wheels_t >= 0.2:
+            self._ui_wheels_t = now
+            self._safe_publish(self._pub_wheels_ui, m)
 
     @staticmethod
     def _wheel_text(w: qr_motor.WheelOut) -> str:
@@ -595,15 +655,26 @@ class QrBaseNode(Node):
     def _publish_status(self, out: qr_motor.Output) -> None:
         m = DriveStatus()
         m.header.stamp = self.get_clock().now().to_msg()
+        link, reason = out.link, self._power[1]
+        push = out.state == qr_motor.DISARMED and not self.logic.want_armed
         if out.estop:
             m.left_state = m.right_state = "E-STOP"
         elif out.state == qr_motor.FAULT:
             m.left_state = m.right_state = f"FAULT: {out.fault_reason}"
+        elif push:
+            # power off on purpose (readiness.drives_ok: standby, not an emergency)
+            m.left_state = m.right_state = "Ready to switch on"
+            link, reason = "standby", "push mode: brakes released (Brakes ON to drive)"
         elif out.state == qr_motor.DISARMED:
             m.left_state = m.right_state = "disarmed"
+        elif link == "standby":
+            m.left_state = m.right_state = "Switched on"  # brakes held, nothing driven
         else:
             m.left_state, m.right_state = self._wheel_text(out.left), self._wheel_text(out.right)
         m.operational = bool(out.operational)
+        m.link_state = link
+        m.power_wanted = bool(self._power[0]) and not push
+        m.power_reason = reason
         self._safe_publish(self._pub_status, m)
 
     def _publish_diagnostics(self, out: qr_motor.Output, snap: dict) -> None:
@@ -694,7 +765,6 @@ class QrBaseNode(Node):
 
 
 def main(args=None) -> None:
-    refuse_if_legacy_running("qr_base_node")
     rclpy.init(args=args)
     node = QrBaseNode()
     try:

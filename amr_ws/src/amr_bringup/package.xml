@@ -20,6 +20,7 @@
   <exec_depend>robot_localization</exec_depend>
   <exec_depend>slam_toolbox</exec_depend>
   <exec_depend>amr_mission</exec_depend>
+  <exec_depend>amr_line</exec_depend>
   <exec_depend>amr_maps</exec_depend>
   <exec_depend>amr_web</exec_depend>
   <exec_depend>amr_navigation</exec_depend>

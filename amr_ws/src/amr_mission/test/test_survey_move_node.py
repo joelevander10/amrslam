@@ -88,7 +88,7 @@ def test_refused_without_manual_authority(kw, why):
 
 def test_bad_values_are_refused():
     n = node()
-    assert not request(n, "rotate", 30).accepted
+    assert not request(n, "rotate", 60).accepted
     assert not request(n, "straight", 12.0).accepted
 
 

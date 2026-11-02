@@ -1,82 +1,56 @@
-# AMR QR di stack SLAM — profil `amr-qr-01`
+# AMR QR di stack gvievo-01 — profil `amr-qr-01`
 
-Stack SLAM ini (supervisor, slam_toolbox, AMCL, Nav2 RPP/Spin, route executor, web
-`:5001`) sekarang bisa jalan di **hardware AMR QR**. Yang diganti cuma layer hardware.
-Semua node di atas `/cmd_wheel_vel` / `/wheel_states` / `/imu/data_raw` /
-`/amr/panel_state` tetap sama.
+Repo ini = **kode gvievo-01 terbaru (gvievo-01-gvievo-main, 2026-10-23)** + platform AMR QR.
+Supervisor, slam_toolbox, AMCL, Nav2 RPP/Spin, route executor, web `:5001` (view operator /
+engineer), model daya drive (standby/armed), pre-move warning, "continue survey", dan semua
+perbaikan gvievo ikut. Yang diganti hanya layer hardware: semua node di atas
+`/cmd_wheel_vel` / `/wheel_states` / `/imu/data_raw` / `/amr/panel_state` /
+`/drives/status` tetap sama.
 
-Kendaraan dipilih lewat `AGV_PROFILE`. `agv-01` (gvievo-01) tidak berubah perilakunya.
+Kendaraan dipilih lewat `AGV_PROFILE` (`amr.env` dan `env/vehicle.sh` di repo ini default
+`amr-qr-01`). `agv-01` (gvievo-01) tetap bisa dipakai dan perilakunya tidak berubah.
 
-Instalasi langkah demi langkah: [INSTALL_AMR_QR.md](INSTALL_AMR_QR.md). Operasi harian (map, route, run): [OPERATE_AMR_QR.md](OPERATE_AMR_QR.md).
+Instalasi langkah demi langkah (dan update dari kode lama, Part U):
+[INSTALL_AMR_QR.md](INSTALL_AMR_QR.md). Operasi harian: [OPERATE_AMR_QR.md](OPERATE_AMR_QR.md).
 
 ---
 
-## 1. Apa yang berubah
+## 1. Apa yang berbeda dari gvievo-01
 
 | Area | gvievo-01 (`agv-01`) | AMR QR (`amr-qr-01`) |
 |---|---|---|
-| Node hardware | `drive_node` (CAN) + `panel_node` (DIO) | **`qr_base_node`**: satu owner untuk semuanya |
-| Motor | BLV-R CiA 402, velocity loop di driver | Driver BLDC analog: **CKDA08ETH** 0–10 V + coil FWD/REV/BRK di **CK5162E**. Velocity loop **PI + feedforward di software** (50 Hz) |
-| Encoder | 6064h di drive (sisi motor, 1:30) | **Encoder CANopen absolut di as roda** (node 1/2, 0x6004, 24-bit, 8192/putaran), TPDO 20 ms atau SDO poll |
-| IMU | MLS di CAN | **WitMotion serial** (`/dev/ttyUSB0`). Yaw rate dari paket 0x52, fallback turunan sudut 0x53 |
-| Panel | Selector AUTO/MANUAL fisik + Start + Reset | **Selector virtual** dari START/STOP + E-stop DI0 |
-| Lidar | nanoScan3, `sick_safetyscanners2` | sama (config `nanoscan3.amr-qr-01.yaml`, **IP perlu diverifikasi**) |
-| Geometri | track 0.487, lidar 0.964 m | track **0.37652**, lidar **0.81 m**, body **1.18 × 0.675**, IMU di pusat as |
-| Distro | Humble | **Jazzy** (Ubuntu 24.04). Script deploy auto-deteksi |
+| Produk | `tracked: null` (tape + SLAM) | `tracked: false`: **SLAM saja** (tanpa tape, MLS, RFID) |
+| Node hardware | `drive_node` (CAN) + `panel_node` (DIO) + `rfid_node` | **`qr_base_node`**: satu owner untuk semuanya |
+| Motor | BLV-R CiA 402, velocity loop di driver | Driver BLDC analog: **CKDA08ETH** 0–10 V + coil FWD/REV/BRK di **CK5162E**. Feedforward terukur (970 rpm/V) + trim PI pelan di software, coast saat perintah ~0 |
+| Daya drive | Standby/armed lewat `arm_policy`, Manual Arm DI08 | Sama (`arm_policy`), dibaca QR: MANUAL selalu armed (tidak ada saklar Manual Arm); AUTO standby (0 V, **rem ditahan**) sampai run minta daya. `/drives/disarm` = **push mode** (rem dilepas) |
+| Encoder | 6064h di drive | **Encoder CANopen absolut di as roda** (node 1/2, 0x6004, 8192/putaran), range wrap dipelajari dari data |
+| IMU | MLS di CAN | **WitMotion serial** `/dev/amr_imu`, 115200 baud, paket 0x52 |
+| Panel | Selector AUTO/MANUAL fisik + Start + Reset + pendant | **Selector virtual** dari START/STOP + E-stop DI0 |
+| Field scanner | Mux + executor berhenti dari `/output_paths` | **Tidak dipakai** (field terbaca "occupied" padahal kosong). Obstacle hanya lewat collision check Nav2 + E-stop |
+| Filter lidar | — | despeckle, mask goresan jendela (`scan_mask_learn`), filter "ikut berputar dengan robot" (`robot_fixed`), abaikan < 0.5 m di costmap & SLAM |
+| Geometri | track 0.487, lidar 0.964 m | track **0.37652**, lidar **0.81 m**, body **1.18 × 0.675** |
+| Distro | Humble (Ubuntu 22.04) | **Jazzy** (Ubuntu 24.04). Script deploy auto-deteksi; slam_toolbox lifecycle & plugin Spin mengikuti distro |
 
-### File baru / diubah
+### File AMR QR di repo ini
 
 | File | Isi |
 |---|---|
-| `profiles/amr-qr-01.json` | Profil kendaraan, termasuk section baru `qr_base` |
-| `config.py` | Key `platform` (`blvr_canopen` \| `qr_analog`), schema + validasi `qr_base`, tuning notes |
-| `amr_base/qr_base_node.py` | Node ROS: interface identik dengan drive_node + panel_node |
-| `amr_base/qr_motor.py` | Wheel loop: interlock arah, FF+PI, brake, latch runaway/stall/moving-at-rest, arm/fault/E-stop |
-| `amr_base/qr_encoders.py` | Unwrap 24-bit, estimasi kecepatan, TPDO/SDO |
-| `amr_base/wit_imu.py` | Parser WitMotion + sumber yaw rate |
-| `amr_base/qr_panel.py` | Selector virtual (debounce, anti-tie-down) |
-| `amr_base/qr_analog.py` | Penulis register CKDA08ETH |
-| `amr_base/qr_calibrate.py` | Tool bench: `io`, `enc`, `imu`, `breakaway`, `ff` |
-| `amr_description/config/vehicle.amr-qr-01.yaml`, `footprint.amr-qr-01.yaml`, `amr_description/vehicle.py` | Geometri per kendaraan (URDF, footprint) |
-| `amr_bringup/config/nanoscan3.amr-qr-01.yaml` | Scanner AMR QR |
-| `base.launch.py`, `scanner.launch.py`, `description.launch.py`, `navigation_layer.launch.py` | Pilih hardware/geometri sesuai profil. Plugin Spin mengikuti `ROS_DISTRO` |
-| `deploy/*.sh`, `amr.env`, `env/vehicle.sh`, `deploy/qr/*` | Deteksi Jazzy/Humble, `AGV_PROFILE`, slcan `can0`, udev |
-| `main.py`, `legacy_guard.py`, `ownerlock.py` | Controller lama menolak jalan di profil QR. Node menolak jalan kalau `app.py` QR masih aktif. Tambah lock `imu` |
+| `profiles/amr-qr-01.json` | Profil kendaraan: `platform: qr_analog`, `tracked: false`, section `qr_base` |
+| `agv_core/config.py` | Key `platform`, schema + validasi `qr_base`, tuning notes `platform.*` / `qr_base.*` |
+| `agv_core/ownerlock.py` | Lock `imu` |
+| `amr_base/qr_base_node.py` | Node ROS: interface sama dengan drive_node + panel_node (termasuk `link_state`, `power_wanted`, `manual_arm`, topik `_ui`) |
+| `amr_base/qr_motor.py` | Wheel loop: interlock arah, FF + PI, coast, rem, latch runaway/stall, standby/armed/push |
+| `amr_base/qr_encoders.py`, `wit_imu.py`, `qr_panel.py`, `qr_analog.py` | Encoder, IMU, selector virtual, output analog |
+| `amr_base/qr_calibrate.py`, `wasd_teleop.py` | Tool bench (`io`, `enc`, `imu`, `imu-setup`, `breakaway`, `ff`, `brake-off`) dan teleop WASD |
+| `amr_localization/speckle.py`, `scan_mask*.py`, `robot_fixed.py` | Filter scan di `scan_gate_node` |
+| `amr_description/vehicle.py`, `config/*.amr-qr-01.yaml` | Geometri per kendaraan (URDF, footprint) |
+| `amr_bringup/config/nanoscan3.amr-qr-01.yaml`, `slam_mapping.amr-qr-01.yaml` | Scanner 192.168.1.2 (host_ip auto) dan override SLAM |
+| `base/scanner/mapping_layer/navigation_layer.launch.py` | Pilih hardware & config sesuai profil, lifecycle slam_toolbox di Jazzy, start gate 0.20 m / 10°, field scanner off |
+| `amr_web`: halaman Manual (push mode), Maps (cek Map id), log alasan run, live view `/scan_gated` | Web |
+| `deploy/*` (user `amrslam`, `AGV_PROFILE=amr-qr-01`), `deploy/qr/*` (udev, slcan `can0`) | Deploy |
 
 ---
-
-## 2. Instalasi (Ubuntu 24.04 + ROS 2 Jazzy)
-
-```bash
-sudo apt install ros-jazzy-ros-base ros-jazzy-rmw-cyclonedds-cpp ros-jazzy-xacro \
-  ros-jazzy-robot-state-publisher ros-jazzy-navigation2 ros-jazzy-slam-toolbox \
-  ros-jazzy-robot-localization ros-jazzy-sick-safetyscanners2 ros-jazzy-foxglove-bridge \
-  ros-jazzy-diagnostic-updater ros-jazzy-teleop-twist-keyboard \
-  python3-can python3-serial python3-flask python3-yaml python3-numpy can-utils
-# pymodbus: kode memakai keyword device_id= (pymodbus >= 3.10). Versi apt Ubuntu 24.04
-# terlalu lama -> pakai pip (atau venv):
-pip install --break-system-packages "pymodbus>=3.10"
-
-echo 'export AGV_PROFILE=amr-qr-01' >> ~/.bashrc      # setiap shell di PC AMR QR
-# deploy/amr.env: ganti AGV_PROFILE=agv-01 -> amr-qr-01 (untuk amr.service)
-cd ~/agv_can/amr_ws && colcon build --symlink-install && source install/setup.bash
-```
-
-**CAN encoder.** Pasang `deploy/qr/99-amr-qr.rules` (nama tetap `/dev/amr_imu`,
-`/dev/amr_can`) dan `deploy/qr/slcan-can0.service` (slcand 125 kbit/s → `can0`).
-`amr.service` di-`BindsTo` ke `can0`. Setelah itu ubah `qr_base.imu_port` ke
-`/dev/amr_imu`.
-
-**Unit systemd.** `deploy/amr.service` masih hard-code user/path `gvipc-evo-01`.
-Sesuaikan `User`, `Group`, dan path ke user PC AMR QR sebelum menjalankan
-`install.sh`.
-
-**Stop controller QR lama.** `app.py` (port 5050) memiliki modul I/O, bus encoder,
-dan port IMU yang sama. `qr_base_node` menolak start selama `app.py` masih jalan.
-
----
-
-## 3. Commissioning (urutan wajib)
+## 2. Commissioning (urutan wajib)
 
 Nilai bertanda **MEASURE/VERIFY** di profil dan file geometri masih asumsi.
 
@@ -93,12 +67,13 @@ Nilai bertanda **MEASURE/VERIFY** di profil dan file geometri masih asumsi.
 | 9 | Ground test: lurus 1 m ×2, mundur 1 m, CCW/CW 90° dan 180° (seperti tabel gvievo 2026-09-16) | lantai | Odometri vs pita ≤ 1 %. Gyro vs roda setuju ≤ 1 %. Kalau tidak, koreksi track/`enc_counts_per_rev` |
 | 10 | `amr.service` → survey → route → run (RUNBOOK §2) | lantai | — |
 
-Top speed sebelum kalibrasi: **0.28 m/s** (`motor_max_rpm` 900 dengan asumsi 300 rpm/V,
-`v_max_v` 4 V). Route yang meminta lebih cepat tetap jalan, tapi di-clamp oleh mux.
+Top speed: **0.28 m/s** (`motor_max_rpm` 900). Feedforward sudah dari pengukuran roda kiri
+(970 rpm/V, offset 0.25 V, `v_max_v` 2 V); ulangi `ff --wheel both` untuk roda kanan.
+Route yang meminta lebih cepat tetap jalan, tapi di-clamp oleh mux.
 
 ---
 
-## 4. Operasi panel (selector virtual)
+## 3. Operasi panel (selector virtual)
 
 | Tombol | Saat MANUAL | Saat AUTO |
 |---|---|---|
@@ -118,7 +93,7 @@ Top speed sebelum kalibrasi: **0.28 m/s** (`motor_max_rpm` 900 dengan asumsi 300
 
 ---
 
-## 5. Keterbatasan & risiko yang perlu diketahui
+## 4. Keterbatasan & risiko yang perlu diketahui
 
 1. **Modul analog menahan tegangan terakhir** kalau PC/proses mati mendadak (`kill -9`,
    crash kernel). Coil FWD/REV adalah klaim yang kedaluwarsa (0.15 s) selama proses
@@ -143,18 +118,22 @@ Top speed sebelum kalibrasi: **0.28 m/s** (`motor_max_rpm` 900 dengan asumsi 300
    hidup lagi sebelum FAULT, roda bisa tersentak. Kalau sinyal stop seperti itu ada,
    sambungkan ke DI kosong. Stack gvievo menangani "lidar stop → lanjut otomatis"
    lewat feedback torsi driver, dan fitur itu **tidak** tersedia di AMR QR.
+9. **Tanpa field scanner** (lihat §1): obstacle saat AUTO hanya dihentikan oleh collision
+   check Nav2 dari scan yang sudah difilter (return < 0.5 m dari scanner diabaikan karena
+   goresan jendela) dan oleh E-stop. Jalankan route pelan (0.15–0.20 m/s). Untuk memakai
+   field lagi: verifikasi field set di SICK Safety Designer, lalu buat `scanner_fields`
+   untuk profil ini dan set `field_source: scanner` di `base.launch.py`.
 
 ---
 
-## 6. Hasil test offline (tanpa hardware, tanpa ROS)
+## 5. Test offline
 
-| Suite | Hasil |
+| Suite | Hasil (2026-11-02) |
 |---|---|
-| `tests/run_all.py` | 923 check, semua lulus. Test `pp enabled with unset drive values is refused` yang premisnya basi sudah diperbaiki, dan runner mem-pin `AGV_PROFILE=agv-01` |
-| `amr_base/test/test_qr_*.py` | 33 lulus: encoder (wrap 24-bit, TPDO/SDO), IMU (checksum, wrap, batch), wheel loop (interlock, anti-windup, konvergensi plant, **negative control**: tanda encoder salah → runaway), panel, analog, dan **qr_base_node end-to-end dengan hardware simulasi** |
-| `amr_description/test/test_vehicle.py` | 5 lulus: URDF ↔ profil ↔ footprint konsisten |
-| Test amr_ws lain | Sama dengan baseline. Yang gagal hanya karena tidak ada `rclpy`/`xacro` di mesin test |
-| `ruff check src/` | bersih |
+| `tests/run_all.py` | 782 check, semua lulus (752 gvievo + 30 profil QR). Runner mem-pin `AGV_PROFILE=agv-01` |
+| `amr_base/test/test_qr_*.py`, `test_wasd_teleop.py` | 53 lulus, termasuk `qr_base_node` end-to-end dengan hardware simulasi: standby di AUTO, armed saat run minta daya, push mode |
+| `amr_localization/test` (filter scan), `amr_description/test/test_vehicle.py` | lulus |
+| Test paket lain | Sama dengan baseline gvievo-main di mesin tanpa ROS |
 
 Yang **belum** teruji: build `colcon` dan launch di Jazzy sungguhan, dan semua perilaku
-di hardware. Langkah §3 adalah tempat itu diuji.
+di hardware. Ulangi langkah §2 setelah update (INSTALL Part U).

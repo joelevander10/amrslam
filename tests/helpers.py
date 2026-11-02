@@ -16,7 +16,6 @@ acceleration, whatever produces (v, omega).
 FAIL is shared state, deliberately. Every module appends to the same list so
 run_all.py can report one verdict for the whole suite rather than eight.
 """
-import os
 import pathlib
 import struct
 import sys
@@ -24,11 +23,18 @@ import sys
 # Repo root, so a check that reads a source file keeps working wherever the
 # suite is run from and wherever the module it inspects has been moved to.
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-# Same flat layout the app uses - see the note in canworker.py.
-for _d in ("", "core", "drivers", "drivers/canbus", "app"):
-    sys.path.insert(0, str(ROOT / _d) if _d else str(ROOT))
+# The repo root, so `agv_core` resolves however the
+# suite was started: run_all.py, `pytest tests/test_x.py`, or a single module
+# run directly. Nothing else goes on the path - the layer directories that used
+# to be inserted here are a package now.
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
-import config  # noqa: E402
+# Re-exported, not used here: run_all.py prints the loaded profile as
+# helpers.config, and several modules reach it the same way. Importing it here
+# is also what proves the path above works before any test runs.
+from agv_core import config  # noqa: E402,F401,I001
+
 
 FAIL = []
 

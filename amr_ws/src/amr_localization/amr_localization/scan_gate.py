@@ -18,6 +18,7 @@ This module is the pure decision logic; scan_gate_node wraps it with ROS I/O.
 
 from __future__ import annotations
 
+import math
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -51,7 +52,7 @@ class ScanGate:
     def __post_init__(self) -> None:
         for name in ("min_period_s", "settle_s", "hold_max_s", "rewind_s"):
             v = getattr(self, name)
-            if not (isinstance(v, (int, float)) and v >= 0.0 and v == v):
+            if not (isinstance(v, (int, float)) and math.isfinite(v) and v >= 0.0):
                 raise ValueError(f"{name} must be a finite non-negative number, got {v!r}")
         if self.max_pending < 1:
             raise ValueError("max_pending must be >= 1")
@@ -62,6 +63,13 @@ class ScanGate:
             # the source clock went backwards (bag/sim restart): the old epoch's thinning
             # reference would silence every scan until the stamps caught up (review Q13)
             self._last_out = None
+        # Dropped at the door (CPU, 2026-10-02): a scan inside min_period_s of the last
+        # RELEASE can only ever be thinned - _last_out only moves forward (a rewind is
+        # handled above) - so queueing it buys TF queries for nothing.
+        if (self._last_out is not None and stamp >= self._last_out
+                and stamp - self._last_out < self.min_period_s - 1e-9):
+            self.stats.thinned += 1
+            return
         self._pending.append((stamp, msg, now))
         while len(self._pending) > self.max_pending:
             self._pending.popleft()

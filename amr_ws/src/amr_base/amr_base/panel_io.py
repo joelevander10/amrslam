@@ -32,9 +32,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from amr_base.agv_repo import config
-
-import panel as panel_core  # repo module: core/panel.py
+from agv_core import config
+from agv_core import panel as panel_core  # repo module: core/panel.py
 
 
 @dataclass(frozen=True)
@@ -47,6 +46,7 @@ class PanelFrame:
     comms_ok: bool
     changed: str | None = None  # human-readable transition for the log, if any
     pendant: panel_core.PendantIntent = panel_core.PENDANT_IDLE
+    manual_arm: bool = False  # panel.di_manual_arm, debounced; False while invalid
 
 
 class PanelAdapter:
@@ -71,7 +71,11 @@ class PanelAdapter:
         self._held: tuple[str, panel_core.PendantIntent] | None = None  # (mode, pendant) being withheld
         self._held_for = 0
         self.scan = panel_core.PanelScan(
-            config.PANEL_DI_RESET, config.PANEL_DI_START, config.PANEL_DI_AUTO, scans
+            config.PANEL_DI_RESET,
+            config.PANEL_DI_START,
+            config.PANEL_DI_AUTO,
+            scans,
+            auto_when_on=config.PANEL_AUTO_WHEN_ON,
         )
         self.pendant = None
         if config.PENDANT_ENABLED if pendant is None else pendant:
@@ -84,16 +88,50 @@ class PanelAdapter:
                 ),
                 scans,
             )
+        # Manual Arm (DI08): a debounced LEVEL, like the pendant. A switch already on at
+        # power-on powers the drives once the image is valid - power is not motion.
+        self.manual_arm = panel_core.DebouncedLevels((config.PANEL_DI_MANUAL_ARM,), scans)
+        self._last_arm: bool | None = None
         self.seq = 0
+        self._last_scans: int | None = None  # DIO acquisition count behind the last evaluated frame
+        self._last_frame: PanelFrame | None = None
         self._last_valid: bool | None = None
         self._last_mode: str | None = None
         self._last_comms: bool | None = None
         self._last_pendant: panel_core.PendantIntent | None = None
 
+    @staticmethod
+    def source_fresh(snapshot: dict) -> bool:
+        """Is the DIO image CURRENT physical input? Connected, and a successful scan within
+        PANEL_SOURCE_MAX_AGE_S - not the 2 s diagnostic silence age (audit R01)."""
+        age = snapshot.get("rx_age_s")
+        return (
+            bool(snapshot.get("comms_ok"))
+            and bool(snapshot.get("connected", True))
+            and age is not None
+            and age <= config.PANEL_SOURCE_MAX_AGE_S
+        )
+
     def tick(self, snapshot: dict) -> PanelFrame:
-        comms = bool(snapshot.get("comms_ok"))
-        intent = self.scan.scan(snapshot.get("di"), comms)
+        comms = self.source_fresh(snapshot)
+        scans = snapshot.get("scans")
         self.seq += 1
+        # The node ticks at 50 Hz, the DIO scans at 20 Hz. Debounce, edges and the
+        # coincidence hold count ACQUISITIONS: a tick on an image already evaluated
+        # republishes the last frame, edges spent.
+        if comms and self._last_frame is not None and scans is not None and scans == self._last_scans:
+            return PanelFrame(
+                valid=self._last_frame.valid,
+                mode_auto=self._last_frame.mode_auto,
+                start_edge=False,
+                reset_edge=False,
+                seq=self.seq,
+                comms_ok=True,
+                pendant=self._last_frame.pendant,
+                manual_arm=self._last_frame.manual_arm,
+            )
+        self._last_scans = scans
+        intent = self.scan.scan(snapshot.get("di"), comms)
         notes = []
         if comms != self._last_comms:
             notes.append("DIO comms " + ("ok" if comms else f"LOST ({snapshot.get('detail')})"))
@@ -113,11 +151,17 @@ class PanelAdapter:
             if levels is not None:
                 pend = panel_core.pendant_intent(*levels)
         mode, pend = self._coincidence(intent, pend, notes)
+        arm_levels = self.manual_arm.scan(snapshot.get("di"), comms)
+        arm = bool(intent.valid and arm_levels is not None and arm_levels[0])
+        if arm != self._last_arm:
+            if self._last_arm is not None or arm:
+                notes.append(f"Manual Arm {'on' if arm else 'off'}")
+            self._last_arm = arm
         if self.pendant is not None and pend != self._last_pendant:
             held = [n for n in pend._fields if getattr(pend, n)]
             notes.append("pendant " + (" ".join(held).upper() if held else "released"))
             self._last_pendant = pend
-        return PanelFrame(
+        frame = PanelFrame(
             valid=bool(intent.valid),
             mode_auto=mode == panel_core.AUTO,
             start_edge=bool(intent.start),
@@ -126,7 +170,10 @@ class PanelAdapter:
             comms_ok=comms,
             changed="; ".join(notes) or None,
             pendant=pend,
+            manual_arm=arm,
         )
+        self._last_frame = frame
+        return frame
 
     def _coincidence(self, intent, pend, notes) -> tuple[str, panel_core.PendantIntent]:
         """The (mode, pendant) to publish this scan, withholding a simultaneous change."""
@@ -157,6 +204,37 @@ class PanelAdapter:
             notes.append(f"selector {intent.mode.upper()}")
             self._last_mode = intent.mode
         return intent.mode, pend
+
+
+# AUTO runs that count for the alarm horn: tracked line RUNNING / HOLD, trackless
+# EXECUTING / BLOCKED (amr_interfaces LineState / RunState values).
+LINE_ACTIVE = (2, 3)
+RUN_ACTIVE = (2, 4)
+LINE_PREMOVE = 1  # LineState.ARMED: the pre-move warning after a Start
+
+
+def alarm_wanted(
+    mode_auto: bool, line_state: int | None, run_state: int | None,
+    field_fresh: bool, protective_clear: bool, warning_active: bool,
+    run_premove: bool = False,
+) -> bool:
+    """dio.alarm_on (operator, 2026-10-02): AUTO RUNNING and (protective stop, warning 1 or
+    warning 2). Field state comes from the mux; stale field data does not sound it.
+
+    And the pre-move warning (2026-10-08): from a Start until the vehicle moves (line ARMED,
+    RunState.premove) the alarm horn sounds whatever the fields say, then gives way to the
+    movement horn once the wheels turn."""
+    if mode_auto and (line_state == LINE_PREMOVE or run_premove):
+        return True
+    running = mode_auto and (line_state in LINE_ACTIVE or run_state in RUN_ACTIVE)
+    return running and field_fresh and (not protective_clear or warning_active)
+
+
+def motion_outputs(turning: bool, alarm: bool, channels, movement_horn) -> dict[int, bool]:
+    """dio.motion_on with the horn switch (operator, 2026-10-07): while the alarm horn sounds
+    (protective, warning 1 or warning 2 in an AUTO run) the movement horn is OFF, so the
+    sound changes; the other motion outputs (DO08) keep following the motors."""
+    return {ch: turning and not (alarm and ch in movement_horn) for ch in channels}
 
 
 def horn_wanted(

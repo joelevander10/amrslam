@@ -84,13 +84,131 @@ def test_corruption_is_caught_by_verify(tmp_path):
 
 def test_revisions_are_immutable(tmp_path):
     maps = str(tmp_path / "maps")
-    stage = mb.staging_dir(maps, "m", 1)
+    stage = mb.staging_dir(maps, "line_section", 1)
     mb.stage_bundle(stage, small_grid(), fake_posegraph(tmp_path), manifest())
-    mb.publish(stage, maps, "m", 1)
-    stage2 = mb.staging_dir(maps, "m", 1)
+    mb.publish(stage, maps, "line_section", 1)
+    stage2 = mb.staging_dir(maps, "line_section", 1)
     mb.stage_bundle(stage2, small_grid(), fake_posegraph(tmp_path), manifest())
     with pytest.raises(mb.BundleError, match="already exists"):
-        mb.publish(stage2, maps, "m", 1)
+        mb.publish(stage2, maps, "line_section", 1)
+    assert os.path.isdir(stage2), "a refused publish must leave the loser's stage for its owner"
+
+
+# ---- F03: writers are a transaction --------------------------------------------
+
+
+def test_two_stages_of_the_same_revision_never_share_a_directory(tmp_path):
+    """Before: `.staging-<N>-<pid>` was one path for two requests of one
+    process, and making the second DELETED the first's files."""
+    maps = str(tmp_path / "maps")
+    a = mb.staging_dir(maps, "line_section", 1)
+    open(os.path.join(a, "inflight"), "w").write("x")
+    b = mb.staging_dir(maps, "line_section", 1)
+    assert a != b and os.path.isfile(os.path.join(a, "inflight"))
+    mb.discard(b)
+    assert os.path.isdir(a)
+
+
+def test_publish_refuses_a_stage_whose_manifest_is_another_identity(tmp_path):
+    maps = str(tmp_path / "maps")
+    stage = mb.staging_dir(maps, "line_section", 1)
+    mb.stage_bundle(stage, small_grid(), fake_posegraph(tmp_path), manifest(rev=7))
+    with pytest.raises(mb.BundleError, match="rev7"):
+        mb.publish(stage, maps, "line_section", 1)
+    with pytest.raises(mb.BundleError, match="not 'other'"):
+        mb.publish(stage, maps, "other", 7)
+
+
+def test_concurrent_edits_of_one_parent_get_distinct_complete_revisions(tmp_path):
+    """Threads AND processes, released through a barrier: every success is
+    its own immutable revision with exactly its edit; the parent is untouched."""
+    import concurrent.futures as cf  # noqa: PLC0415
+    import multiprocessing as mp  # noqa: PLC0415
+    import threading  # noqa: PLC0415
+
+    maps = _published(tmp_path)
+    parent = mb.verify(mb.revision_dir(maps, "line_section", 1))
+    n = 4
+    gate = threading.Barrier(n)
+
+    def edit_thread(k):
+        ops = [
+            {"op": "paint", "value": "unknown", "polygon": _rect(-0.6 + 0.1 * k, -0.2, -0.55 + 0.1 * k, -0.1)}
+        ]
+        gate.wait()
+        return mb.derive_edit(maps, "line_section", 1, ops, note=f"t{k}")[1]
+
+    with cf.ThreadPoolExecutor(n) as ex:
+        got = sorted(ex.map(edit_thread, range(n)))
+    assert got == [2, 3, 4, 5]
+
+    ctx = mp.get_context("fork")
+    q = ctx.Queue()
+    start = ctx.Barrier(n)
+    procs = [ctx.Process(target=_edit_proc, args=(maps, k, start, q)) for k in range(n)]
+    for p in procs:
+        p.start()
+    for p in procs:
+        p.join(30)
+    got = sorted(q.get(timeout=5) for _ in procs)
+    assert got == [6, 7, 8, 9], got
+    for rev in range(2, 10):
+        m = mb.load_manifest(mb.revision_dir(maps, "line_section", rev), "line_section", rev)
+        assert m.revision == rev and m.sha256 != parent.sha256
+        assert os.path.isfile(os.path.join(mb.revision_dir(maps, "line_section", rev), "edits.json"))
+    assert mb.verify(mb.revision_dir(maps, "line_section", 1)).sha256 == parent.sha256
+    assert not [n for n in os.listdir(os.path.join(maps, "line_section")) if n.startswith(".staging")]
+
+
+def _edit_proc(maps, k, start, q):
+    ops = [{"op": "paint", "value": "unknown", "polygon": _rect(-0.6 + 0.1 * k, 0.0, -0.55 + 0.1 * k, 0.1)}]
+    start.wait()
+    q.put(mb.derive_edit(maps, "line_section", 1, ops, note=f"p{k}")[1])
+
+
+def test_a_failed_publish_leaves_no_revision_and_the_parent_intact(tmp_path, monkeypatch):
+    maps = _published(tmp_path)
+    parent = mb.verify(mb.revision_dir(maps, "line_section", 1))
+
+    def boom(*_a, **_k):
+        raise OSError("disk gone")
+
+    monkeypatch.setattr(mb, "_fsync_path", boom)
+    ops = [{"op": "paint", "value": "unknown", "polygon": _rect(0.1, -0.3, 0.25, -0.15)}]
+    with pytest.raises(OSError):
+        mb.derive_edit(maps, "line_section", 1, ops, note="x")
+    assert mb.list_revisions(maps, "line_section") == [1]
+    assert mb.verify(mb.revision_dir(maps, "line_section", 1)).sha256 == parent.sha256
+    assert not [n for n in os.listdir(os.path.join(maps, "line_section")) if n.startswith(".staging")]
+
+
+# ---- F10: identity at the read boundary ----------------------------------------
+
+
+def test_load_refuses_a_bundle_whose_manifest_names_another_identity(tmp_path):
+    maps = str(tmp_path / "maps")
+    stage = mb.staging_dir(maps, "requested", 1)
+    mb.stage_bundle(stage, small_grid(), fake_posegraph(tmp_path), manifest(rev=99))  # says line_section/99
+    os.rename(stage, mb.revision_dir(maps, "requested", 1))  # bypass publish's own check
+    assert mb.verify(mb.revision_dir(maps, "requested", 1))  # internally consistent...
+    with pytest.raises(mb.BundleError, match="identity"):
+        mb.load(maps, "requested", 1)  # ...but not what was asked for
+    with pytest.raises(mb.BundleError, match="identity"):
+        mb.load_manifest(mb.revision_dir(maps, "requested", 1), "requested", 1)
+
+
+@pytest.mark.parametrize("bad", ["../x", "a/b", "", ".", "..", ".hidden", "a\0b"])
+def test_map_ids_are_plain_names(tmp_path, bad):
+    with pytest.raises(mb.BundleError):
+        mb.revision_dir(str(tmp_path), bad, 1)
+    with pytest.raises(mb.BundleError):
+        mb.staging_dir(str(tmp_path), bad, 1)
+
+
+@pytest.mark.parametrize("bad", [0, -1, True, "1", 1.5])
+def test_revisions_are_positive_integers(tmp_path, bad):
+    with pytest.raises(mb.BundleError):
+        mb.revision_dir(str(tmp_path), "m", bad)
 
 
 def test_empty_file_refused(tmp_path):

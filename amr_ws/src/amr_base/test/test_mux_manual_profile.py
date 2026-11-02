@@ -32,6 +32,8 @@ def _node(dt=0.02):
     n._commissioning = None
     n._v = n._wz = n._wl = n._wr = n._a = n._alpha = 0.0
     n._source, n._reason, n._applied_gen = "none", "", 0
+    n._inhibited, n._event_seq = False, 0
+    n._pub_event = SimpleNamespace(publish=lambda _m: None)
     n._last = gating.Selection(gating.NONE, 0.0, 0.0, "", 0, False)
     n._now = lambda: 10.0
     n.get_logger = lambda: _Logger()
@@ -93,3 +95,39 @@ def test_manual_spin_is_capped_while_surveying():
     for _ in range(300):
         _run(n, gating.Selection(gating.PENDANT, 0.0, 0.39, "pendant", 0), 1)
     assert n._wz == pytest.approx(0.39)
+
+
+def test_line_steering_slews_at_line_alpha_max_not_the_nav2_limit():
+    """2026-10-02: tape cruise 0.85 m/s oscillated with LINE yaw slewed at the Nav2 0.4 rad/s^2."""
+    n = _node()
+    n.line_alpha_max = 3.0
+    _run(n, gating.Selection(gating.LINE, 0.0, 0.3, "line", 0), 5)  # 0.1 s
+    assert n._wz == pytest.approx(0.3)  # 3.0 rad/s^2 x 0.1 s reaches it
+    m = _node()
+    m.line_alpha_max = 3.0
+    _run(m, gating.Selection(gating.FOLLOW, 0.0, 0.3, "follow", 0), 5)
+    assert m._wz == pytest.approx(0.4 * 0.1)  # Nav2 keeps its gentle yaw ramp
+
+
+def test_line_decelerates_at_line_d_max_and_others_keep_d_max():
+    """2026-10-08: a measured stop / late high-zone exit from 0.85 m/s must not be
+    stretched by the Nav2 d_max 0.5 m/s^2. LINE alone decelerates at line_d_max;
+    acceleration stays at a_max for everyone."""
+    n = _node()
+    n.line_d_max = 1.0
+    n._v = 0.85
+    _run(n, gating.Selection(gating.LINE, 0.5, 0.0, "line", 0), 5)  # 0.1 s
+    assert n._v == pytest.approx(0.85 - 1.0 * 0.1)
+    m = _node()
+    m.line_d_max = 1.0
+    m._v = 0.85
+    _run(m, gating.Selection(gating.FOLLOW, 0.5, 0.0, "follow", 0), 5)
+    assert m._v == pytest.approx(0.85 - 0.5 * 0.1)  # Nav2 keeps d_max
+    up = _node()
+    up.line_d_max = 1.0
+    _run(up, gating.Selection(gating.LINE, 0.85, 0.0, "line", 0), 5)
+    assert up._v == pytest.approx(0.15 * 0.1)  # LINE still accelerates at a_max
+    off = _node()  # line_d_max 0 = no override (today's behaviour)
+    off._v = 0.85
+    _run(off, gating.Selection(gating.LINE, 0.5, 0.0, "line", 0), 5)
+    assert off._v == pytest.approx(0.85 - 0.5 * 0.1)

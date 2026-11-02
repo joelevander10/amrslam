@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FW30HS-T Sheet 4</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../kit/jis-sheet.css">
+</head>
+<body>
+
+<nav class="toolbar" aria-label="Export">
+  <strong>FW30HS-T · Sheet 4 / 57 · Power circuit</strong>
+  <button type="button" class="primary" id="png">Download PNG</button>
+  <button type="button" id="pdf">Print / PDF</button>
+  <span class="status" id="status">A4 portrait · vector</span>
+</nav>
+
+<main class="wrap"><div class="sheet" id="sheet"></div></main>
+
+<script src="https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/dist/html-to-image.js"></script>
+<script src="../kit/jis-sheet.js"></script>
+<script>
+  const META = {
+    customer: '«CUSTOMER»', designer: 'IZUMI MACHINE MFG. CO., LTD',
+    content: 'POWER CIRCUIT',
+    approval: 'H. Suzumura', checked: 'S. Miura', designed: 'Y. Tsujioka', drawn: 'J. Nakamura',
+    date: '13/06/17', scale: '',
+    title: 'ELECTRIC DIAGRAM',
+    model: 'FW30HS-T', dwg: '-00-91-', sheet: 4, of: 57,
+    note: 'IZUMI MACHINE MFG. CO. has property of this drawing and the design shown shall not be disclosed to any third party without permission of IZUMI MACHINE MFG. Corporation.',
+    // breaker auxiliary contacts are drawn on sheet 12, line 01
+    refs: [{ name: 'CBSPL', ref: '1201' }, { name: 'CBSPR', ref: '1201' }, { name: 'CB2', ref: '1201' }],
+  };
+
+  // spindle drive supplies leave the sheet to the right
+  const FEEDERS = [
+    { row: 7.3,  cb: 'CBSPL', aux: '?1M1', out: ['RSL', 'SSL', 'TSL'], en: 'L SPINDLE POWER SUPPLY' },
+    { row: 10.3, cb: 'CBSPR', aux: '?1M2', out: ['RSR', 'SSR', 'TSR'], en: 'R SPINDLE POWER SUPPLY' },
+  ];
+
+  // hydraulic pump motors behind CB2
+  const MOTORS = [
+    { row: 14,   ms: 'MS1L', ref: '3308', ol: 'OL1L', amps: '42.8A', sk: 'SK1L', w: 'KIV14mm²',  t: ['U1L', 'V1L', 'W1L'], m: 'M1L', kw: '11kW-4P',  en: 'L. HYDRAULIC PUMP MOTOR' },
+    { row: 16.2, ms: 'MS1R', ref: '3309', ol: 'OL1R', amps: '42.8A', sk: 'SK1R', w: 'KIV14mm²',  t: ['U1R', 'V1R', 'W1R'], m: 'M1R', kw: '11kW-4P',  en: 'R. HYDRAULIC PUMP MOTOR' },
+    { row: 18.3, ms: 'MS2',  ref: '3310', ol: 'OL2',  amps: '22A',   sk: 'SK2',  w: 'KIV5.5mm²', t: ['U2', 'V2', 'W2'],    m: 'M2',  kw: '5.5kW-4P', en: 'AUX. HYDRAULIC PUMP MOTOR' },
+  ];
+
+  JIS.render(document.getElementById('sheet'), {
+    meta: META,
+    file: 'FW30HS-T-00-91-04',
+    label: 'Power circuit sheet 4: incoming 3-phase supply, panel lighting, main breaker CB1, spindle supplies and hydraulic pump motors.',
+    draw(s) {
+      const bus = [23.8, 27.9, 31.8];
+      const busB = [70.6, 75.2, 79.7];
+
+      // incoming supply → CB1 → R1/S1/T1 (continues on sheet 5 onward)
+      s.text(44, 14.8, 'POWER 3φ AC200V 50Hz 162kVA', { size: 2.2, weight: 600 });
+      s.text(44, 18.8, 'POWER SUPPLY 3PH AC200V 50Hz 162kVA', { size: 2.2 });
+      s.bus(bus, 23, 206, ['R', 'S', 'T'], 'arrow');
+      bus.forEach(x => s.line(x - 0.9, 23, x + 0.9, 23, 0.3));
+      s.text(36.4, 22.2, 'E', { size: 1.9, anchor: 'middle' });
+      s.line(35.5, 23, 37.3, 23, 0.3);
+      s.line(36.4, 23, 36.4, 27);
+      s.earth(36.4, 27);
+
+      // panel lighting: CPO → door switch → FL1
+      const lt = [42, 50];
+      s.line(bus[0], lt[0], 125, lt[0]); s.dot(bus[0], lt[0]);
+      s.line(bus[2], lt[1], 125, lt[1]); s.dot(bus[2], lt[1]);
+      s.line(125, lt[0], 125, 44); s.line(125, lt[1], 125, 48);
+      s.rect(119, 44, 12, 4, 0.25);
+      s.text(125, 45.9, 'FL1', { size: 1.7, anchor: 'middle' });
+      s.text(125, 47.6, '20W', { size: 1.4, anchor: 'middle' });
+      s.wire(38.5, lt, 'KIV2mm²', 'YELLOW');
+      s.mccb(56, lt, 'CPO', '2A');
+      s.text(66, lt[0] - 0.6, 'R0', { size: 1.9 });
+      s.text(66, lt[1] - 0.6, 'T0', { size: 1.9 });
+      s.noSwitch(90, lt[0], 'DSW');
+      s.wire(99, lt, 'KIV2mm²', 'YELLOW');
+      s.text(111, lt[0] - 0.6, 'R0A', { size: 1.9 });
+      s.desc(163, 42.3, 'INNER PANEL LIGHTING');
+
+      s.mccbV(bus, 64, 'CB1', '600AF/500AT');
+      bus.forEach((x, i) => s.text(x + 0.5, 72.5, ['R1', 'S1', 'T1'][i], { size: 1.7 }));
+
+      FEEDERS.forEach(f => {
+        const ys = s.phases(s.row(f.row));
+        ys.forEach((y, i) => {
+          s.line(bus[i], y, 150, y); s.dot(bus[i], y);
+          s.text(74, y - 0.6, f.out[i], { size: 1.9 });
+          s.text(151.2, y + 0.7, f.out[i], { size: 2 });
+        });
+        s.wire(38.5, ys, 'MLFC60mm²', 'BLACK');
+        s.mccb(56, ys, f.cb, '225AF/200AT', f.aux);
+        s.wire(92, ys, 'MLFC60mm²', 'BLACK');
+        s.desc(163, ys[0] + 0.3, f.en);
+      });
+
+      // CB2 → R2/S2/T2 sub-bus → three motor branches
+      const cb2 = s.phases(s.row(MOTORS[0].row));
+      const last = s.phases(s.row(MOTORS[MOTORS.length - 1].row));
+      busB.forEach((x, i) => {
+        s.line(x, cb2[i], x, last[i]);
+        s.dot(x, cb2[i]);
+        s.text(x - 0.9, cb2[i] + 2.6, ['R2', 'S2', 'T2'][i], { size: 1.9, anchor: 'end' });
+      });
+      MOTORS.forEach((b, k) => s.branch(b, s.phases(s.row(b.row)), {
+        xs: k === 0 ? bus : busB,
+        tap: k < MOTORS.length - 1,   // last branch is the corner of the sub-bus
+      }));
+      s.wire(38.5, cb2, 'MLFC60mm²', 'BLACK');
+      s.mccb(56, cb2, 'CB2', '225AF/125AT', '?1M3');
+    },
+  });
+</script>
+</body>
+</html>

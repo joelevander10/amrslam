@@ -32,15 +32,16 @@ import math
 import sys
 import time
 
-import amr_base.agv_repo  # noqa: F401
+from agv_core import (
+    config,
+    ownerlock,  # noqa: E402
+)
+from agv_core.drivers.canbus.verify_drivers import open_bus  # noqa: E402
+
 from amr_base import canopen, wit_imu
-from amr_base.agv_repo import config
 from amr_base.qr_analog import AnalogOut
 from amr_base.qr_encoders import EncoderPair
 from amr_base.wit_imu import ACC, ANGLE, GYRO, WitParser, YawRateSource
-
-import ownerlock  # noqa: E402
-from verify_drivers import open_bus  # noqa: E402
 
 SIDES = ("left", "right")
 

@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>«MODEL» Sheet «N»</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../kit/jis-sheet.css">
+</head>
+<body>
+<!--
+  POWER-CIRCUIT TEMPLATE
+  Copy to sheets/<model>-sheet-<NN>.html, then replace every «…» value.
+  Anything still in «…» or prefixed with '?' renders RED and is counted in the toolbar.
+  Delete the sections you do not need. Do not edit ../kit/ from a sheet file.
+-->
+
+<nav class="toolbar" aria-label="Export">
+  <strong>«MODEL» · Sheet «N» / «TOTAL» · «CONTENT»</strong>
+  <button type="button" class="primary" id="png">Download PNG</button>
+  <button type="button" id="pdf">Print / PDF</button>
+  <span class="status" id="status">A4 portrait · vector</span>
+</nav>
+
+<main class="wrap"><div class="sheet" id="sheet"></div></main>
+
+<script src="https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/dist/html-to-image.js"></script>
+<script src="../kit/jis-sheet.js"></script>
+<script>
+  // ---- title block (leave a field '' if the source has it blank) ----
+  const META = {
+    customer: '«CUSTOMER»', designer: '«DESIGNER»',
+    content: '«POWER CIRCUIT»',
+    approval: '«NAME»', checked: '«NAME»', designed: '«NAME»', drawn: '«NAME»',
+    date: '«DD/MM/YY»', scale: '',
+    title: 'ELECTRIC DIAGRAM',
+    model: '«MODEL»', dwg: '«-00-00-»', sheet: '«N»', of: '«TOTAL»',
+    note: '',                                   // margin note, only if legible in the source
+    refs: [],                                   // grid cross-refs, e.g. { name: 'CB2', ref: '1201' }
+  };
+
+  // ---- motor branches, top to bottom. Omit ol / sk / w to leave that device out ----
+  const BRANCHES = [
+    { row: 1, ms: '«MS1»', ref: '«3301»', ol: '«OL1»', amps: '«0.0A»', sk: '«SK1»', w: '«KIV2mm²»',
+      t: ['«U1»', '«V1»', '«W1»'], m: '«M1»', kw: '«0.4kW-4P»', en: '«LOAD NAME»' },
+    { row: 4, ms: '«MS2»', ref: '«3302»', ol: '«OL2»', amps: '«0.0A»', sk: '«SK2»', w: '«KIV2mm²»',
+      t: ['«U2»', '«V2»', '«W2»'], m: '«M2»', kw: '«0.4kW-4P»', en: '«LOAD NAME»' },
+  ];
+
+  JIS.render(document.getElementById('sheet'), {
+    meta: META,
+    file: '«MODEL»-«DWG»-«NN»',
+    label: '«One sentence describing the sheet»',
+    draw(s) {
+      const busA = [23.8, 27.9, 31.8];        // incoming bus from previous sheet (R1 S1 T1)
+      const busB = [70.6, 75.2, 79.7];        // sub-bus after the feeder breaker
+      const first = s.phases(s.row(BRANCHES[0].row));
+      const last = s.phases(s.row(BRANCHES[BRANCHES.length - 1].row));
+
+      s.bus(busA, 11.6, JIS.G.gridY, ['«R1»', '«S1»', '«T1»'], 'tee');
+
+      // sub-bus drops from the first branch row to the last
+      busB.forEach((x, i) => {
+        s.line(x, first[i], x, last[i]);
+        s.dot(x, first[i]);
+        s.text(x + 1.3, first[i] - 0.6, ['«R3»', '«S3»', '«T3»'][i], { size: 1.9 });
+      });
+
+      // first branch continues straight from the breaker; later ones tap the sub-bus;
+      // the last one is the corner of the sub-bus (no dot)
+      BRANCHES.forEach((b, k) => s.branch(b, s.phases(s.row(b.row)), {
+        xs: k === 0 ? busA : busB,
+        tap: k < BRANCHES.length - 1 || BRANCHES.length === 1,
+      }));
+
+      // feeder breaker and its cable, drawn last so they cut the conductors
+      s.wire(35.9, first, '«KIV2mm²»', '«BLACK»');
+      s.mccb(52.5, first, '«CB3»', '«50AF/50AT»');
+    },
+  });
+</script>
+</body>
+</html>

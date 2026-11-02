@@ -6,10 +6,14 @@ select = ["E", "F", "W", "I", "B", "UP"]
 
 [lint.isort]
 known-first-party = ["amr_base", "amr_sim", "amr_interfaces", "amr_description", "amr_bringup"]
-# Repo-root modules (config, drivers/canbus/...) are bare imports that only
-# resolve after amr_base.agv_repo has put the layer dirs on sys.path, so they
-# must sort AFTER the first-party block, never before it.
-section-order = ["future", "standard-library", "third-party", "first-party", "agv-repo", "local-folder"]
-
-[lint.isort.sections]
-"agv-repo" = ["config", "kinematics", "guard", "rpdo", "read_imu", "read_mls", "alarms", "bus_health", "drive_forward", "verify_drivers", "panel", "dio", "events", "health", "rfid", "lidarframe", "canmon", "motion", "ownerlock", "blindrun"]
+# Run ruff FROM THIS DIRECTORY, the way colcon does. Invoked from the repo root
+# it additionally auto-detects the unlisted workspace packages (amr_maps,
+# amr_mission, amr_navigation, amr_localization, amr_web) as first-party and
+# reports ~30 import-order errors against a tree that is formatted with them as
+# third-party. Listing them here would agree with itself and disagree with
+# every existing file, so the cwd is the contract instead.
+# agv_core is the vehicle library at the repo root, installed with `pip install
+# -e .` (or reached through PYTHONPATH on the vehicle). It is a third-party
+# import from a ROS package's point of view, which is where ruff puts it by
+# default - the "agv-repo" section that used to list ~20 bare module names went
+# with the flat namespace on 2026-09-20.

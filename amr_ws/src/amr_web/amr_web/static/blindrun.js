@@ -28,7 +28,7 @@ var BR = (function () {
     } else if (f.kind === 'rotate') {
       const a = n(f.angle, 'angle');
       if (isFinite(a) && !(a > 0 && a <= 720)) errors.push('angle must be 0–720°');
-      const sign = f.direction === 'cw' ? -1 : 1;  // + counter-clockwise, as core/blindrun.py
+      const sign = f.direction === 'cw' ? -1 : 1;  // + counter-clockwise, as agv_core/blindrun.py
       seg = { kind: 'pivot', angle_deg: round(sign * a, 3) };
       label = `rotate-${f.direction === 'cw' ? 'cw' : 'ccw'}-${a}deg`;
     } else if (f.kind === 'arc') {

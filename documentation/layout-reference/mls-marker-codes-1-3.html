@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MLS Marker Codes 1-3</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700&family=IBM+Plex+Mono:wght@600&family=IBM+Plex+Sans:wght@500&display=swap" rel="stylesheet">
+<style>
+  /* Installer sheet: codes 1, 2, 3 only, for the helper laying the marker strips (2026-10-09).
+     Simplified from mls-marker-codes-standard.html (same layouts, source SICK MLS 8021642 §8.5):
+     30 mm track tape N up, 15 mm x 100 mm marker strips S up. Everything to scale (1 mm = 2.4 px).
+     Distances are track centre to marker centre, as in the manual. Text in Indonesian for the
+     installer; a left-right mirrored layout is acceptable (operator, 2026-10-09). */
+  :root {
+    --paper: #e9edf2;
+    --surface: #ffffff;
+    --ink: #14171d;
+    --ink-2: #3d4553;
+    --ink-3: #636b7c;
+    --rule: #cbd2de;
+    --route: #1f3f7a; --route-dark: #152c57;
+    --tag: #c8176b;
+    --agv: #23272f;
+    color-scheme: light;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding-block: 0 40px;
+    background: var(--paper);
+    color: var(--ink);
+    font: 16px/1.45 "IBM Plex Sans", Arial, Helvetica, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------------- toolbar (never captured) ---------------- */
+  .toolbar {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+    padding: 10px 16px;
+    background: var(--surface);
+    border-bottom: 2px solid var(--ink);
+  }
+  .toolbar strong { margin-right: 8px; font: 700 15px "Archivo", Arial, sans-serif; }
+  .seg { display: flex; border: 1.5px solid var(--ink); }
+  .seg button, .toolbar .go {
+    border: 0; border-left: 1px solid var(--rule);
+    background: var(--surface); color: var(--ink-2);
+    padding: 7px 12px; cursor: pointer;
+    font: 600 11px "IBM Plex Mono", ui-monospace, monospace;
+    letter-spacing: .07em; text-transform: uppercase;
+  }
+  .seg button:first-child { border-left: 0; }
+  .seg button[aria-pressed="true"] { background: var(--agv); color: #fff; }
+  .toolbar .go { border: 1.5px solid var(--route-dark); background: var(--route); color: #fff; }
+  .toolbar .go:disabled { opacity: .6; cursor: progress; }
+  .toolbar button:focus-visible { outline: 2px solid var(--tag); outline-offset: 2px; }
+  .toolbar .status {
+    margin-left: auto; color: var(--ink-3);
+    font: 600 11px "IBM Plex Mono", ui-monospace, monospace; letter-spacing: .05em; text-transform: uppercase;
+  }
+
+  .stage-wrap { padding: 20px 16px 0; }
+  .stage { position: relative; margin: 0 auto; box-shadow: 0 1px 0 var(--rule), 0 10px 30px rgba(20,30,50,.12); }
+
+  /* ---------------- canvas 1920 x 1080 ---------------- */
+  .slide {
+    position: absolute; top: 0; left: 0;
+    width: 1920px; height: 1080px;
+    transform-origin: top left;
+    overflow: hidden;
+    background: var(--surface);
+  }
+
+  .dwg { position: absolute; inset: 0; width: 1920px; height: 1080px; }
+  .dwg text { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+  .head { font: 700 40px "Archivo", Arial, sans-serif !important; text-transform: uppercase; }
+  .sub  { font-size: 21px; font-weight: 600; fill: var(--ink-2); }
+  .code { font: 700 46px "Archivo", Arial, sans-serif !important; fill: #fff; }
+  .num  { font: 700 40px "Archivo", Arial, sans-serif !important; fill: var(--ink); }
+  .gap  { font-size: 19px; font-weight: 600; fill: var(--ink-2); }
+  .len  { font-size: 19px; font-weight: 600; fill: var(--ink-2); }
+  .side { font-size: 18px; font-weight: 600; fill: var(--ink-3); letter-spacing: .1em; }
+  .pole { font-size: 22px; font-weight: 600; fill: #fff; }
+  .dir  { font-size: 18px; font-weight: 600; fill: var(--ink-2); letter-spacing: .1em; }
+  .lg   { font: 500 22px "IBM Plex Sans", Arial, sans-serif !important; fill: var(--ink-2); }
+  .lgh  { font: 700 22px "Archivo", Arial, sans-serif !important; fill: var(--ink); }
+
+  .tile  { fill: #f8f9fb; stroke: var(--rule); stroke-width: 2; }
+  .track { fill: var(--agv); }
+  .mark  { fill: var(--route); }
+  .dim   { stroke: var(--ink); stroke-width: 2.5; fill: none; }
+  .halo  { stroke: #fff; stroke-width: 8; fill: none; }
+  .ext   { stroke: var(--ink-3); stroke-width: 1.5; stroke-dasharray: 5 4; fill: none; }
+  .ext.on-track { stroke: #fff; stroke-width: 2; }
+  .chev  { fill: none; stroke: #fff; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+</style>
+</head>
+<body>
+
+<nav class="toolbar" aria-label="Export">
+  <strong>Kode Marker MLS 1–3 · lembar pemasangan</strong>
+  <div class="seg" role="group" aria-label="Resolution">
+    <button type="button" data-res="2" aria-pressed="false">2× · 3840</button>
+    <button type="button" data-res="3" aria-pressed="true">3× · 5760</button>
+  </div>
+  <div class="seg" role="group" aria-label="Background">
+    <button type="button" data-bg="white" aria-pressed="true">White</button>
+    <button type="button" data-bg="none" aria-pressed="false">Transparent</button>
+  </div>
+  <button type="button" class="go" id="download">Download PNG</button>
+  <span class="status" id="status">16:9 · 1920 × 1080 base</span>
+</nav>
+
+<div class="stage-wrap">
+<div class="stage" id="stage">
+<section class="slide" id="slide" aria-label="Kode marker MLS 1 sampai 3, ukuran pemasangan">
+
+  <svg class="dwg" id="dwg" viewBox="0 0 1920 1080" role="img" aria-label="Pemasangan strip marker untuk kode MLS 1, 2 dan 3. Kode 1: satu strip 30 mm di kiri tengah track. Kode 2: satu strip 60 mm di kiri. Kode 3: satu strip 60 mm di kiri dan satu strip 30 mm di kanan, berdampingan. Jarak dari tengah track ke tengah strip; strip lebar 15 mm, panjang 100 mm, kutub S di atas; pita track 30 mm, kutub N di atas. Boleh dicerminkan kiri-kanan.">
+    <defs>
+      <marker id="arr" markerUnits="userSpaceOnUse" markerWidth="14" markerHeight="14" refX="13" refY="7" orient="auto-start-reverse"><path d="M0,0 L14,7 L0,14 Z" fill="#14171d"/></marker>
+    </defs>
+
+    <text class="head" x="60" y="66">Kode marker MLS 1 · 2 · 3 — pemasangan</text>
+    <text class="sub" x="60" y="102">Semua jarak dalam mm, dari TENGAH pita track ke TENGAH strip marker</text>
+
+    <g id="cols"></g>
+    <g id="legend"></g>
+  </svg>
+
+</section>
+</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/dist/html-to-image.js"></script>
+<script>
+  const FILE_NAME = 'mls-marker-codes-1-3';
+  const NS = 'http://www.w3.org/2000/svg';
+  function el(name, attrs, parent, text) {
+    const n = document.createElementNS(NS, name);
+    for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+    if (text !== undefined) n.textContent = text;
+    parent.appendChild(n);
+    return n;
+  }
+
+  /* Offsets in mm, negative = LEFT of the track looking in the travel direction.
+     Same layouts as mls-marker-codes-standard.html, row "as in the manual". */
+  const CODES = [
+    { code: 1, marks: [-30] },
+    { code: 2, marks: [-60] },
+    { code: 3, marks: [-60, 30] },
+  ];
+  const TRACK_W = 30, MARK_W = 15, MARK_LEN = 100;
+
+  /* ---- geometry ---- */
+  const MM = 2.4;                        // px per mm
+  const TILE_W = 580, GAP = 30, X0 = 60;
+  const TOP = 130, HEAD_H = 84, BOT = 800;
+  const cols = document.getElementById('cols');
+
+  CODES.forEach((c, i) => {
+    const x = X0 + i * (TILE_W + GAP), cx = x + TILE_W / 2;
+    const g = el('g', {}, cols);
+    el('rect', { class: 'tile', x, y: TOP, width: TILE_W, height: BOT - TOP }, g);
+    el('rect', { x, y: TOP, width: TILE_W, height: HEAD_H, fill: '#23272f' }, g);
+    el('text', { class: 'code', x: cx, y: TOP + 58, 'text-anchor': 'middle' }, g, `KODE ${c.code}`);
+
+    // side labels
+    const t0 = TOP + HEAD_H + 56, t1 = BOT - 24;
+    el('text', { class: 'side', x: x + 18, y: t0 - 20 }, g, 'KIRI');
+    el('text', { class: 'side', x: x + TILE_W - 18, y: t0 - 20, 'text-anchor': 'end' }, g, 'KANAN');
+
+    // track tape, N up, travel up
+    el('rect', { class: 'track', x: cx - TRACK_W * MM / 2, y: t0, width: TRACK_W * MM, height: t1 - t0 }, g);
+    el('text', { class: 'dir', x: cx, y: t0 - 20, 'text-anchor': 'middle' }, g, '▲ ARAH JALAN');
+    for (const y of [t0 + 30, t0 + 62, t1 - 40]) {
+      el('path', { class: 'chev', d: `M${cx - 9} ${y + 6} L${cx} ${y - 5} L${cx + 9} ${y + 6}` }, g);
+    }
+    el('text', { class: 'pole', x: cx, y: t1 - 76, 'text-anchor': 'middle' }, g, 'N');
+
+    // marker strips, S up, ends level
+    const my = t0 + 190, mh = MARK_LEN * MM;
+    const dimY = my - 34;
+    // track centreline extension for the dimensions (white where it runs over the tape)
+    el('line', { class: 'ext', x1: cx, y1: dimY - 10, x2: cx, y2: t0 }, g);
+    el('line', { class: 'ext on-track', x1: cx, y1: t0, x2: cx, y2: dimY + 10 }, g);
+    for (const d of c.marks) {
+      const mx = cx + d * MM, out = Math.sign(d);   // -1 left, +1 right
+      el('rect', { class: 'mark', x: mx - MARK_W * MM / 2, y: my, width: MARK_W * MM, height: mh }, g);
+      el('text', { class: 'pole', x: mx, y: my + mh / 2 + 8, 'text-anchor': 'middle' }, g, 'S');
+      // centre-to-centre dimension
+      el('line', { class: 'ext', x1: mx, y1: dimY - 10, x2: mx, y2: my }, g);
+      el('line', { class: 'halo', x1: cx, y1: dimY, x2: mx, y2: dimY }, g);
+      el('line', {
+        class: 'dim', x1: cx, y1: dimY, x2: mx, y2: dimY,
+        'marker-start': 'url(#arr)', 'marker-end': 'url(#arr)',
+      }, g);
+      // number outside the strip, clear of the track
+      el('text', {
+        class: 'num', x: mx + out * 16, y: dimY + 14, 'text-anchor': out < 0 ? 'end' : 'start',
+      }, g, String(Math.abs(d)));
+      // edge gap, for checking: under the strip, running away from the track
+      const gapMm = Math.abs(d) - MARK_W / 2 - TRACK_W / 2;
+      el('text', {
+        class: 'gap', x: mx - out * MARK_W * MM / 2, y: my + mh + 34, 'text-anchor': out < 0 ? 'end' : 'start',
+      }, g, `celah ${gapMm}`);
+    }
+
+    // strip length on the leftmost strip
+    const lx = cx + Math.min(...c.marks) * MM - MARK_W * MM / 2 - 26;
+    el('line', {
+      class: 'dim', x1: lx, y1: my, x2: lx, y2: my + mh,
+      'marker-start': 'url(#arr)', 'marker-end': 'url(#arr)',
+    }, g);
+    el('text', {
+      class: 'len', x: lx - 12, y: my + mh / 2, 'text-anchor': 'middle',
+      transform: `rotate(-90 ${lx - 12} ${my + mh / 2})`,
+    }, g, '100');
+  });
+
+  /* ---- legend ---- */
+  const LY = 828;
+  const legend = document.getElementById('legend');
+  el('rect', { x: 60, y: LY, width: 1800, height: 222, fill: '#f5f6f8', stroke: '#2a2f3a', 'stroke-width': 3 }, legend);
+  el('rect', { class: 'track', x: 90, y: LY + 30, width: 30, height: 70 }, legend);
+  el('text', { class: 'lgh', x: 140, y: LY + 52 }, legend, 'Pita track');
+  el('text', { class: 'lg', x: 140, y: LY + 82 }, legend, 'lebar 30 mm · kutub N di atas');
+  el('rect', { class: 'mark', x: 90, y: LY + 124, width: 16, height: 70 }, legend);
+  el('text', { class: 'lgh', x: 140, y: LY + 146 }, legend, 'Strip marker');
+  el('text', { class: 'lg', x: 140, y: LY + 176 }, legend, 'lebar 15 mm × panjang 100 mm · kutub S di atas');
+  el('text', { class: 'lg', x: 140, y: LY + 202 }, legend, '(dipotong dari pita kutub berlawanan)');
+
+  const rules = [
+    'Angka besar = jarak TENGAH track ke TENGAH strip, dalam mm.',
+    '“celah” = jarak bersih tepi track ke tepi strip, dalam mm (untuk cek).',
+    'Kiri / kanan dilihat sambil menghadap arah jalan (▲).',
+    'Boleh dibalik kiri ↔ kanan (dicerminkan): tidak masalah.',
+    'Kode 3: kedua strip berdampingan, ujung-ujungnya rata sejajar.',
+    'Strip sejajar track, dipasang di bagian lurus, bukan di tikungan.',
+  ];
+  rules.forEach((t, k) => el('text', { class: 'lg', x: 760, y: LY + 40 + k * 34 }, legend, `${k + 1}.  ${t}`));
+
+  /* ---- fit the 1920x1080 canvas to the window ---- */
+  const stage = document.getElementById('stage');
+  const slide = document.getElementById('slide');
+  function fit() {
+    const avail = Math.min(document.documentElement.clientWidth - 32, 1920);
+    const s = avail / 1920;
+    stage.style.width = 1920 * s + 'px';
+    stage.style.height = 1080 * s + 'px';
+    slide.style.transform = `scale(${s})`;
+  }
+  addEventListener('resize', fit);
+  fit();
+
+  /* ---- export ---- */
+  let res = 3, bg = 'white';
+  document.querySelectorAll('[data-res]').forEach(b => b.addEventListener('click', () => {
+    res = +b.dataset.res;
+    document.querySelectorAll('[data-res]').forEach(x => x.setAttribute('aria-pressed', x === b));
+  }));
+  document.querySelectorAll('[data-bg]').forEach(b => b.addEventListener('click', () => {
+    bg = b.dataset.bg;
+    document.querySelectorAll('[data-bg]').forEach(x => x.setAttribute('aria-pressed', x === b));
+  }));
+
+  const status = document.getElementById('status');
+  const btn = document.getElementById('download');
+  btn.addEventListener('click', async () => {
+    if (!window.htmlToImage) { status.textContent = 'Export library did not load — check internet connection'; return; }
+    btn.disabled = true;
+    status.textContent = 'Rendering…';
+    try {
+      await document.fonts.ready;
+      const transparent = bg === 'none';
+      const url = await htmlToImage.toPng(slide, {
+        width: 1920, height: 1080, pixelRatio: res,
+        backgroundColor: transparent ? undefined : '#ffffff',
+        style: { transform: 'none', background: transparent ? 'transparent' : '#ffffff' },
+      });
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${FILE_NAME}@${res}x${transparent ? '-transparent' : ''}.png`;
+      document.body.appendChild(a); a.click(); a.remove();
+      status.textContent = `Saved ${1920 * res} × ${1080 * res} PNG`;
+    } catch (e) {
+      console.error(e);
+      status.textContent = 'Export failed — see console';
+    } finally {
+      btn.disabled = false;
+    }
+  });
+</script>
+</body>
+</html>

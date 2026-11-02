@@ -28,10 +28,10 @@ controller_server:
       stateful: true
     FollowPath:
       plugin: nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController
-      desired_linear_vel: 0.85         # the vehicle CEILING (= route.VEHICLE_V_MAX; 0.70 09-18, 0.85 09-19), never what every step runs at:
-                                       # the executor publishes each step's speed on /speed_limit (RPP setSpeedLimit, absolute), so the
-                                       # approach ramp is planned from the step's own speed (0.55 default, 0.85 long straights), and the
-                                       # same number rides in the MotionPermit v_max as the mux's hard clamp (review Q04)
+      desired_linear_vel: 0.60         # = route.VEHICLE_V_MAX, the ONE trackless speed (2026-10-02; 0.85 boost removed).
+                                       # The executor still publishes each step's speed on /speed_limit (RPP setSpeedLimit,
+                                       # absolute): reverse runs at half and a tight arc lower, and the same number rides in
+                                       # the MotionPermit v_max as the mux's hard clamp (review Q04)
       # Pure pursuit steers with curvature 2*offset/L^2: at the 0.3 m minimum lookahead a normal
       # 5 cm start offset was a 1.1 rad/m yank to the right at the first metre (vehicle
       # 2026-09-17). Routes are straight lines with turns in place, so a long lookahead costs
@@ -46,11 +46,9 @@ controller_server:
       approach_velocity_scaling_dist: 1.0   # 0.6 -> 1.0 (2026-09-18). The ramp is linear in distance, so its decel demand
                                             # peaks at v0^2/D: 0.82 m/s^2 from 0.70 over 0.6 m (above the mux d_max 0.5, the
                                             # lag lands past the endpoint), 0.49 over 1.0 m; 0.25 from 0.50. Rollback 0.6 with 0.40.
-                                            # 2026-09-19: a chain always ENDS at the base speed (the executor
-                                            # tapers a boosted one down first), so the bound is route.BASE_V_MAX
-                                            # 0.60: 0.36 m/s^2 over 1.0 m, not 0.85^2.
+                                            # From route.VEHICLE_V_MAX 0.60: 0.36 m/s^2 over 1.0 m.
       use_collision_detection: true
-      max_allowed_time_to_collision_up_to_carrot: 1.2   # 1.02 m ahead at 0.85 (1.5 s = 1.05 m at 0.70 on 09-18; was 1.0 s at 0.40)
+      max_allowed_time_to_collision_up_to_carrot: 1.6   # 0.96 m ahead at 0.60 (1.2 s at 0.85 until 2026-10-02; 1.5 s at 0.70 on 09-18)
       use_regulated_linear_velocity_scaling: true
       use_cost_regulated_linear_velocity_scaling: false   # aisles are 3.6 m wide; cost scaling only slows
       regulated_linear_scaling_min_radius: 0.9

@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PROJ01 Sheet 9</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../kit/jis-sheet.css">
+</head>
+<body>
+
+<nav class="toolbar" aria-label="Export">
+  <strong>PROJ01 · Sheet 9 / «XX» · Digital IO module wiring</strong>
+  <button type="button" class="primary" id="png">Download PNG</button>
+  <button type="button" id="pdf">Print / PDF</button>
+  <span class="status" id="status">A4 portrait · vector</span>
+</nav>
+
+<main class="wrap"><div class="sheet" id="sheet"></div></main>
+
+<script src="https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/dist/html-to-image.js"></script>
+<script src="../kit/jis-sheet.js"></script>
+<script>
+  // source: page 09 sketch (DI / DO list), switch sketch (PB START, PB RESET, SS MAN/AUTO 2NO),
+  // photos of the CK-EC5163 front (DI / DO blocks) and top (IN / OUT ports, PE 0V 24V)
+  const META = {
+    customer: '«CUSTOMER»', designer: '«DESIGNER»',
+    content: 'DIGITAL IO MODULE WIRING',
+    approval: '«NAME»', checked: '«NAME»', designed: '«NAME»', drawn: '«NAME»',
+    date: '«DD/MM/YY»', scale: '',
+    title: 'ELECTRIC DIAGRAM',
+    model: '«MODEL»', dwg: '«-00-00-»', sheet: 9, of: '«XX»',
+    note: '',
+    refs: [],
+  };
+
+  // module top: Ethernet ports and supply (24V / 0V from sheet 03 TB25 / TB26; PE not connected)
+  const TOP = [
+    { t: '24V', y: 27, tb: 'TB25', end: '1P24 (SH.03)' },
+    { t: '0V', y: 33.5, tb: 'TB26', end: '1N24 (SH.03)' },
+    { t: 'PE', y: 40 },
+    { t: 'IN', y: 46.5, end: 'IPC (ETHERNET)' },
+    { t: 'OUT', y: 53, end: 'RFID READER (ETHERNET)' },
+  ];
+
+  // DI group 0–7 (COM0 → 1P24): inputs are switched to 1N24 by 1NO contacts
+  const DI = {
+    DI00: 64, DI01: 72, DI02: 80, DI03: 88, DI04: 96, DI05: 104, DI06: 112, DI07: 120,
+    DI08: 128, COM0: 137, COM1: 146,
+  };
+  // DI08 (COM1 group, COM1 → 1N24): switched to 24 V by safety PLC Q3 (sheet 08), orange safety wire
+  const Q3 = { t: 'DI08', tb: 'TB72', end: 'SAFETY PLC Q3 (SH.08)' };
+  const START = { t: 'DI00', tb: ['TB56', 'TB57'], name: 'PB START' };
+  const REMOTE = [                                   // contacts drawn on sheet 08
+    { t: 'DI01', tb: 'TB58', end: 'PB RESET 23 (SH.08)' },
+    { t: 'DI02', tb: 'TB59', end: 'SS MAN/AUTO 23 (SH.08)' },
+  ];
+  const PENDANT = {                                  // four 1NO buttons, common 1N24 through one TB
+    keys: [
+      { t: 'DI03', tb: 'TB60', name: 'FORWARD' },
+      { t: 'DI04', tb: 'TB61', name: 'REVERSE' },
+      { t: 'DI05', tb: 'TB62', name: 'LEFT' },
+      { t: 'DI06', tb: 'TB63', name: 'RIGHT' },
+    ],
+    common: 'TB64',
+  };
+  const COMS = [
+    { t: 'COM0', tb: 'TB55', end: '1P24' },
+    { t: 'COM1', tb: 'TB65', end: '1N24' },
+  ];
+
+  // relay outputs DO0–DO7 in pairs with a common
+  const DO = ['DO0', 'DO1', 'C', 'DO2', 'DO3', 'C', 'DO4', 'DO5', 'C', 'DO6', 'DO7', 'C'];
+  // horn sound select: DO0 / DO1 close to 1N24 (horn COM is jumpered to 1N24 at the horn)
+  const HORN = [
+    { t: 'DO0', tb: 'TB70', end: 'AUDIO HORN 01 SOUND 1 (SH.03)' },
+    { t: 'DO1', tb: 'TB71', end: 'AUDIO HORN 01 SOUND 2 (SH.03)' },
+  ];
+  const DO_COM = [
+    { tb: 'TB66', end: '1N24' },   // C of DO0 / DO1 (horn sound select)
+    { tb: 'TB67', end: '1P24' },   // C of DO2 / DO3
+    { tb: 'TB68', end: '1N24' },   // C of DO4 / DO5
+    { tb: 'TB69', end: '1N24' },   // C of DO6 / DO7
+  ];
+
+  JIS.render(document.getElementById('sheet'), {
+    meta: META,
+    file: 'PROJ01-09',
+    textScale: 1.25,          // drawing text +25% (frame and title block unchanged)
+    label: 'Digital IO module CK-EC5163 wiring: Ethernet IN to the IPC and OUT to the RFID reader, 24 V supply, PB START, reset and selector inputs, four pendant buttons, safety PLC Q3 on DI08, horn sound 1 / 2 on DO0 / DO1, DI and relay commons through TB55–TB72.',
+    draw(s) {
+      const SX = 38, TB1 = 60, PBX = 112, BUSX = 128, TB2 = 138, EX = 150, SHORT = 100;
+      const wl = (x, y, t) => s.text(x, y - 0.6, t, { size: 1.9 });
+      const tb = (x, y, name) => {
+        s.ring(x, y, 0.8);
+        s.line(x - 1.2, y + 1.2, x + 1.2, y - 1.2, 0.2);
+        s.text(x, y - 1.6, name, { size: 1.7, anchor: 'middle' });
+      };
+      const strip = (y0, y1) => s.rect(24, y0, SX - 24, y1 - y0, 0.3);
+      const term = (y, name) => { s.ring(SX, y, 0.6); s.text(25.6, y + 0.7, name, { size: 1.9, weight: 600 }); };
+      const dash = (x, y, w, h) => s.path(`M${x} ${y} h${w} v${h} h${-w} Z`, 0.2).setAttribute('stroke-dasharray', '1.6 1');
+
+      s.text(24, 17, 'DIGITAL IO MODULE CK-EC5163', { size: 2.2, weight: 600 });
+      s.text(80, 17, 'ALL WIRING AWG22 BLUE EXCEPT ETHERNET AND DI08', { size: 1.6 });
+      const W = ['AWG22', 'BLUE'], M1 = 46, M2 = 74;   // cable marks: terminal → TB, TB → field
+
+      /* ---- module top: Ethernet + supply ---- */
+      strip(22.5, 56.3);
+      // Ethernet: heavy line = patch cable, not a single conductor
+      TOP.forEach(r => {
+        if (!r.end) return;
+        const eth = !r.tb;
+        s.line(SX, r.y, SHORT, r.y, eth ? 0.9 : 0.3);
+        if (eth) s.text(48, r.y - 1.2, 'ETHERNET CABLE', { size: 1.7 });
+        s.endLabels(SHORT, [r.y], [r.end]);
+      });
+      const pw = TOP.filter(r => r.tb).map(r => r.y);
+      s.wire(M1, pw, ...W); s.wire(M2, pw, ...W);
+      TOP.forEach(r => { if (r.tb) tb(TB1, r.y, r.tb); term(r.y, r.t); });
+
+      /* ---- DI group 0–7 ---- */
+      strip(59, 150);
+      // PB START: DI00 → TB56 → 14 | 13 → TB57 → 1N24
+      const ys = DI[START.t];
+      s.line(SX, ys, EX, ys);
+      s.pushbutton(PBX, [{ y: ys, k: 'no' }], START.name, { flip: true });
+      tb(TB1, ys, START.tb[0]); tb(TB2, ys, START.tb[1]);
+      s.endLabels(EX, [ys], ['1N24']);
+      // reset and selector contacts are on sheet 08
+      REMOTE.forEach(r => {
+        const y = DI[r.t];
+        s.line(SX, y, SHORT, y);
+        tb(TB1, y, r.tb);
+        s.endLabels(SHORT, [y], [r.end]);
+      });
+      // pendant: each key DI → TB → 14 | 13 → common → TB64 → 1N24
+      const py = PENDANT.keys.map(k => DI[k.t]), pTop = py[0], pBot = py[py.length - 1];
+      py.forEach(y => s.line(SX, y, BUSX, y));
+      s.line(BUSX, pTop, EX, pTop);
+      s.line(BUSX, pTop, BUSX, pBot);
+      py.slice(0, -1).forEach(y => s.dot(BUSX, y));
+      dash(103, pTop - 6, 28, pBot - pTop + 9.5);
+      s.text(133, (pTop + pBot) / 2 - 1, 'PENDANT', { size: 1.9, weight: 600 });
+      s.text(133, (pTop + pBot) / 2 + 3, '4 × 1NO', { size: 1.9 });
+      PENDANT.keys.forEach((k, i) => {
+        s.pushbutton(PBX, [{ y: py[i], k: 'no' }], k.name, { flip: true });
+        tb(TB1, py[i], k.tb);
+      });
+      tb(TB2, pTop, PENDANT.common);
+      s.endLabels(EX, [pTop], ['1N24']);
+      // commons
+      COMS.forEach(c => {
+        const y = DI[c.t];
+        s.line(SX, y, SHORT, y);
+        tb(TB1, y, c.tb);
+        s.endLabels(SHORT, [y], [c.end]);
+      });
+      const dis = ['DI00', 'DI01', 'DI02', 'DI03', 'DI04', 'DI05', 'DI06'];
+      dis.forEach(t => wl(63.4, DI[t], t));
+      s.wire(M1, dis.map(t => DI[t]), ...W); s.wire(M2, dis.map(t => DI[t]), ...W);
+      const cy = COMS.map(c => DI[c.t]);
+      s.wire(M1, cy, ...W); s.wire(M2, cy, ...W);
+      // DI08 ← safety PLC Q3
+      const yq = DI[Q3.t];
+      s.line(SX, yq, SHORT, yq);
+      tb(TB1, yq, Q3.tb);
+      s.endLabels(SHORT, [yq], [Q3.end]);
+      wl(63.4, yq, Q3.t);
+      s.wire(M1 - 4, [yq], 'AWG22', 'ORANGE'); s.wire(M2, [yq], 'AWG22', 'ORANGE');
+      Object.keys(DI).forEach(t => term(DI[t], t));
+      s.text(24, 154.6, 'DI07 AND DI09–DI0F (COM1 GROUP): NOT USED', { size: 1.6 });
+
+      /* ---- DO (relay) ---- */
+      const DY0 = 165, DP = 5.5;
+      strip(DY0 - 5, DY0 + DP * (DO.length - 1) + 4.5);
+      let k = 0;
+      DO.forEach((t, i) => {
+        const y = DY0 + DP * i;
+        if (t === 'C') {
+          const c = DO_COM[k++];
+          s.line(SX, y, 90, y);
+          tb(TB1, y, c.tb);
+          s.endLabels(90, [y], [c.end]);
+        }
+      });
+      HORN.forEach(h => {
+        const y = DY0 + DP * DO.indexOf(h.t);
+        s.line(SX, y, 90, y);
+        tb(TB1, y, h.tb);
+        wl(63.4, y, h.t);
+        s.endLabels(90, [y], [h.end]);
+      });
+      const dc = DO.map((t, i) => (t === 'C' || HORN.some(h => h.t === t) ? DY0 + DP * i : null)).filter(y => y !== null);
+      s.wire(M1, dc, ...W); s.wire(M2 - 4, dc, ...W);
+      DO.forEach((t, i) => term(DY0 + DP * i, t));
+      s.text(24, 234.2, 'DO0 / DO1: HORN SOUND 1 / 2 · DO2–DO7: SPARE (COMMONS WIRED) · DO8–DOB AND COMMONS: NOT USED', { size: 1.6 });
+
+      /* ---- CK-EC5163 top view (after photo) ---- */
+      s.rect(150, 16, 48, 24, 0.3);
+      [153, 166].forEach((x, i) => {
+        s.rect(x, 20, 12, 10, 0.25);
+        s.rect(x + 2, 23, 8, 6, 0.18);
+        s.rect(x + 0.8, 20.8, 1.6, 1, 0.12);
+        s.rect(x + 9.6, 20.8, 1.6, 1, 0.12);
+        s.text(x + 6, 34.4, ['IN', 'OUT'][i], { size: 1.5, anchor: 'middle' });
+      });
+      s.rect(181, 22.5, 14, 8, 0.25);
+      [184, 188, 192].forEach((x, i) => {
+        s.ring(x, 28, 1.1);
+        s.rect(x - 0.7, 23.3, 1.4, 1.6, 0.12);
+        s.text(x, 34.4, ['PE', '0V', '24V'][i], { size: 1, anchor: 'middle' });
+      });
+      s.ring(196.2, 28, 0.5);
+      s.text(174, 44, 'CK-EC5163 (TOP)', { size: 1.7, anchor: 'middle' });
+
+      /* ---- CK-EC5163 front view (after photo) ---- */
+      const FX = 162, FW = 36, P4 = 4;
+      s.rect(FX, 58, FW, 112, 0.3);
+      s.line(FX + 6, 58, FX + 6, 170, 0.15);
+      s.text(FX + 7.5, 64, 'CK-EC5163', { size: 2, weight: 600 });
+      ['16DI+12RELAY', 'ETHERNET', 'DC 12/24V'].forEach((t, i) => s.text(FX + 7.5, 68.2 + 3.2 * i, t, { size: 1.2 }));
+      ['PWR', 'COM', 'RUN', 'ERR'].forEach((t, i) => s.text(FX + 3, 62 + 5 * i, t, { size: 0.9, anchor: 'middle' }));
+      const block = (y0, labels, head) => {
+        s.text(FX + 13, y0 - 1.6, head, { size: 1.2, weight: 600 });
+        s.rect(FX + 12, y0, 14, P4 * labels.length + 1, 0.25);
+        labels.forEach((l, i) => {
+          const y = y0 + 2.5 + P4 * i;
+          s.rect(FX + 12.6, y - 1.3, 1.2, 2.6, 0.12);
+          s.rect(FX + 24.2, y - 1.3, 1.2, 2.6, 0.12);
+          s.ring(FX + 17, y, 1.3); s.ring(FX + 21, y, 1.3);
+          s.text(FX + 27.5, y + 0.5, l, { size: 1.05 });
+        });
+      };
+      block(80.5, ['0/8', '1/9', '2/A', '3/B', '4/C', '5/D', '6/E', '7/F', 'COM0/1'], 'DI');
+      block(123, ['0/6', '1/7', 'C/C', '2/8', '3/9', 'C/C', '4/A', '5/B', 'C/C', 'NC'], 'DO');
+      s.text(FX + FW / 2, 175.5, 'CK-EC5163 (FRONT)', { size: 1.7, anchor: 'middle' });
+    },
+  });
+</script>
+</body>
+</html>

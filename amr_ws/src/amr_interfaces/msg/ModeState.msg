@@ -8,6 +8,9 @@ uint8 NAVIGATION=3      # navigation layer ready on exactly one map revision
 uint8 TRANSITIONING=4   # old layer stopping / new layer starting; no motion
 uint8 FAULT=5           # failed layer stopped; base/web retained if healthy
 uint8 STOPPING=6        # service teardown
+uint8 LINE=7            # line layer ready: magnetic tape following (dual-product plan)
+# APPEND ONLY. mode_fsm.py:16 unpacks these positionally; inserting a value here
+# silently renumbers every constant after it, with no error anywhere.
 std_msgs/Header header
 string instance             # supervisor instance UUID; changes on every supervisor start
 uint32 generation           # control generation; rotates on every transition
@@ -22,6 +25,8 @@ uint32 active_map_revision
 string active_map_sha256
 bool manual_available       # a fresh MANUAL press would be accepted now
 bool autonomous_available   # executor may hold a permit now
+bool line_available         # the line follower may hold a permit now (LEASE_LINE granted)
+string product              # profile's licensed product: "tape" | "slam" | "both" (Increment 4)
 string fault_code
 string reason
 string last_survey_map_id   # last SAVED survey in this service lifetime

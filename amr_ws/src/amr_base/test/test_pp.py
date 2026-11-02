@@ -290,3 +290,37 @@ def test_gate_open_with_lease_generation_and_manual_panel():
 )
 def test_gate_refuses(kw, fragment):
     assert fragment in (gate(**kw) or "")
+
+
+# ---- audit R02 (2026-10-02): authority re-read after the blocking setup, before START ----
+
+
+@pytest.mark.parametrize(
+    "latest, gate, fragment",
+    [
+        (lambda t: None, None, "stale"),
+        (lambda t: req(t - 1.0), None, "stale"),  # the requester went silent during setup
+        (lambda t: req(t, hold=False), None, "released"),
+        (lambda t: req(t, run="r2"), None, "changed"),
+        (lambda t: pp.Request("r1", 4, True, spec(), t), None, "changed"),  # new lease generation
+        (lambda t: req(t, s=spec(SEG_ARC)), None, "changed"),  # same run id, different move
+        (lambda t: req(t), "panel not MANUAL", "MANUAL"),
+    ],
+)
+def test_a_move_revoked_during_setup_never_gets_a_start_edge(latest, gate, fragment):
+    c = started()
+    out = c.veto_start(latest(0.5), gate, 0.5)
+    assert out is not None and out.action == "cw"
+    assert out.controlwords == (pp.CW_HALTED, pp.CW_HALTED), "Halt, never CW_START"
+    assert c.state == pp.HALTING and fragment in c.reason
+    # ...and it finishes through the normal halt -> exit path as HALTED
+    out = tick(c, 0.6, None)
+    assert out.action == "exit"
+    c.exited(True, "", 0.6)
+    assert c.last.outcome == pp.HALTED
+
+
+def test_an_unchanged_request_starts():
+    c = started()
+    assert c.veto_start(req(0.4), None, 0.5) is None
+    assert c.state == pp.MOVING

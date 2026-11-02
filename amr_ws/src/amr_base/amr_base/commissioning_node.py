@@ -56,6 +56,7 @@ MODE_NAMES = {
     ModeState.TRANSITIONING: "TRANSITIONING",
     ModeState.FAULT: "FAULT",
     ModeState.STOPPING: "STOPPING",
+    ModeState.LINE: "LINE",
 }
 LATCHED = QoSProfile(
     depth=1, reliability=QoSReliabilityPolicy.RELIABLE, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL
@@ -66,15 +67,25 @@ SENSOR = QoSProfile(
 
 
 class CommissioningNode(Node):
+    # Class defaults for tests that build the node with __new__ (see cmd_mux's note).
+    _job_subs: tuple | list = ()
+    idle_period = 0.5
+    _idle_tick_t = 0.0
+
     def __init__(self) -> None:
         super().__init__("commissioning_node")
         self.declare_parameter("rate_hz", 50.0)
+        # With no job prepared or running there is nothing to control: tick this often
+        # instead (CPU, 2026-10-02). A plan() wakes it to rate_hz on the next tick.
+        self.declare_parameter("idle_period_s", 0.5)
         self.declare_parameter("state_dir", os.path.expanduser("~/.amr"))
         self.declare_parameter("counts_fresh_s", 0.1)
         self.declare_parameter("still_wheel_rad_s", 0.02)
         self.declare_parameter("gyro_fresh_s", 0.1)
         p = self.get_parameter
         self.dt = 1.0 / float(p("rate_hz").value)
+        self.idle_period = max(self.dt, float(p("idle_period_s").value))
+        self._idle_tick_t = 0.0
         self.evidence_dir = os.path.join(os.path.expanduser(str(p("state_dir").value)), "commissioning")
         self.counts_fresh = float(p("counts_fresh_s").value)
         self.still_thr = float(p("still_wheel_rad_s").value)
@@ -96,10 +107,14 @@ class CommissioningNode(Node):
         self._seq = 0
         self._pp_view: cj.PpView | None = None
         self.create_subscription(WheelStates, "/wheel_states", self._on_wheels, SENSOR)
-        self.create_subscription(PanelState, "/amr/panel_state", self._on_panel, 10)
         self.create_subscription(ControlLease, "/amr/control_lease", self._on_lease, RELIABLE_1)
         self.create_subscription(ModeState, "/amr/mode_state", self._on_mode, LATCHED)
-        self.create_subscription(Imu, "/imu/data", self._on_imu, SENSOR)
+        # Panel (50 Hz) and gyro (50 Hz) matter only from a plan onwards: Start under a
+        # PREPARED plan, authority and heading while it runs. Idle, they were most of
+        # this node's CPU (2026-10-02), so they are subscribed only while a job exists.
+        # Plan admission needs only wheel feedback, which stays subscribed. Safe to
+        # create/destroy here: this node spins a single-threaded executor.
+        self._job_subs: list = []
         self.create_subscription(PpStatus, "/drives/pp_status", self._on_pp_status, RELIABLE_1)
         self._pub_pp = self.create_publisher(PpMove, "/amr/commissioning_pp", RELIABLE_1)
         self._pub_cmd = self.create_publisher(WheelVelocities, "/amr/commissioning_wheels", RELIABLE_1)
@@ -216,8 +231,29 @@ class CommissioningNode(Node):
 
     # -- the tick --
 
+    def _job_inputs(self, on: bool) -> None:
+        """Subscribe the panel and gyro while a job exists, drop them otherwise."""
+        if on and not self._job_subs:
+            self._job_subs = [
+                self.create_subscription(PanelState, "/amr/panel_state", self._on_panel, 10),
+                self.create_subscription(Imu, "/imu/data", self._on_imu, SENSOR),
+            ]
+        elif not on and self._job_subs:
+            for sub in self._job_subs:
+                self.destroy_subscription(sub)
+            self._job_subs = []
+            self._panel = self._panel_t = None
+            self._gyro = self._gyro_t = None
+
     def _tick(self) -> None:
         now = time.monotonic()
+        self._job_inputs(self.job.phase in (cj.PREPARED, cj.RUNNING, cj.SETTLING))
+        if self.job.phase in (cj.IDLE, cj.DONE, cj.ABORTED):
+            # Nothing prepared or moving. A Start press here is not consumed: the job
+            # refuses any edge older than its plan, so holding it is harmless.
+            if now - self._idle_tick_t < self.idle_period:
+                return
+            self._idle_tick_t = now
         dt, self._t_last = now - self._t_last, now
         counts, cpr, stopped = self._feedback(now)
         authority, allowed = self._authority(now)

@@ -6,15 +6,26 @@ Layout under maps_dir:
                     posegraph.posegraph,     slam_toolbox serialisation (+ .data)
                     posegraph.data
                     manifest.yaml            hashes, geometry, start reference, review
-    <map_id>/.staging-<N>-<pid>/             work in progress; never a revision
+    <map_id>/.staging-<N>-<random>/          work in progress; never a revision
+    <map_id>/.lock                           the per-map writer lock
 
 A revision exists only once the rename from staging has happened, so a
 partial save can never look approved. Revisions are never rewritten:
 publish() refuses if rev<N> already exists. Pure filesystem + numpy; no ROS.
+
+WRITERS ARE A TRANSACTION under `map_lock(maps_dir, map_id)`: allocate the
+revision, stage, verify and publish inside ONE lock hold (flock on the map's
+directory, so two threads of one Flask process exclude each other as well as
+two processes do). Every stage directory is unique (mkdtemp) and nobody ever
+removes a stage it did not make. Before the rename every staged file and the
+stage directory are fsynced, and the map directory after it: a rename alone
+is atomic, not durable (review 2026-09-21, F03).
 """
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import hashlib
 import json
 import os
@@ -92,20 +103,53 @@ def list_revisions(maps_dir: str, map_id: str) -> list[int]:
 
 
 def next_revision(maps_dir: str, map_id: str) -> int:
+    """The revision a writer will publish. Only meaningful under map_lock():
+    two writers allocating outside it get the same number and one of them
+    fails at publish (never both succeed - publish refuses to overwrite)."""
     revs = list_revisions(maps_dir, map_id)
     return (revs[-1] + 1) if revs else 1
 
 
 def revision_dir(maps_dir: str, map_id: str, revision: int) -> str:
+    _plain_id(map_id)
+    if not isinstance(revision, int) or isinstance(revision, bool) or revision < 1:
+        raise BundleError(f"revision must be a positive integer: {revision!r}")
     return os.path.join(maps_dir, map_id, f"rev{revision}")
 
 
+def _plain_id(map_id: str) -> str:
+    """A map id is a plain directory name: no separators, no traversal."""
+    if not isinstance(map_id, str) or not map_id or map_id in (".", "..") or "\0" in map_id:
+        raise BundleError(f"map id not a plain name: {map_id!r}")
+    if os.sep in map_id or (os.altsep and os.altsep in map_id) or map_id.startswith("."):
+        raise BundleError(f"map id not a plain name: {map_id!r}")
+    return map_id
+
+
+LOCK = ".lock"
+
+
+@contextlib.contextmanager
+def map_lock(maps_dir: str, map_id: str):
+    """Exclusive writer lock for one map (allocate + stage + verify + publish).
+    flock binds to the open file description: threads and processes alike."""
+    d = os.path.join(maps_dir, _plain_id(map_id))
+    os.makedirs(d, exist_ok=True)
+    fd = os.open(os.path.join(d, LOCK), os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
+
+
 def staging_dir(maps_dir: str, map_id: str, revision: int) -> str:
-    d = os.path.join(maps_dir, map_id, f".staging-{revision}-{os.getpid()}")
-    if os.path.exists(d):
-        shutil.rmtree(d)
-    os.makedirs(d)
-    return d
+    """A NEW, unique work directory. Never reuses or removes another one:
+    the old name `.staging-<N>-<pid>` was shared by two requests of one
+    process and the second deleted the first's files."""
+    d = os.path.join(maps_dir, _plain_id(map_id))
+    os.makedirs(d, exist_ok=True)
+    return tempfile.mkdtemp(prefix=f".staging-{int(revision)}-", dir=d)
 
 
 def write_manifest(stage: str, manifest: Manifest) -> None:
@@ -267,25 +311,28 @@ def derive_revision(
     revision, never an edit; missions referencing the old one keep meaning exactly what they
     meant. Returns (path, revision)."""
     src_dir = revision_dir(maps_dir, map_id, from_revision)
-    m = verify(src_dir)
-    revision = next_revision(maps_dir, map_id)
-    stage = staging_dir(maps_dir, map_id, revision)
-    for name in m.files:
-        # edits.json describes ONE derivation (its parent -> that revision): never inherited
-        if name not in drop and name != EDITS:
-            shutil.copy2(os.path.join(src_dir, name), os.path.join(stage, name))
-    for name, path in extra.items():
-        _contained(stage, name)
-        shutil.copy2(path, os.path.join(stage, name))
-    files = {n: sha256_file(os.path.join(stage, n)) for n in sorted(os.listdir(stage)) if n != MANIFEST}
-    m.revision, m.created, m.files, m.sha256 = revision, now_iso(), files, bundle_hash(files)
-    write_manifest(stage, m)
-    try:
-        verify(stage)
-    except BundleError:
-        discard(stage)
-        raise
-    return publish(stage, maps_dir, map_id, revision), revision
+    with map_lock(maps_dir, map_id):
+        m = load_manifest(src_dir, map_id, from_revision)
+        revision = next_revision(maps_dir, map_id)
+        stage = staging_dir(maps_dir, map_id, revision)
+        try:
+            for name in m.files:
+                # edits.json describes ONE derivation (its parent -> that revision): never inherited
+                if name not in drop and name != EDITS:
+                    shutil.copy2(os.path.join(src_dir, name), os.path.join(stage, name))
+            for name, path in extra.items():
+                _contained(stage, name)
+                shutil.copy2(path, os.path.join(stage, name))
+            files = {
+                n: sha256_file(os.path.join(stage, n)) for n in sorted(os.listdir(stage)) if n != MANIFEST
+            }
+            m.revision, m.created, m.files, m.sha256 = revision, now_iso(), files, bundle_hash(files)
+            write_manifest(stage, m)
+            verify(stage)
+            return publish(stage, maps_dir, map_id, revision), revision
+        except (BundleError, OSError):
+            discard(stage)
+            raise
 
 
 def load_mask(rev_dir: str, name: str) -> gridio.Grid | None:
@@ -348,24 +395,62 @@ def derive_edit(
     return path, revision, res
 
 
+def _fsync_path(path: str, directory: bool = False) -> None:
+    fd = os.open(path, os.O_RDONLY | (os.O_DIRECTORY if directory else 0))
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 def publish(stage: str, maps_dir: str, map_id: str, revision: int) -> str:
-    """Atomic rename of a verified stage to rev<N>. Refuses to overwrite."""
+    """Durable, atomic rename of a verified stage to rev<N>. Refuses to
+    overwrite. The stage's manifest must name this map and revision, so a
+    bundle can never be published under an identity its manifest does not
+    carry. Call under map_lock() - the existence check is only meaningful
+    there."""
     dest = revision_dir(maps_dir, map_id, revision)
-    if os.path.exists(dest):
+    with open(os.path.join(stage, MANIFEST)) as fh:
+        doc = yaml.safe_load(fh) or {}
+    if doc.get("map_id") != map_id or int(doc.get("revision", -1)) != revision:
+        raise BundleError(
+            f"stage manifest is {doc.get('map_id')!r} rev{doc.get('revision')}, not {map_id!r} rev{revision}"
+        )
+    if os.path.lexists(dest):
         raise BundleError(f"revision already exists: {dest}")
-    os.rename(stage, dest)
+    for name in os.listdir(stage):
+        _fsync_path(os.path.join(stage, name))
+    _fsync_path(stage, directory=True)
+    try:
+        os.rename(stage, dest)
+    except OSError as e:
+        raise BundleError(f"publish {dest}: {e}") from e
+    _fsync_path(os.path.dirname(dest), directory=True)
     return dest
 
 
 def discard(stage: str) -> None:
+    """Remove the stage THIS operation made (never another's: names are unique)."""
     shutil.rmtree(stage, ignore_errors=True)
+
+
+def load_manifest(rev_dir: str, map_id: str, revision: int) -> Manifest:
+    """verify() plus the identity check: the manifest must say it IS
+    <map_id>/rev<N>, else a bundle copied under another name would pass
+    (review 2026-09-21, F10)."""
+    m = verify(rev_dir)
+    if str(m.map_id) != map_id or int(m.revision) != int(revision):
+        raise BundleError(
+            f"manifest identity {m.map_id!r} rev{m.revision} does not match {map_id!r} rev{revision}"
+        )
+    return m
 
 
 def load(maps_dir: str, map_id: str, revision: int) -> tuple[Manifest, gridio.Grid]:
     d = revision_dir(maps_dir, map_id, revision)
     if not os.path.isdir(d):
         raise BundleError(f"no such revision: {d}")
-    m = verify(d)
+    m = load_manifest(d, map_id, revision)
     return m, _read_grid(os.path.join(d, "map.yaml"))
 
 

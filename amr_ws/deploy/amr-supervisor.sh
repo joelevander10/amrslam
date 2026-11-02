@@ -4,11 +4,11 @@
 set -eo pipefail
 
 AMR_WORKSPACE="${AMR_WS:-$HOME/agv_can/amr_ws}"
+# shellcheck disable=SC1091
 # ROS distro: AMR_ROS_DISTRO if set, else the one installed (Jazzy on Ubuntu 24.04,
-# e.g. the AMR QR PC; Humble on Ubuntu 22.04, gvievo-01).
+# the AMR QR PC; Humble on Ubuntu 22.04, gvievo-01).
 ROS_DISTRO_DIR="/opt/ros/${AMR_ROS_DISTRO:-$(ls /opt/ros 2>/dev/null | grep -E '^(jazzy|humble)$' | sort -r | head -1)}"
 [[ -f "$ROS_DISTRO_DIR/setup.bash" ]] || { echo "no ROS 2 under $ROS_DISTRO_DIR" >&2; exit 1; }
-# shellcheck disable=SC1091
 source "$ROS_DISTRO_DIR/setup.bash"
 source "$AMR_WORKSPACE/install/setup.bash"
 source "$AMR_WORKSPACE/env/vehicle.sh"

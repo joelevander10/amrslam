@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PROJ01 Sheet 6</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../kit/jis-sheet.css">
+</head>
+<body>
+
+<nav class="toolbar" aria-label="Export">
+  <strong>PROJ01 · Sheet 6 / «XX» · CAN bus wiring</strong>
+  <button type="button" class="primary" id="png">Download PNG</button>
+  <button type="button" id="pdf">Print / PDF</button>
+  <span class="status" id="status">A4 portrait · vector</span>
+</nav>
+
+<main class="wrap"><div class="sheet" id="sheet"></div></main>
+
+<script src="https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/dist/html-to-image.js"></script>
+<script src="../kit/jis-sheet.js"></script>
+<script>
+  // source: input-sketch/proj01/page06.jpg (upright); title "CAN BUS Wiring" (CONFIG struck out)
+  const META = {
+    customer: '«CUSTOMER»', designer: '«DESIGNER»',
+    content: 'CAN BUS WIRING',
+    approval: '«NAME»', checked: '«NAME»', designed: '«NAME»', drawn: '«NAME»',
+    date: '«DD/MM/YY»', scale: '',
+    title: 'ELECTRIC DIAGRAM',
+    model: '«MODEL»', dwg: '«-00-00-»', sheet: 6, of: '«XX»',
+    note: '',
+    refs: [],
+  };
+
+  // bus index: 0 = CAN H, 1 = CAN L, 2 = CAN GND
+  // y0 = first conductor; conductors are 5.4 mm apart
+  // on = indices of the conductors the cable mark points at (default: all)
+  const BELDEN = { x: 86, l1: 'BELDEN 9841', l2: 'SHIELDED TWISTED', on: [0, 1] };   // CAN H + CAN L
+  const AWG    = { x: 114, l1: 'AWG22', l2: 'BLUE', on: [2] };                       // CAN GND only
+  const DEVICES = [
+    { y0: 72,  bus: [0, 1, 2], tb: ['TB33', 'TB34', 'TB39'], term: ['6/CAN-H', '5/CAN-L', '7/CAN-GND'],
+      name: ['DRIVER 01', 'BLVD-KRD'], marks: [BELDEN, AWG] },
+    { y0: 113, bus: [0, 1, 2], tb: ['TB35', 'TB36', 'TB40'], term: ['6/CAN-H', '5/CAN-L', '7/CAN-GND'],
+      name: ['DRIVER 02', 'BLVD-KRD'], marks: [BELDEN, AWG] },
+    { y0: 170, bus: [0, 1], tb: ['TB37', 'TB38'], end: ['WHITE/CANH', 'BLACK/CANL'],
+      name: ['LINE SENSOR 01', 'MLSE'],
+      marks: [{ x: 92, l1: 'SICK MLSE CABLE', l2: '' }] },
+    { y0: 211, bus: [0, 1], tb: ['TB41', 'TB42'], term: ['CAN H', 'CAN L'],
+      name: ['BATTERY BMS'],
+      marks: [{ x: 56, l1: 'BELDEN 9841', l2: '' }, { x: 100, l1: 'BATTERY COMS CABLE', l2: '' }] },
+  ];
+
+  JIS.render(document.getElementById('sheet'), {
+    meta: META,
+    file: 'PROJ01-06',
+    textScale: 1.25,          // drawing text +25% (frame and title block unchanged)
+    label: 'CAN bus wiring: CAN-to-USB adapter to the IPC USB port; CAN H / CAN L / CAN GND buses to two drivers, the MLSE line sensor and the battery BMS through terminal blocks.',
+    draw(s) {
+      const bus = [24, 34, 44];              // CAN H / CAN L / CAN GND
+      const BUS_Y1 = 38, BUS_Y2 = 226;
+      const TBX = 78, DX = 140, DW = 36, GAP = 5.4;
+
+      // terminal block terminal: circle with slash (no kit symbol)
+      const tb = (x, y, name) => {
+        s.ring(x, y, 0.8);
+        s.line(x - 1.2, y + 1.2, x + 1.2, y - 1.2, 0.2);
+        s.text(x, y - 1.6, name, { size: 1.7, anchor: 'middle' });
+      };
+
+      // cable mark like s.wire(), but arrowheads only on the conductors it covers
+      // (its line may pass over other conductors without touching them)
+      const wireOn = (x, ys, on, l1, l2) => {
+        const y0 = ys[0], top = y0 - 1.6, yl = ys[on[on.length - 1]];
+        s.line(x, top, x, yl - 0.9, 0.18);
+        on.forEach(i => s.path(`M${x - 0.45} ${ys[i] - 1.15} L${x + 0.45} ${ys[i] - 1.15} L${x} ${ys[i]} Z`, 0.1, '#111'));
+        const w = Math.max(l1.length, (l2 || '').length + 1) * 1.2 * s.textScale + 0.4;
+        s.line(x, top, x + 1.3, y0 - 4.7, 0.18);
+        s.line(x + 1.3, y0 - 4.7, x + 1.3 + w, y0 - 4.7, 0.18);
+        s.text(x + 1.5, y0 - 5.2, l1, { size: 2 });
+        if (l2) s.text(x + 2.4, y0 - 2.3, l2, { size: 2 });
+      };
+
+      // CAN to USB adapter with three outputs down to the buses
+      s.rect(20, 13, 36, 15, 0.3);
+      s.text(38, 19.5, 'CAN TO USB', { size: 2.2, weight: 600, anchor: 'middle' });
+      s.text(38, 23.7, 'ADAPTER', { size: 2.2, weight: 600, anchor: 'middle' });
+      bus.forEach(x => { s.line(x, 28, x, BUS_Y1 - 2.8); s.ring(x, 28, 0.6); });
+
+      // USB plug on the adapter and the link into the IPC USB port
+      s.rect(56, 16, 7, 9, 0.25);
+      s.rect(58.7, 18.3, 1.6, 1.6, 0.2);     // contacts stacked across the plug width
+      s.rect(58.7, 21.1, 1.6, 1.6, 0.2);     // (plug points right, toward the IPC)
+      s.line(63, 20.5, 96, 20.5);
+      s.path('M94.6 19.6 L94.6 21.4 L96 20.5 Z', 0.1, '#111');
+      s.text(79.5, 19.4, 'USB', { size: 1.9, anchor: 'middle' });
+      s.rect(96, 13, 40, 15, 0.3);
+      s.text(116, 19.5, 'USB PORT', { size: 2.2, weight: 600, anchor: 'middle' });
+      s.text(116, 23.7, 'IPC', { size: 2.2, weight: 600, anchor: 'middle' });
+
+      // buses: start bar under the label, plain bar at the end (end of bus, no continuation)
+      s.bus(bus, BUS_Y1, BUS_Y2, ['CAN H', 'CAN L', 'CAN GND']);
+      bus.forEach(x => {
+        s.line(x - 0.9, BUS_Y1, x + 0.9, BUS_Y1, 0.3);
+        s.line(x - 0.9, BUS_Y2, x + 0.9, BUS_Y2, 0.3);
+      });
+
+      // conductors from the buses (crossings of other buses carry no dot)
+      DEVICES.forEach(d => {
+        d.ys = d.bus.map((_, i) => d.y0 + GAP * i);
+        d.ys.forEach((y, i) => { s.line(bus[d.bus[i]], y, DX, y); s.dot(bus[d.bus[i]], y); });
+      });
+
+      // device boxes with terminals on the left edge
+      DEVICES.forEach(d => {
+        const ys = d.ys, last = ys[ys.length - 1], mid = (ys[0] + last) / 2;
+        s.rect(DX, ys[0] - 5, DW, last - ys[0] + 10, 0.3);
+        ys.forEach((y, i) => {
+          s.ring(DX, y, 0.6);
+          if (d.term) s.text(DX + 1.5, y + 0.7, d.term[i], { size: 1.9 });
+          if (d.end) s.text(DX - 1.5, y - 0.6, d.end[i], { size: 1.9, anchor: 'end' });
+        });
+        const cx = DX + DW / 2 + (d.term && d.term[0].length > 5 ? 5 : 3);
+        const top = mid - 2.1 * (d.name.length - 1) + 0.8;
+        d.name.forEach((n, i) => s.text(cx, top + 4.2 * i, n,
+          { size: 2.2, weight: i === 0 ? 600 : 500, anchor: 'middle' }));
+      });
+
+      // cable marks and terminals last, so they cut the conductors
+      DEVICES.forEach(d => {
+        d.marks.forEach(m => wireOn(m.x, d.ys, m.on || d.ys.map((_, i) => i), m.l1, m.l2));
+        d.ys.forEach((y, i) => tb(TBX, y, d.tb[i]));
+      });
+    },
+  });
+</script>
+</body>
+</html>

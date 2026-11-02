@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FW30HS-T Sheet 7</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../kit/jis-sheet.css">
+</head>
+<body>
+
+<nav class="toolbar" aria-label="Export">
+  <strong>FW30HS-T · Sheet 7 / 57 · Power circuit</strong>
+  <button type="button" class="primary" id="png">Download PNG</button>
+  <button type="button" id="pdf">Print / PDF</button>
+  <span class="status" id="status">A4 portrait · vector</span>
+</nav>
+
+<main class="wrap"><div class="sheet" id="sheet"></div></main>
+
+<script src="https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/dist/html-to-image.js"></script>
+<script src="../kit/jis-sheet.js"></script>
+<script>
+  const META = {
+    customer: '«CUSTOMER»', designer: 'IZUMI MACHINE MFG. CO., LTD',
+    content: 'POWER CIRCUIT',
+    approval: 'H. Suzumura', checked: 'S. Miura', designed: 'Y. Tsujioka', drawn: 'J. Nakamura',
+    date: '13/06/17', scale: '',
+    title: 'ELECTRIC DIAGRAM',
+    model: 'FW30HS-T', dwg: '-00-91-', sheet: 7, of: 57,
+    note: 'IZUMI MACHINE MFG. CO. has property of this drawing and the design shown shall not be disclosed to any third party without permission of IZUMI MACHINE MFG. Corporation.',
+  };
+
+  // one row per motor branch, top to bottom
+  const BRANCHES = [
+    { ms: 'MS3L', ref: '3311', ol: 'OL3L', amps: '2.2A',  sk: 'SK3L', w: 'KIV2mm²', t: ['U3L', 'V3L', 'W3L'], m: 'M3L', kw: '0.4kW-4P', en: 'L. SPINDLE LUB. PUMP MOTOR' },
+    { ms: 'MS3R', ref: '3312', ol: 'OL3R', amps: '2.2A',  sk: 'SK3R', w: 'KIV2mm²', t: ['U3R', 'V3R', 'W3R'], m: 'M3R', kw: '0.4kW-4P', en: 'R. SPINDLE LUB. PUMP MOTOR' },
+    { ms: 'MS4',  ref: '3313', ol: 'OL4',  amps: '0.52A', sk: 'SK4',  w: 'KIV2mm²', t: ['U4', 'V4', 'W4'],     m: 'M4',  kw: '75W-2P',   en: 'CLAMP LUB. PUMP MOTOR' },
+    { ms: 'MS5',  ref: '3314', ol: 'OL5',  amps: '0.11A', sk: 'SK5',  w: 'KIV2mm²', t: ['U5', 'V5', 'W5'],     m: 'M5',  kw: '20W',      en: 'AUX. HYDRAULIC FAN COOLER' },
+    { ms: 'MS6L', ref: '3315', ol: 'OL6L', amps: '0.11A', sk: 'SK6L', w: 'KIV2mm²', t: ['U6L', 'V6L', 'W6L'], m: 'M6L', kw: '20W',      en: 'L. SPINDLE LUB. FAN COOLER' },
+    { ms: 'MS6R', ref: '3316', ol: 'OL6R', amps: '0.11A', sk: 'SK6R', w: 'KIV2mm²', t: ['U6R', 'V6R', 'W6R'], m: 'M6R', kw: '20W',      en: 'R. SPINDLE LUB. FAN COOLER' },
+  ];
+
+  JIS.render(document.getElementById('sheet'), {
+    meta: META,
+    file: 'FW30HS-T-00-91-07',
+    label: 'Power circuit sheet 7: CB3 feeds the R3/S3/T3 bus and six lubrication and cooler motor branches.',
+    draw(s) {
+      const busA = [23.8, 27.9, 31.8];              // R1 S1 T1 from sheet 4
+      const busB = [70.6, 75.2, 79.7];              // R3 S3 T3 after CB3
+      const busBEnd = [212.9, 217.9, 222.3];
+      const top = s.phases(s.row(1));
+
+      s.bus(busA, 11.6, JIS.G.gridY, ['R1', 'S1', 'T1'], 'tee');
+
+      // R3/S3/T3 drop down the sheet and leave to the right as control power
+      busB.forEach((x, i) => {
+        s.line(x, top[i], x, busBEnd[i]);
+        s.line(x, busBEnd[i], 153, busBEnd[i]);
+        s.dot(x, top[i]);
+        s.text(x + 1.3, top[i] - 0.6, ['R3', 'S3', 'T3'][i], { size: 1.9 });
+        s.text(154.2, busBEnd[i] + 0.7, ['R3', 'S3', 'T3'][i], { size: 2 });
+      });
+      s.desc(163, 212.6, 'AC200V CONTROL POWER');
+
+      // first branch continues straight from CB3; the rest tap the R3/S3/T3 bus
+      BRANCHES.forEach((b, k) => s.branch(b, s.phases(s.row(1 + 3 * k)), { xs: k === 0 ? busA : busB, tap: true }));
+
+      s.wire(35.9, top, '?KIV1.25mm²', 'BLACK', '(AC200V)');
+      s.mccb(52.5, top, 'CB3', '50AF/50AT');
+    },
+  });
+</script>
+</body>
+</html>

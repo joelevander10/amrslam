@@ -16,8 +16,16 @@ action result alone:
              /odometry/filtered verifies direction and travel, centre drift is
              bounded, final map heading within tolerance; a paused turn resumes
              the REMAINING signed angle only;
-  always     localisation READY, fresh sensors and panel, no /initialpose,
-             no obstacle inside the active step's swept footprint (BLOCKED).
+  always     localisation READY, fresh sensors and panel, no /initialpose.
+
+OBSTACLES ARE NOT THE EXECUTOR'S JOB (operator decision 2026-09-20). The scan-vs-envelope
+check that used to stop a run was removed: stopping for something in the way is the safety
+chain's work - the nanoScan3 protective field and the E-stop, which take the drives' torque
+directly. The executor only reacts to that stop after the fact (the `field` / `estop` holds
+below). Note the consequences the decision accepts: the protective field looks FORWARD, so a
+reverse step and an in-place rotation have no obstacle detection at all, and nothing stops
+the vehicle for a trolley standing in a dynamic area. Speed and the operator's judgement when
+drawing the route are what bound that risk.
 
 Auto-resume (plan coding-plan-auto-resume.md, 2026-09-19). A stop whose cause can clear by
 itself is a BLOCKED hold with a cause, not a FAULT:
@@ -26,14 +34,26 @@ itself is a BLOCKED hold with a cause, not a FAULT:
              field was violated (/output_paths): resumes by itself;
   estop      the same drive dropout with the field clear (the E-stop button): waits for a
              physical Start (no Resume click), unless auto_resume_estop;
-  obstacle   points in the swept envelope (the executor's own check): resumes by itself;
   controller the FollowPath/Spin goal ABORTED (RPP "collision ahead"): resumes by itself, at
              most controller_abort_retries times per step, then FAULT;
   pending    wheel feedback vanished while executing: stopped at once, and classified as a
              safety stop when the drive report says torque off within safety_window_s, else FAULT.
 
-A hold resumes once every resume check (on the segment, clear envelope, wheels still, ...),
-drives with torque and a clear protective field have held for auto_resume_clear_s.
+A hold resumes once every resume check (on the segment, wheels still, ...), drives with
+torque and a clear protective field have held for auto_resume_clear_s.
+
+Pre-move warning (2026-10-08). The drives sit in standby (no power) while nothing asks
+for them. Every Start - a new run from READY, or a resume of a PAUSED/BLOCKED run - goes
+EXECUTING in PHASE_PREMOVE: RunState.drive_power asks drive_node for power, RunState.premove
+sounds the panel's alarm horn, and no goal is sent and no permit given until premove_s has
+passed AND the drives report torque. Without torque within premove_timeout_s the run holds
+(estop: Start again once the safety chain is reset). Auto-resumed holds keep their power and
+skip the warning: nobody pressed anything.
+
+Prerequisites are debounced (operator decision 2026-09-20): a prerequisite must FAIL
+CONTINUOUSLY for prereq_grace_s before it faults a run or unreadies a loaded mission, so one
+dropped frame is not a fault. This does not extend motion authority - the mux enforces panel,
+drive, lease and permit freshness itself and stops the vehicle whatever the executor thinks.
 """
 
 from __future__ import annotations
@@ -42,8 +62,9 @@ import math
 import os
 import threading
 
-import numpy as np
 import rclpy
+from agv_core import alarms
+from agv_core import config as vehicle_config
 from amr_navigation.compiler import ARC, ROTATE, CompiledStep, wrap
 from amr_navigation.route import VEHICLE_ARC_W_MAX
 from amr_navigation.validate import load_dynamic, load_keepout, validate
@@ -64,6 +85,7 @@ from tf2_ros import Buffer, TransformListener
 from amr_interfaces.msg import (
     ControlLease,
     DriveStatus,
+    Event,
     LocalizationState,
     MotionPermit,
     PanelState,
@@ -92,23 +114,11 @@ RELIABLE_1 = QoSProfile(
     depth=1, reliability=QoSReliabilityPolicy.RELIABLE, durability=QoSDurabilityPolicy.VOLATILE
 )
 
-PHASE_INIT, PHASE_GOAL, PHASE_SETTLE = "init", "goal", "settle"
+PHASE_INIT, PHASE_GOAL, PHASE_SETTLE, PHASE_PREMOVE = "init", "goal", "settle", "premove"
 
 
 def _yaw(q) -> float:
     return math.atan2(2.0 * q.w * q.z, 1.0 - 2.0 * q.z * q.z)
-
-
-def explained_by_map(grid, dynamic: np.ndarray | None, tol_m: float) -> np.ndarray:
-    """Cells where a scan return is explained by the MAP and so is not an obstacle: mapped
-    occupied cells grown by `tol_m` (spec §5.4, lenient since 2026-09-18), EXCEPT inside a
-    dynamic area (dynamic-mapping plan §1.2): a mapped trolley may still be there, so a return
-    on it always counts. That is what makes a still-present trolley BLOCK a route validation
-    only approved provisionally, instead of being driven into."""
-    cells = int(round(tol_m / grid.meta.resolution))
-    occ = grid.data >= 65
-    near = fpmod.dilate(occ, cells) if cells > 0 else occ
-    return near if dynamic is None else near & ~dynamic
 
 
 def mission_matches_active_map(mission: dict, active: tuple[str, int, str]) -> str | None:
@@ -151,55 +161,48 @@ class RouteExecutor(Node):
         self.declare_parameter("settle_s", 0.3)
         self.declare_parameter("stationary_wheel_rad_s", 0.02)
         # Centre drift during a turn is measured on ODOMETRY (precise over one turn), not on
-        # AMCL, whose estimate wanders several cm during a spin in place. Spec §5.3: 0.05 m.
-        self.declare_parameter("centre_drift_m", 0.05)
+        # AMCL, whose estimate wanders several cm during a spin in place. Spec §5.3 said 0.05 m;
+        # 0.10 m since 2026-09-20 (operator request: fewer nuisance faults).
+        self.declare_parameter("centre_drift_m", 0.10)
         # The executor's own end-of-step verification against the AMCL pose. RPP's goal
         # checker already stops at 0.05 m / 2 deg (spec §5.2); this re-check must allow
         # the estimator's own noise (sim AMCL p95 ~0.06 m) or it fails good stops.
         # HARDWARE PLACEHOLDERS: sim AMCL wanders 1-3 deg during a spin in place, so a 2-3 deg
         # heading re-check trips on estimator noise, not on the turn (odometry travel is within 2 deg).
-        self.declare_parameter("verify_position_m", 0.08)
-        self.declare_parameter("verify_heading_deg", 5.0)
+        # Widened 0.08 -> 0.15 m and 5 -> 8 deg on 2026-09-20 (operator request). Each step
+        # re-projects from the ACTUAL pose and a turn folds its entry error, so the error is
+        # corrected, not accumulated - but a stop may now sit further outside the validated
+        # footprint margin (0.05 m). Clearance stays the operator's judgement when drawing.
+        self.declare_parameter("verify_position_m", 0.15)
+        self.declare_parameter("verify_heading_deg", 8.0)
         self.declare_parameter("converge_m", 1.0)  # cross-track grace distance after a step starts
         self.declare_parameter("entry_correction_deg", 10.0)  # max entry-heading error folded into a turn
         # Vehicle 2026-09-17: Spin at 10 Hz with min 0.05 rad/s stops 0-2.2 deg past the commanded
         # angle (turns of 45.0 and 46.6 for 44.4 asked). The overshoot is folded into the next
-        # turn by the entry correction and bounded by verify_heading_deg, so 4 deg here is
-        # the stop discretisation, not a looser route.
-        self.declare_parameter("turn_travel_tolerance_deg", 4.0)
+        # turn by the entry correction and bounded by verify_heading_deg, so this is
+        # the stop discretisation, not a looser route. 4 -> 6 deg on 2026-09-20.
+        self.declare_parameter("turn_travel_tolerance_deg", 6.0)
         self.declare_parameter("wrong_way_deg", 5.0)
-        self.declare_parameter("wheels_age_limit_s", 0.10)
-        self.declare_parameter("scan_age_limit_s", 0.5)  # /scan_gated is <= 10 Hz; 0.5 s = gate hold_max
-        # returns closer than this to the scanner never count as an obstruction (0 = all count).
-        # The AMR QR: its scratched window's phantoms, 0.1-0.45 m out, move with the vehicle.
-        self.declare_parameter("obstruction_min_range_m", 0.0)
+        # Sensor ages. All widened on 2026-09-20 (operator request) and backed by
+        # prereq_grace_s below; the mux keeps its own, tighter freshness rules, so a longer
+        # age here buys the run tolerance to a gap without ever extending motion authority.
+        self.declare_parameter("wheels_age_limit_s", 0.25)  # /wheel_states is 50 Hz
+        self.declare_parameter("scan_age_limit_s", 1.0)  # /scan_gated is <= 10 Hz; gate hold_max 0.5 s
+        # A prerequisite must fail CONTINUOUSLY this long before it faults a run or unreadies
+        # a loaded mission: one dropped frame is not a fault (module docstring).
+        self.declare_parameter("prereq_grace_s", 0.5)
         # Part B2: the FollowPath goal sits this far past the endpoint (0 = aim at the endpoint,
         # the rollback). Tune on the vehicle so the mean stop error is ~0; never above the
         # route's position_tolerance_m (clamped).
         self.declare_parameter("goal_overshoot_m", 0.045)
-        self.declare_parameter("panel_age_limit_s", 0.20)
-        self.declare_parameter("loc_age_limit_s", 1.5)
-        # Obstruction (spec §5.4), made lenient 2026-09-18 after a false BLOCKED at an arc start
-        # (11 returns beside a mapped wall on cells the map calls free): a return within
-        # obstacle_map_tol_m of a mapped obstacle is explained by the map, it takes
-        # obstacle_points such returns, and they must persist over obstacle_persist_scans
-        # consecutive scans before the run stops.
-        self.declare_parameter("obstacle_points", 5)
-        self.declare_parameter("obstacle_map_tol_m", 0.15)
-        self.declare_parameter("obstacle_persist_scans", 2)
-        self.declare_parameter("stopping_horizon_m", 1.5)
-        # the envelope is checked at least stopping_time_s of travel ahead at the STEP's speed:
-        # the 1.5 m floor up to 0.75 m/s, 1.7 m at the 0.85 long-straight boost. 3.0 -> 2.0 s on
-        # 2026-09-19: an 0.85 -> 0 stop at the mux's 0.5 m/s^2 is 0.72 m + latency, and 2.55 m
-        # ahead only invited BLOCKED on things beside the path.
-        self.declare_parameter("stopping_time_s", 2.0)
+        self.declare_parameter("panel_age_limit_s", 0.50)
+        self.declare_parameter("loc_age_limit_s", 2.5)
         # Speed tapers between chained steps (a boosted straight into a normal one, a straight
         # into an arc at its arc speed) and at the end of a boosted straight: the lower speed is asked
         # early enough that the mux decel (d_max 0.5) reaches it before the boundary, from
         # (v^2 - v_next^2) / (2 taper_decel) plus taper_lead_s of travel.
         self.declare_parameter("taper_decel", 0.4)
         self.declare_parameter("taper_lead_s", 0.3)
-        self.declare_parameter("clear_stable_s", 1.0)
         # auto-resume after a stop whose cause clears by itself (see the module docstring)
         self.declare_parameter("auto_resume_enabled", True)
         self.declare_parameter("auto_resume_clear_s", 2.0)
@@ -209,9 +212,12 @@ class RouteExecutor(Node):
         self.declare_parameter("field_output_index", 0)  # /output_paths status[i]: protective field
         # false: ignore the scanner's protective field (/output_paths). The AMR QR: its nanoScan3
         # config came from the old controller and reported the field violated with nothing in
-        # it (2026-09-24); runs rely on the executor's own swept-envelope check and the E-stop.
+        # it (2026-09-24); a drive dropout there counts as the E-stop.
         self.declare_parameter("use_protective_field", True)
         self.declare_parameter("controller_abort_retries", 3)
+        # The pre-move warning after a Start (module docstring); the profile's timing block.
+        self.declare_parameter("premove_s", float(vehicle_config.AUTO_START_DELAY_S))
+        self.declare_parameter("premove_timeout_s", float(vehicle_config.PREMOVE_TIMEOUT_S))
         # R08: bound on waiting for a goal's acceptance, and for an obsolete (cancelled) goal to
         # report terminal before a replacement goal may be issued.
         self.declare_parameter("goal_accept_timeout_s", 5.0)
@@ -238,24 +244,18 @@ class RouteExecutor(Node):
             p("loc_age_limit_s").value,
         )
         self.scan_age = p("scan_age_limit_s").value
-        self.obstruction_min_range = float(p("obstruction_min_range_m").value)
+        self.prereq_grace_s = float(p("prereq_grace_s").value)
         self.goal_overshoot_m = float(p("goal_overshoot_m").value)
-        self.obstacle_points = int(p("obstacle_points").value)
-        self.obstacle_map_tol_m = float(p("obstacle_map_tol_m").value)
-        self.obstacle_persist = max(1, int(p("obstacle_persist_scans").value))
-        self._hit_scans = 0  # consecutive distinct scans with returns in the envelope
-        self._hit_scan_t: float | None = None
-        self._map_near = None  # mapped occupied cells grown by obstacle_map_tol_m (per mission)
-        self.horizon = p("stopping_horizon_m").value
-        self.stopping_time_s = p("stopping_time_s").value
         self.taper_decel = max(0.05, float(p("taper_decel").value))
         self.taper_lead_s = float(p("taper_lead_s").value)
-        self.clear_stable_s = p("clear_stable_s").value
         self.auto_resume_enabled = bool(p("auto_resume_enabled").value)
         self.auto_clear_s = float(p("auto_resume_clear_s").value)
         self.auto_resume_estop = bool(p("auto_resume_estop").value)
         self.safety_window = float(p("safety_window_s").value)
         self.drives_age = float(p("drives_age_limit_s").value)
+        self.premove_s = max(0.0, float(p("premove_s").value))
+        self.premove_timeout_s = max(self.premove_s, float(p("premove_timeout_s").value))
+        self._premove_since: float | None = None
         self.field_index = int(p("field_output_index").value)
         self.abort_retries = int(p("controller_abort_retries").value)
         self._init_hold_state()
@@ -313,8 +313,8 @@ class RouteExecutor(Node):
         self.create_subscription(DriveStatus, "/drives/status", self._on_drives, 10, callback_group=io)
         if not self.get_parameter("use_protective_field").value:
             self.get_logger().warn(
-                "use_protective_field=false: the scanner's protective field is IGNORED; obstacles "
-                "stop the run through the executor's own scan check only"
+                "use_protective_field=false: the scanner's protective field is IGNORED "
+                "(a drive dropout counts as the E-stop)"
             )
         elif OutputPaths is not None:
             self.create_subscription(
@@ -339,6 +339,12 @@ class RouteExecutor(Node):
         # is being stopped when a new one exists and a limit is harmless to it.
         self._speed_pub = self.create_publisher(SpeedLimit, "/speed_limit", RELIABLE_1)
         self._state_pub = self.create_publisher(RunState, "/amr/run_state", LATCHED)
+        self._event_pub = self.create_publisher(Event, "/amr/events", 50)
+        self._event_seq = 0
+        self._last_event_state: int | None = None
+        self._run_started: float | None = None
+        self._run_holds: dict[str, int] = {}
+        self._run_peak_cross = 0.0
         self.create_service(RunMission, "/amr/run_mission", self._srv_run, callback_group=srv)
         self.create_service(Trigger, "/amr/pause", self._srv_pause, callback_group=srv)
         self.create_service(Trigger, "/amr/abort", self._srv_abort, callback_group=srv)
@@ -392,8 +398,10 @@ class RouteExecutor(Node):
 
     def _init_hold_state(self) -> None:
         self.hold_cause = ""  # why the run is BLOCKED (module docstring), "" otherwise
+        self.fault_code = ""  # alarm catalogue code for a FAULT (agv_core/alarms.py)
         self._auto_since: float | None = None  # all-clear since, for auto-resume
         self._pending_since: float | None = None
+        self._prereq_since: float | None = None  # a prerequisite has been failing since
         self._aborts = 0  # controller aborts auto-resumed on this step
         self._drives_t: float | None = None
         self._torque_off_msg = False
@@ -428,7 +436,7 @@ class RouteExecutor(Node):
         return "field" if self._field_tripped(now) else "estop"
 
     def _auto_causes(self) -> tuple[str, ...]:
-        return ("field", "obstacle", "controller") + (("estop",) if self.auto_resume_estop else ())
+        return ("field", "controller") + (("estop",) if self.auto_resume_estop else ())
 
     def _hold(self, cause: str, why: str) -> None:
         """Stop and hold: BLOCKED with a cause (see the module docstring)."""
@@ -462,7 +470,7 @@ class RouteExecutor(Node):
         self.last_initialpose_t = self._now()
         with self._lock:
             if self.fsm.state == fsm.EXECUTING:
-                self._fault("initial pose injected during a step")
+                self._fault("initial pose injected during a step", "EXEC_POSE_INJECTED")
             elif self.fsm.state in (fsm.PAUSED, fsm.BLOCKED):
                 self.fsm.invalidate_resume(
                     "initial pose changed; progress-based resume is invalid, abort the run"
@@ -509,9 +517,13 @@ class RouteExecutor(Node):
                     )
                 provisional = [i.step_id or "start" for i in v.issues if i.code == "provisional"]
                 if provisional:
-                    self.get_logger().info(
-                        f"steps {', '.join(provisional)} cross mapped cells in dynamic areas: "
-                        "any scan return there stops the run"
+                    # Since 2026-09-20 the executor no longer checks scans against the envelope,
+                    # so a trolley still standing in one of these areas will NOT stop the run:
+                    # only the protective field will. Warn, do not merely inform.
+                    self.get_logger().warn(
+                        f"steps {', '.join(provisional)} cross mapped cells in dynamic areas; "
+                        "the route was cleared on the assumption those cells are empty, and "
+                        "nothing but the safety chain will stop the vehicle if they are not"
                     )
                 # Q05 relaxed 2026-09-17 (operator request, footprint margin 0.05 m): the
                 # lateral envelope execution permits may exceed what validation cleared.
@@ -535,10 +547,6 @@ class RouteExecutor(Node):
                 grid,
                 route,
                 v.compiled,
-            )
-            # validate() already refused a misaligned dynamic mask, so it indexes the map's cells
-            self._map_near = explained_by_map(
-                grid, None if dynamic is None else dynamic.data >= 65, self.obstacle_map_tol_m
             )
             self._reset_step_state()
             self._log_state()
@@ -597,6 +605,22 @@ class RouteExecutor(Node):
             return "no fresh scan"
         return None
 
+    def _prereq_held(self, now: float, pre: str | None) -> bool:
+        """True once a prerequisite has been failing CONTINUOUSLY for prereq_grace_s
+        (operator decision 2026-09-20). Any tick that passes clears the timer, so one dropped
+        frame never latches a FAULT; a genuine loss still faults, half a second later.
+
+        The reason may change while the timer runs (a stale panel, then a stale scan): what
+        is debounced is "something is wrong", not one particular message. Callers that merely
+        REFUSE (the Start gate, the resume checks) do not use this - refusing is free, and
+        those gates should answer for the instant the operator pressed the button."""
+        if not pre:
+            self._prereq_since = None
+            return False
+        if self._prereq_since is None:
+            self._prereq_since = now
+        return now - self._prereq_since >= self.prereq_grace_s
+
     def _auto(self) -> bool:
         return self._panel is not None and self._panel.valid and self._panel.mode_auto
 
@@ -619,14 +643,14 @@ class RouteExecutor(Node):
                 gate_ok, why = False, pre
             if self.fsm.start(self._auto(), gate_ok, why):
                 self._reset_step_state()
+                self._begin_premove()
             self._log_state()
         elif self.fsm.state in (fsm.PAUSED, fsm.BLOCKED):
             if self.fsm.state == fsm.BLOCKED and not self.fsm.resume_prepared and self._auto():
                 # a hold continues on Start alone (operator decision 2026-09-19: after the E-stop
                 # button, Start without a Resume click) when every resume check holds right now
+                # No torque check: the drives are in standby until this Start powers them.
                 ok, why = self._resume_checks()
-                if ok and self._torque_off(self._now()):
-                    ok, why = False, "drives have no torque"
                 if not ok:
                     self.fsm.reason = f"Start ignored: {why}"
                     self._log_state()
@@ -634,16 +658,49 @@ class RouteExecutor(Node):
                 self.fsm.prepare_resume(True, "")
             if self.fsm.resume_prepared:
                 # R18: the prepared resume may be stale by the time Start is pressed (vehicle
-                # moved, obstacle, odometry gap): re-run every resume check at the edge itself.
+                # moved, odometry gap): re-run every resume check at the edge itself.
                 ok, why = self._resume_checks()
                 if not ok:
                     self.fsm.invalidate_resume(why)  # keeps the reason visible; Start does nothing
                     self._log_state()
                     return
             if self.fsm.start(self._auto(), True):
-                self.phase = PHASE_INIT
                 self.hold_cause, self._auto_since = "", None
+                self._begin_premove()
             self._log_state()
+
+    def _begin_premove(self) -> None:
+        self.phase, self._premove_since = PHASE_PREMOVE, self._now()
+        self.fsm.reason = f"{self.fsm.reason}: warning, moving in {self.premove_s:.1f} s"
+
+    def _premove_tick(self, now: float) -> None:
+        """EXECUTING before the first goal after a Start: alarm horn, power asked for. Go once
+        the warning has run and the drives have torque; hold (estop) if they never do."""
+        waited = now - (self._premove_since if self._premove_since is not None else now)
+        drives_fresh = self._drives_t is not None and now - self._drives_t <= self.drives_age
+        if waited >= self.premove_s and drives_fresh and not self._torque_off(now):
+            self.phase, self._premove_since = PHASE_INIT, None
+            self.fsm.reason = f"moving: {self.fsm.progress()}"
+            return
+        if waited >= self.premove_timeout_s:
+            self._premove_since = None
+            self._hold(
+                "estop",
+                f"drives did not power up within {self.premove_timeout_s:.0f} s "
+                "(safety chain open? release the E-stop, Reset, then Start)",
+            )
+
+    def drive_power(self) -> bool:
+        """RunState.drive_power: what this run asks of drive_node's power policy. EXECUTING
+        (the pre-move warning included), and BLOCKED holds that keep their power: those that
+        resume by themselves, and a pending hold, whose torque reading is its evidence."""
+        state = self.fsm.state
+        if state == fsm.EXECUTING:
+            return True
+        if state != fsm.BLOCKED:
+            return False
+        auto = self.auto_resume_enabled and self.hold_cause in self._auto_causes()
+        return auto or self.hold_cause == "pending"
 
     def _resume_checks(self) -> tuple[bool, str]:
         pre = self._prereqs()
@@ -677,11 +734,6 @@ class RouteExecutor(Node):
                 )
                 if drift > self.centre_drift_m:
                     return False, f"moved {drift:.2f} m off the turn centre; abort and reposition"
-        blocked = self._obstruction(st, pose)
-        if blocked:
-            return False, blocked
-        if self.clear_since is None or self._now() - self.clear_since < self.clear_stable_s:
-            return False, "clearance not stable yet"
         return True, ""
 
     # ---- step geometry ------------------------------------------------------------------------
@@ -727,7 +779,6 @@ class RouteExecutor(Node):
         self.turn_target: float | None = None  # signed angle to travel: drawn magnitude + entry correction
         self.turn_feedback = 0.0
         self.cross_track = 0.0
-        self.clear_since: float | None = None
         self._aborts = 0
 
     def _turn_travel(self) -> float:
@@ -743,52 +794,6 @@ class RouteExecutor(Node):
     def _cross_track_allowed(self, along: float) -> float:
         limit = self.route.limits.cross_track_limit_m
         return limit if along > self.converge_m else 2.0 * limit
-
-    def _obstruction(self, st: CompiledStep, pose) -> str | None:
-        """Scan points inside the active step's swept footprint ahead (spec §5.4)."""
-        scan = self._scan
-        if scan is None or self.grid is None:
-            return "no scan"
-        if self._now() - self._scan_t > self.scan_age:
-            return f"scan stale ({self._now() - self._scan_t:.1f} s)"  # old data cannot clear a corridor
-        try:
-            # at the scan's acquisition time (Q08): the pose it was taken from, not the latest
-            tr = self.tf_buffer.lookup_transform("map", scan.header.frame_id, scan.header.stamp)
-        except Exception:  # noqa: BLE001
-            return "no laser transform at the scan time"
-        if st.type != ROTATE:
-            along, _ = self._along_cross(st, pose)
-            mask = self._envelope(st, along)
-        else:
-            mask = fpmod.swept_rotation(
-                self.grid, self.fp, (st.start[0], st.start[1]), st.start[2], st.signed_angle_rad
-            )
-        yaw = _yaw(tr.transform.rotation)
-        r = np.asarray(scan.ranges, dtype=np.float64)
-        ang = scan.angle_min + np.arange(len(r)) * scan.angle_increment + yaw
-        ok = np.isfinite(r) & (r > max(scan.range_min, self.obstruction_min_range)) & (r < scan.range_max)
-        ex = tr.transform.translation.x + r[ok] * np.cos(ang[ok])
-        ey = tr.transform.translation.y + r[ok] * np.sin(ang[ok])
-        g = self.grid.meta
-        cols = np.floor((ex - g.origin_x) / g.resolution).astype(int)
-        rows = np.floor((ey - g.origin_y) / g.resolution).astype(int)
-        inside = (cols >= 0) & (cols < self.grid.width) & (rows >= 0) & (rows < self.grid.height)
-        # returns the MAP already explains (walls, within obstacle_map_tol_m) are not obstacles;
-        # inside a dynamic area nothing is explained (explained_by_map)
-        near = self._map_near if self._map_near is not None else (self.grid.data >= 65)
-        hits = mask[rows[inside], cols[inside]] & ~near[rows[inside], cols[inside]]
-        n = int(hits.sum())
-        if n >= self.obstacle_points:
-            if self._hit_scan_t != self._scan_t:  # count each scan once, whatever the tick rate
-                self._hit_scans, self._hit_scan_t = self._hit_scans + 1, self._scan_t
-            self.clear_since = None
-            if self._hit_scans >= self.obstacle_persist:
-                return f"{n} scan points inside the {st.type} envelope"
-            return None  # one scan's worth: wait for the next before stopping the run
-        self._hit_scans, self._hit_scan_t = 0, None
-        if self.clear_since is None:
-            self.clear_since = self._now()
-        return None
 
     # ---- goals ---------------------------------------------------------------------------------
 
@@ -829,9 +834,6 @@ class RouteExecutor(Node):
             add(last.end[0] + math.cos(end_dir) * over, last.end[1] + math.sin(end_dir) * over, last.end[2])
         return path
 
-    def _horizon(self, st: CompiledStep) -> float:
-        return max(self.horizon, float(st.v_mps) * self.stopping_time_s)
-
     # ---- chains: consecutive forward steps (straight, arc) are driven as ONE FollowPath so the
     # vehicle never stops between them (2026-09-18); a rotate or a reverse ends a chain.
 
@@ -870,9 +872,8 @@ class RouteExecutor(Node):
 
     def _step_speed(self, st: CompiledStep, pose) -> float:
         """The speed the vehicle may run at HERE on a forward step: its compiled speed, tapered
-        to the NEXT chained step's speed (or, for a boosted last step, the base speed) early
-        enough that the mux decel reaches it at the boundary. The controller's own approach
-        ramp then only ever starts from the base speed or less."""
+        to the NEXT chained step's speed (a tight arc runs below the trackless speed) early
+        enough that the mux decel reaches it at the boundary."""
         v = float(st.v_mps)
         if pose is None:
             return v
@@ -885,35 +886,6 @@ class RouteExecutor(Node):
         if st.length_m - along < self._taper_dist(v, v_next):
             return v_next
         return v
-
-    def _envelope(self, st: CompiledStep, along: float) -> np.ndarray:
-        """Cells the vehicle sweeps over the next stopping horizon: the rest of this step and,
-        when that is shorter than the horizon, the start of the chained steps after it (the
-        envelope no longer shrinks to nothing at a step boundary)."""
-        remaining = self._horizon(st)
-        mask = None
-        a0 = max(0.0, along)
-        for i, step in enumerate(self._chain(self.fsm.step_index)):
-            if remaining <= 0.0:
-                break
-            lo = a0 if i == 0 else 0.0
-            hi = min(step.length_m, lo + remaining)
-            part = self._swept(step, lo, hi)
-            mask = part if mask is None else (mask | part)
-            remaining -= hi - lo
-        return mask
-
-    def _swept(self, st: CompiledStep, a0: float, a1: float) -> np.ndarray:
-        if st.type == ARC:
-            return fpmod.swept_arc(
-                self.grid, self.fp, st.centre, st.radius_m, st.start[2], st.signed_angle_rad, a0, a1
-            )
-        # positions along the travel direction, the footprint at the (forward) heading; for
-        # a reverse step this is the envelope BEHIND, mostly outside the scanner's field
-        c, s = math.cos(st.travel_yaw), math.sin(st.travel_yaw)
-        p0 = (st.start[0] + c * a0, st.start[1] + s * a0, st.start[2])
-        p1 = (st.start[0] + c * a1, st.start[1] + s * a1, st.start[2])
-        return fpmod.swept_line(self.grid, self.fp, p0, p1)
 
     def _publish_speed(self, v: float) -> None:
         """A speed for the controller (absolute limit). Sent before every FollowPath and
@@ -960,14 +932,14 @@ class RouteExecutor(Node):
 
     def _send(self, client: ActionClient, goal) -> bool:
         if not client.wait_for_server(timeout_sec=2.0):
-            self._fault(f"action server {client._action_name} unavailable")
+            self._fault(f"action server {client._action_name} unavailable", "EXEC_ACTION_FAILED")
             return False
         try:
             self.goals.send(
                 client, goal, self.fsm.run_id, self.fsm.pass_index, self.fsm.step_index, self._on_feedback
             )
         except Exception as e:  # noqa: BLE001
-            self._fault(f"action goal send failed: {e}")
+            self._fault(f"action goal send failed: {e}", "EXEC_ACTION_FAILED")
             return False
         return True
 
@@ -987,7 +959,10 @@ class RouteExecutor(Node):
         self.phase, self.paused_t, self.odom_gap = PHASE_INIT, self._now(), False
         self._log_state(why)
 
-    def _fault(self, why: str) -> None:
+    def _fault(self, why: str, code: str = "EXEC_ACTION_FAILED") -> None:
+        """Terminal for this run. `code` is the alarm-catalogue code the operator sees
+        (agv_core/alarms.py); `why` stays the engineer's sentence in `reason`."""
+        self.fault_code = code
         if self.fsm.fault(why):
             self._interrupt(why)
 
@@ -1001,6 +976,7 @@ class RouteExecutor(Node):
                 self.hold_cause, self._pending_since = "", None  # a hold ends with its BLOCKED
             if state in fsm.ACTIVE or state == fsm.READY:
                 pre = self._prereqs()
+                held = self._prereq_held(now, pre)
                 # an explicit MANUAL on a fresh, valid panel image (a stale panel is a fault)
                 manual = (
                     state in fsm.ACTIVE
@@ -1013,37 +989,45 @@ class RouteExecutor(Node):
                     self.fsm.abort("manual takeover: selector left AUTO")
                     self._interrupt("manual takeover")
                 elif self._torque_off(now) and (
-                    state == fsm.EXECUTING
+                    (state == fsm.EXECUTING and self.phase != PHASE_PREMOVE)
                     or (state == fsm.BLOCKED and self.hold_cause not in ("field", "estop"))
                 ):
                     # the safety chain took the torque: hold, don't fault (auto-resume plan);
-                    # a hold that was already on (an obstacle walking into the field) takes
-                    # the safety cause, so it resumes on the field's terms
+                    # a hold that was already on (a controller abort, then someone stepping
+                    # into the field) takes the safety cause, so it resumes on the field's terms
                     self._hold(self._safety_cause(now), "drives lost torque")
                 elif self.hold_cause == "pending" and state == fsm.BLOCKED:
                     self._classify_pending(now, pre)
                 elif pre:
                     if state == fsm.READY:
-                        self.fsm.unready(pre)
-                    elif self._wheel_prereq(pre) and state == fsm.EXECUTING and self.auto_resume_enabled:
-                        # stop now; the drive report (10 Hz) says within safety_window_s whether
-                        # this was the safety chain (a hold) or a real feedback loss (a fault)
+                        # a momentary lapse while waiting must not throw the loaded mission away
+                        if held:
+                            self.fsm.unready(pre)
+                    elif (
+                        self._wheel_prereq(pre)
+                        and state == fsm.EXECUTING
+                        and self.phase != PHASE_PREMOVE  # nothing moves yet: debounced below
+                        and self.auto_resume_enabled
+                    ):
+                        # stop now, WITHOUT the grace period: losing wheel feedback while moving
+                        # is stopped at once and recovers by itself. The drive report (10 Hz)
+                        # then says within safety_window_s whether this was the safety chain (a
+                        # hold) or a real feedback loss (a fault)
                         self._hold("pending", f"stopped: {pre}")
                     elif self._wheel_prereq(pre) and self._excused_in_hold(now):
                         pass  # no torque: no wheel feedback is expected until the drives re-arm
-                    else:
-                        self._fault(pre)
+                    elif held:
+                        self._fault(f"{pre} for {self.prereq_grace_s:.1f} s", "EXEC_PREREQ_LOST")
                 elif state in fsm.ACTIVE and not self._auto():
                     self.fsm.abort("manual takeover: selector left AUTO")
                     self._interrupt("manual takeover")
+            else:
+                # IDLE / DONE / FAULT: nothing is waiting on a prerequisite, so the grace timer
+                # must not survive into the next mission and fire on its first tick
+                self._prereq_since = None
             if self.fsm.state == fsm.EXECUTING:
                 self._execute(now)
             elif self.fsm.state in (fsm.PAUSED, fsm.BLOCKED):
-                st, pose = self._step(), self._pose()
-                if st is not None and pose is not None:
-                    blocked = self._obstruction(st, pose)
-                    if blocked and self.fsm.resume_prepared:
-                        self.fsm.invalidate_resume(blocked)
                 if self.fsm.state == fsm.BLOCKED:
                     self._auto_resume_tick(now)
             self._publish_permit()
@@ -1055,7 +1039,7 @@ class RouteExecutor(Node):
         ):
             self._hold(self._safety_cause(now), "drives lost torque")
         elif now - self._pending_since > self.safety_window:
-            self._fault(f"{pre or 'wheel feedback lost'} without a safety stop")
+            self._fault(f"{pre or 'wheel feedback lost'} without a safety stop", "EXEC_PREREQ_LOST")
 
     def _excused_in_hold(self, now: float) -> bool:
         """Wheel feedback may be missing during a safety hold: while the drives report no
@@ -1100,7 +1084,10 @@ class RouteExecutor(Node):
         st = self._step()
         pose = self._pose()
         if st is None or pose is None:
-            self._fault("no step or no pose")
+            self._fault("no step or no pose", "EXEC_PREREQ_LOST")
+            return
+        if self.phase == PHASE_PREMOVE:
+            self._premove_tick(now)
             return
         if self.phase == PHASE_INIT:
             stale = self.goals.obsolete_outstanding()
@@ -1109,12 +1096,9 @@ class RouteExecutor(Node):
                 if now - min(stale.values()) > self.goal_cancel_timeout:
                     self.goals.forget_obsolete()
                     self._fault(
-                        f"previous action goal not terminated within {self.goal_cancel_timeout:.1f} s"
+                        f"previous action goal not terminated within {self.goal_cancel_timeout:.1f} s",
+                        "EXEC_ACTION_FAILED",
                     )
-                return
-            blocked = self._obstruction(st, pose)
-            if blocked:
-                self._hold("obstacle", blocked)
                 return
             if st.type != ROTATE:
                 if not self._send_follow(st, pose):
@@ -1144,7 +1128,10 @@ class RouteExecutor(Node):
                 # footprint margin was dropped 2026-09-17 with the margin at 0.05 m.)
                 allowed = self._cross_track_allowed(along)
                 if abs(cross) > allowed:
-                    self._fault(f"cross-track {cross:+.2f} m exceeds {allowed:.2f} m at {along:.2f} m along")
+                    self._fault(
+                        f"cross-track {cross:+.2f} m exceeds {allowed:.2f} m at {along:.2f} m along",
+                        "EXEC_OFF_PATH",
+                    )
                     return
                 if along >= st.length_m and self._next_in_chain() is not None:
                     # a chained boundary: the same FollowPath goal carries on into the next step,
@@ -1158,7 +1145,7 @@ class RouteExecutor(Node):
                     self.cross_track = 0.0
                     return
                 if along > st.length_m + 2 * self.route.limits.position_tolerance_m:
-                    self._fault(f"passed the endpoint by {along - st.length_m:.2f} m")
+                    self._fault(f"passed the endpoint by {along - st.length_m:.2f} m", "EXEC_OVERSHOOT")
                     return
                 if along >= st.length_m:
                     # Arrived along the line before Nav2's goal checker fired: its window is a
@@ -1175,28 +1162,27 @@ class RouteExecutor(Node):
                     self._odom_xy[0] - self.turn_centre[0], self._odom_xy[1] - self.turn_centre[1]
                 )
                 if drift > self.centre_drift_m:
-                    self._fault(f"turn centre drifted {drift:.2f} m")
+                    self._fault(f"turn centre drifted {drift:.2f} m", "EXEC_TURN_FAILED")
                     return
                 if (
                     now - self.turn_started_t > 1.0
                     and travelled * st.signed_angle_rad < 0
                     and abs(travelled) > self.wrong_way
                 ):
-                    self._fault(f"turning the wrong way ({math.degrees(travelled):+.1f} deg)")
+                    self._fault(
+                        f"turning the wrong way ({math.degrees(travelled):+.1f} deg)", "EXEC_TURN_FAILED"
+                    )
                     return
                 target = self.turn_target if self.turn_target is not None else st.signed_angle_rad
                 if abs(travelled) > abs(target) + self.turn_tol + math.radians(3.0):
                     self._fault(
                         f"turn overshot: {math.degrees(travelled):+.1f} of "
-                        f"{math.degrees(st.signed_angle_rad):+.1f} deg"
+                        f"{math.degrees(st.signed_angle_rad):+.1f} deg",
+                        "EXEC_OVERSHOOT",
                     )
                     return
-            blocked = self._obstruction(st, pose)
-            if blocked:
-                self._hold("obstacle", blocked)
-                return
             if self.goals.current is None:
-                self._fault("action goal lost")
+                self._fault("action goal lost", "EXEC_ACTION_FAILED")
                 return
             if self.goals.result is None:
                 if (
@@ -1204,7 +1190,10 @@ class RouteExecutor(Node):
                     and self.goals.sent_t is not None
                     and now - self.goals.sent_t > self.goal_accept_timeout
                 ):
-                    self._fault(f"action goal not accepted within {self.goal_accept_timeout:.1f} s")
+                    self._fault(
+                        f"action goal not accepted within {self.goal_accept_timeout:.1f} s",
+                        "EXEC_ACTION_FAILED",
+                    )
                 return
             if self.goals.result != ga.SUCCEEDED:
                 if self.goals.result == ga.ABORTED and self.auto_resume_enabled:
@@ -1214,7 +1203,7 @@ class RouteExecutor(Node):
                     if self._aborts < self.abort_retries:
                         self._hold("controller", f"controller aborted the {st.type} (collision ahead?)")
                         return
-                self._fault(f"action {self.goals.result}")
+                self._fault(f"action {self.goals.result}", "EXEC_ACTION_FAILED")
                 return
             # the chain's goal ends at its LAST step: if it finished while the bookkeeping was
             # still on an earlier chained step, move on so settle verifies the right endpoint
@@ -1238,7 +1227,9 @@ class RouteExecutor(Node):
             a = abs(wrap(pose[2] - st.end[2]))
             if st.type != ROTATE:
                 if d > self.verify_pos or a > self.verify_yaw:
-                    self._fault(f"endpoint missed: {d:.3f} m / {math.degrees(a):.1f} deg")
+                    self._fault(
+                        f"endpoint missed: {d:.3f} m / {math.degrees(a):.1f} deg", "EXEC_ENDPOINT_MISSED"
+                    )
                     return
             else:
                 self.turn_travelled, self.turn_acc0 = self._turn_travel(), None  # fold for verification
@@ -1255,7 +1246,8 @@ class RouteExecutor(Node):
                     self._fault(
                         f"turn out of tolerance: travelled {math.degrees(self.turn_travelled):+.1f} of "
                         f"{math.degrees(st.signed_angle_rad):+.1f} deg, "
-                        f"heading err {math.degrees(a):.1f} deg, odom drift {drift:.3f} m"
+                        f"heading err {math.degrees(a):.1f} deg, odom drift {drift:.3f} m",
+                        "EXEC_TURN_FAILED",
                     )
                     return
             self.get_logger().info(
@@ -1308,7 +1300,62 @@ class RouteExecutor(Node):
                 f"{fsm.NAMES[self.fsm.state]} {self.fsm.progress()} {self.phase}: {self.fsm.reason}"
                 + (f" [{note}]" if note else "")
             )
+            if self.fsm.state != self._last_event_state:
+                self._run_summary(self._last_event_state)
+                self._event()
+                self._last_event_state = self.fsm.state
             self._publish_state()
+
+    def _event(self) -> None:
+        """One operator event per RUN-STATE change (never per tick, never per phase)."""
+        code = (
+            alarms.hold_code(self.hold_cause)
+            if self.fsm.state == fsm.BLOCKED
+            else (self.fault_code or "EXEC_ACTION_FAILED")
+            if self.fsm.state == fsm.FAULT
+            else "MODE_CHANGE"
+        )
+        row = alarms.get(code)
+        m = Event()
+        m.header.stamp = self.get_clock().now().to_msg()
+        m.source = "route_executor"
+        m.level = {alarms.ERROR: Event.ERROR, alarms.WARN: Event.WARN}.get(row.severity, Event.INFO)
+        m.code = code
+        m.text = f"run {fsm.NAMES[self.fsm.state]} {self.fsm.progress()}: {self.fsm.reason}"
+        self._event_seq += 1
+        m.seq = self._event_seq
+        self._event_pub.publish(m)
+
+    def _run_summary(self, previous: int | None) -> None:
+        """One line per finished run, for the operator to read back (plan phase 2.3):
+        what ran, how long, how far off the line it got, and what held it on the way."""
+        state = self.fsm.state
+        if state in (*fsm.ACTIVE, fsm.READY) and previous in (None, fsm.IDLE, fsm.DONE, fsm.FAULT):
+            self._run_started = self._now()
+            self._run_holds = {}
+            self._run_peak_cross = 0.0
+        if state == fsm.BLOCKED and self.hold_cause:
+            self._run_holds[self.hold_cause] = self._run_holds.get(self.hold_cause, 0) + 1
+        self._run_peak_cross = max(self._run_peak_cross, abs(self.cross_track))
+        if state not in (fsm.DONE, fsm.FAULT, fsm.IDLE) or previous in (None, fsm.IDLE):
+            return
+        if self._run_started is None:
+            return
+        holds = ", ".join(f"{k} x{n}" for k, n in sorted(self._run_holds.items())) or "none"
+        m = Event()
+        m.header.stamp = self.get_clock().now().to_msg()
+        m.source = "route_executor"
+        m.level = Event.ERROR if state == fsm.FAULT else Event.INFO
+        m.code = "RUN_SUMMARY"
+        m.text = (
+            f"{self.fsm.mission_id or 'run'} {fsm.NAMES[state]} after "
+            f"{self._now() - self._run_started:.0f} s; peak cross-track "
+            f"{self._run_peak_cross:.2f} m; holds: {holds}"
+        )
+        self._event_seq += 1
+        m.seq = self._event_seq
+        self._event_pub.publish(m)
+        self._run_started = None
 
     def _publish_state(self) -> None:
         m = RunState()
@@ -1331,7 +1378,14 @@ class RouteExecutor(Node):
         m.resume_prepared = self.fsm.resume_prepared
         blocked = self.fsm.state == fsm.BLOCKED
         m.hold_cause = self.hold_cause if blocked else ""
+        m.fault_code = (
+            alarms.hold_code(self.hold_cause)
+            if blocked
+            else (self.fault_code if self.fsm.state == fsm.FAULT else "")
+        )
         m.auto_resume = blocked and self.auto_resume_enabled and self.hold_cause in self._auto_causes()
+        m.drive_power = self.drive_power()
+        m.premove = self.fsm.state == fsm.EXECUTING and self.phase == PHASE_PREMOVE
         pose = self._pose()
         if pose is not None:
             m.pose_valid, m.pose_x, m.pose_y, m.pose_yaw = True, pose[0], pose[1], pose[2]

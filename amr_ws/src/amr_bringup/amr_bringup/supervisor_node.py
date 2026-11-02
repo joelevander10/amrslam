@@ -3,8 +3,9 @@
 Owns four process groups - web, base, an optional Foxglove bridge, and at most
 one mode layer (mapping or navigation) - and the single source of motion
 authority, /amr/control_lease. Boots STARTING -> IDLE with base and web up and
-no layer. Mode changes and survey operations are asynchronous operations
-(OperationState) driven by one serial loop; every step has a deadline and a
+no layer, then on to LINE unless the profile is trackless-only (tracked false).
+Mode changes and survey operations are asynchronous operations (OperationState)
+driven by one serial loop; every step has a deadline and a
 failure lands in FAULT with motion inhibited, never in a half-switched stack.
 
     /amr/mode_state        ModeState, transient-local, on change + 2 Hz
@@ -29,6 +30,8 @@ import time
 import uuid
 
 import rclpy
+from agv_core import config
+from geometry_msgs.msg import Pose2D
 from nav2_msgs.srv import ManageLifecycleNodes
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
@@ -36,7 +39,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
 from std_srvs.srv import Trigger
 
-from amr_bringup import domains
+from amr_bringup import domains, logs, sdnotify, uptime
 from amr_bringup import mode_fsm as fsm
 from amr_bringup import operations as ops
 from amr_bringup import readiness as rd
@@ -46,6 +49,7 @@ from amr_interfaces.msg import (
     ControlLease,
     DriveStatus,
     Event,
+    LineState,
     LocalizationState,
     MappingState,
     ModeState,
@@ -67,7 +71,27 @@ SENSOR = QoSProfile(
     depth=5, reliability=QoSReliabilityPolicy.BEST_EFFORT, durability=QoSDurabilityPolicy.VOLATILE
 )
 
-LEASE_MANUAL, LEASE_AUTONOMOUS, LEASE_COMMISSIONING = 1, 2, 4
+LEASE_MANUAL, LEASE_AUTONOMOUS, LEASE_COMMISSIONING, LEASE_LINE = 1, 2, 4, 8
+# The web (and foxglove) come back by themselves: 10 s apart, three tries, then the
+# operator is told to restart the service rather than watching a dead page for ever.
+RESPAWN_BACKOFF_S = 10.0
+RESPAWN_TRIES = 3
+# How long a boot-time event waits for a listener (the web is spawned by this process
+# and takes a few seconds to subscribe) before it is given up on and only logged.
+DEFER_EVENT_S = 60.0
+
+# Mode replacement targets a client may ask for. MAPPING is absent deliberately: a survey
+# starts through /amr/supervisor/survey, not here. Keep the two dicts inverse of each other.
+_REQUEST_OF_TARGET = {
+    ModeState.IDLE: fsm.REQ_IDLE,
+    ModeState.NAVIGATION: fsm.REQ_NAVIGATION,
+    ModeState.LINE: fsm.REQ_LINE,
+}
+_MODE_OF_REQUEST = {
+    fsm.REQ_IDLE: fsm.IDLE,
+    fsm.REQ_NAVIGATION: fsm.NAVIGATION,
+    fsm.REQ_LINE: fsm.LINE,
+}
 INTERNAL = "/amr/internal/survey"
 
 
@@ -91,6 +115,9 @@ class Supervisor(Node):
         dp("still_wait_s", 5.0)
         dp("save_s", 60.0)
         dp("survey_rpc_s", 15.0)  # returned / abort answer budget (review R27)
+        # continue-survey: added to layer_start_s while slam_toolbox loads a saved pose graph
+        # (boiacca-map-1 rev1 is 94 MB; the session's own load timeout is 120 s)
+        dp("continue_load_s", 150.0)
         p = self.get_parameter
         self.real = bool(p("real").value)
         self.maps_dir = os.path.expanduser(str(p("maps_dir").value))
@@ -106,8 +133,29 @@ class Supervisor(Node):
                 "still_wait_s",
                 "save_s",
                 "survey_rpc_s",
+                "continue_load_s",
             )
         }
+
+        # The product, from the profile's top-level `tracked` (config.py note 5):
+        # a tape AGV enters LINE by itself once the base is up and refuses maps and
+        # routes; a trackless one boots to IDLE and refuses LINE; a vehicle carrying
+        # both boots to LINE too (2026-10-08: tracked is the default product, trackless
+        # is the operator's switch on Home). Read once, here.
+        self.tracked = config.TRACKED  # True tape | False slam | None both
+        self.admit_params = fsm.Params(tracked=self.tracked)
+        self._auto_line_done = False
+        self._boot_reported = False  # the end-of-boot operator event fires once per boot
+        self._verdict: uptime.Verdict | None = None  # how the PREVIOUS run ended
+        self.disk = rd.DiskStatus(-1, rd.DISK_OK, "")
+        self._disk_level = rd.DISK_OK
+        self._t_disk = 0.0
+        self._deferred: list[tuple[int, str, str, float]] = []
+        # Optional groups the supervisor brings back by itself (plan phase 3.1).
+        self._respawnable: dict[str, list[str]] = {}
+        self._respawn_at: dict[str, float] = {}
+        self._respawn_tries: dict[str, int] = {}
+        self._notify = sdnotify.Notifier()
 
         self.instance = uuid.uuid4().hex
         self.generation = 1
@@ -126,6 +174,7 @@ class Supervisor(Node):
         self.survey_op: tuple[str, str] | None = None  # (operation_id, kind) in flight
         self.inhibit_manual = False  # during a save
         self._pending_future = None
+        self._continue_hint: tuple[float, float, float] | None = None  # START of a continued survey
         self._worker: threading.Thread | None = None
         self._worker_result: bool | None = None
         self._lock = threading.RLock()
@@ -145,6 +194,12 @@ class Supervisor(Node):
             MappingState, "/amr/mapping_state", self.snap.on_mapping, LATCHED, callback_group=g
         )
         self.create_subscription(RunState, "/amr/run_state", self.snap.on_run, LATCHED, callback_group=g)
+        # Without this the LINE transaction can never COMMIT: _ready_line waits
+        # on snap.line_state_for(generation) and nothing would ever feed it, so
+        # a swap into LINE would sit there until LAYER_START_TIMEOUT.
+        self.create_subscription(
+            LineState, "/amr/line_state", self.snap.on_line, LATCHED, callback_group=g
+        )
         self.create_subscription(
             LocalizationState, "/amr/localization_state", self.snap.on_loc, LATCHED, callback_group=g
         )
@@ -200,7 +255,38 @@ class Supervisor(Node):
         argv = ["ros2", "launch", "amr_bringup", file] + [f"{k}:={v}" for k, v in args.items()]
         g = Group.spawn(role, argv, env=self._env(), log_path=os.path.join(self._logs, f"{role}.log"))
         self.get_logger().info(f"spawned {g.describe()}: {' '.join(argv[3:])}")
+        # The layer about to start owns THIS generation's footprint file; earlier ones
+        # belong to layers that are gone (power-loss plan W2).
+        logs.sweep_generation_files(self.state_dir, self.generation)
         return g
+
+    def _event_when_heard(self, level: int, code: str, text: str) -> None:
+        """Hold a BOOT-TIME event until somebody is listening.
+
+        /amr/events is volatile: a late joiner gets nothing. The web is started BY this
+        supervisor and subscribes seconds after boot, so the two events that matter most
+        - "power was lost last time" and the boot report - were published into an empty
+        room and lost (caught in sim, 2026-09-22). Held until the topic has a subscriber,
+        or logged alone after the deadline if nothing ever listens."""
+        self._deferred.append((level, code, text, self._now() + DEFER_EVENT_S))
+        self._flush_deferred()
+
+    def _flush_deferred(self) -> None:
+        if not self._deferred:
+            return
+        try:
+            heard = self._pub_event.get_subscription_count() > 0
+        except Exception:  # noqa: BLE001 - a counting failure must not lose the event
+            heard = True
+        now, keep = self._now(), []
+        for level, code, text, deadline in self._deferred:
+            if heard:
+                self._event(level, code, text)
+            elif now < deadline:
+                keep.append((level, code, text, deadline))
+            else:
+                self.get_logger().warn(f"{code} not delivered (nobody subscribed): {text}")
+        self._deferred = keep
 
     def _event(self, level: int, code: str, text: str) -> None:
         m = Event()
@@ -230,6 +316,7 @@ class Supervisor(Node):
                 self.fault_code = fault
             elif mode != fsm.FAULT:
                 self.fault_code = ""
+        self._mark()
         self._publish_mode()
 
     def _allowed(self) -> int:
@@ -239,6 +326,12 @@ class Supervisor(Node):
             return 0
         if self.mode == fsm.NAVIGATION:
             return LEASE_MANUAL | LEASE_AUTONOMOUS
+        if self.mode == fsm.LINE:
+            # The selector decides who drives (2026-10-02): MANUAL jogs (pendant, browser)
+            # in LINE mode too, AUTO is the tape follower's. The two cannot fight - the mux
+            # reads the panel first, and the follower ends its run when the selector
+            # leaves AUTO.
+            return LEASE_MANUAL | LEASE_LINE
         if self.mode == fsm.IDLE and self.snap.commissioning_active(self._now()):
             return LEASE_COMMISSIONING  # exclusive IDLE substate: no ordinary jog meanwhile
         return LEASE_MANUAL
@@ -277,13 +370,15 @@ class Supervisor(Node):
             pend = self.book.pending
             m.operation_id = pend.operation_id if pend else ""
             m.base_ready = rd.base_ready(self.snap, self._now())
-            m.layer_ready = self.mode in (fsm.MAPPING, fsm.NAVIGATION)
+            m.layer_ready = self.mode in fsm.LAYER_MODES
             m.active_map_id, m.active_map_revision, m.active_map_sha256 = self.active_map
             allowed = self._allowed()
             m.manual_available = bool(allowed & LEASE_MANUAL)
             m.autonomous_available = bool(allowed & LEASE_AUTONOMOUS)
+            m.line_available = bool(allowed & LEASE_LINE)
             m.fault_code = self.fault_code
             m.reason = self.reason
+            m.product = {True: "tape", False: "slam"}.get(self.tracked, "both")
             m.last_survey_map_id, m.last_survey_revision = self.last_survey
         self._pub_mode.publish(m)
 
@@ -302,20 +397,20 @@ class Supervisor(Node):
             if why:
                 res.accepted, res.message = False, why
                 return res
-            if req.target not in (ModeState.IDLE, ModeState.NAVIGATION):
+            kind = _REQUEST_OF_TARGET.get(req.target)
+            if kind is None:
                 res.accepted, res.message = (
                     False,
-                    "target must be IDLE or NAVIGATION (MAPPING is a survey START)",
+                    "target must be IDLE, NAVIGATION or LINE (MAPPING is a survey START)",
                 )
                 return res
-            kind = fsm.REQ_IDLE if req.target == ModeState.IDLE else fsm.REQ_NAVIGATION
             existing = (
                 self.book.get(self.book._by_request.get(req.request_id, "")) if req.request_id else None
             )
             if existing is not None:
                 res.accepted, res.operation_id, res.message = True, existing.operation_id, "duplicate request"
                 return res
-            d = fsm.admit(self.mode, kind, self._conditions())
+            d = fsm.admit(self.mode, kind, self._conditions(), self.admit_params)
             if not d.ok:
                 res.accepted, res.message = False, d.reason
                 return res
@@ -335,8 +430,7 @@ class Supervisor(Node):
                     res.accepted, res.operation_id, res.message = True, op.operation_id, "already on that map"
                     return res
             op, _ = self.book.submit(req.request_id, kind, map_id=map_id, map_revision=rev, map_sha256=sha)
-            target = fsm.IDLE if kind == fsm.REQ_IDLE else fsm.NAVIGATION
-            self._begin_transaction(op, target, map_id, rev, sha)
+            self._begin_transaction(op, _MODE_OF_REQUEST[kind], map_id, rev, sha)
             res.accepted, res.operation_id, res.message = True, op.operation_id, d.reason or "accepted"
             return res
 
@@ -362,19 +456,35 @@ class Supervisor(Node):
             if existing is not None:
                 res.accepted, res.operation_id, res.message = True, existing.operation_id, "duplicate request"
                 return res
-            d = fsm.admit(self.mode, kind, self._conditions())
+            d = fsm.admit(self.mode, kind, self._conditions(), self.admit_params)
             if not d.ok:
                 res.accepted, res.message = False, d.reason
                 return res
+            # No room to write the result (power-loss plan W3). Refused for the two
+            # operations that CREATE a map; never for anything that is already running.
+            if kind in (fsm.REQ_SURVEY_START, fsm.REQ_SURVEY_SAVE) and self.disk.blocks_new_work:
+                res.accepted, res.message = (
+                    False,
+                    f"disk full: {self.disk.free_mb} MB free on {self.disk.path}; "
+                    "delete old maps or reports first",
+                )
+                return res
+            cont_rev, cont_sha = int(req.continue_revision), ""
             if kind == fsm.REQ_SURVEY_START:
                 try:
                     rd.check_map_id(req.map_id)
+                    if cont_rev > 0:  # refused here, before the running layer is torn down
+                        cont_sha = rd.continuable(self.maps_dir, req.map_id, cont_rev)
+                        rd.check_hint(req.hint.x, req.hint.y, req.hint.theta)
                 except ValueError as e:
                     res.accepted, res.message = False, str(e)
                     return res
             op, _ = self.book.submit(req.request_id, kind, map_id=req.map_id, message=req.description)
             if kind == fsm.REQ_SURVEY_START:
-                self._begin_transaction(op, fsm.MAPPING, req.map_id, 0, "")
+                self._continue_hint = (
+                    (float(req.hint.x), float(req.hint.y), float(req.hint.theta)) if cont_rev > 0 else None
+                )
+                self._begin_transaction(op, fsm.MAPPING, req.map_id, cont_rev, cont_sha)
             else:
                 self.survey_op = (op.operation_id, kind)
                 if kind == fsm.REQ_SURVEY_SAVE:
@@ -397,8 +507,10 @@ class Supervisor(Node):
         base = self.groups.get("base")
         if base is None or base.poll() is not None:
             return "the base layer (drives, mux, panel, EKF) is not running"
-        if self.fault_code in ("BASE_EXITED", "BOOT_ERROR", "BASE_NOT_READY"):
+        if self.fault_code in ("BASE_EXITED", "BOOT_ERROR"):
             return f"fault {self.fault_code}: the base layer failed"
+        # BASE_NOT_READY with the group alive is a late base, not a dead one: the
+        # tick returns to IDLE by itself once it is ready, and Recover may try too.
         return None
 
     def _srv_recover(self, req, res):
@@ -443,6 +555,72 @@ class Supervisor(Node):
         self.txn.notes.append("from_fault" if from_fault else "")
         self.requested = target
         self._set(fsm.TRANSITIONING, "inhibiting")
+
+    def _auto_enter_line(self) -> None:
+        """LINE is the default mode of every vehicle that carries the tape product
+        (tracked true, and since 2026-10-08 tracked null = both): start the swap right
+        after boot, once. Only a trackless-only vehicle (tracked false) stays in IDLE.
+        No panel rule here - nothing can be moving at boot, the mux inhibits
+        through the transition, and the follower still needs the physical Start under
+        AUTO before a wheel turns. Leaving LINE later (the Home switch to trackless) is
+        the operator's request and is not undone."""
+        if self.tracked is False or self._auto_line_done or self.txn is not None:
+            return
+        self._auto_line_done = True
+        op, _ = self.book.submit(f"boot-line-{self.instance[:8]}", fsm.REQ_LINE)
+        self.get_logger().info(f"profile tracked={self.tracked}: entering LINE (the default mode)")
+        self._begin_transaction(op, fsm.LINE, "", 0, "")
+
+    def _mark(self) -> None:
+        """Rewrite the running marker (power-loss plan W1). One small atomic write per
+        mode change; a cut between writes costs at most the last transition."""
+        pend = self.book.pending
+        uptime.write(
+            self.state_dir,
+            self.instance,
+            fsm.MODE_NAMES.get(self.mode, str(self.mode)),
+            pend.operation_id if pend else "",
+            getattr(self.snap, "run_mission", ""),
+        )
+
+    def _check_disk(self) -> None:
+        """Watch the state and maps filesystems (power-loss plan W3). Edges only, and
+        the level is published in ModeState so the web can raise the standing alarm."""
+        st = rd.disk_status([self.state_dir, self.maps_dir])
+        self.disk = st
+        if st.level == self._disk_level:
+            return
+        was, self._disk_level = self._disk_level, st.level
+        if st.level == rd.DISK_STOP:
+            self._event(Event.ERROR, "DISK_FULL", f"{st.free_mb} MB free on {st.path}")
+        elif st.level == rd.DISK_WARN:
+            self._event(Event.WARN, "DISK_LOW", f"{st.free_mb} MB free on {st.path}")
+        elif st.level == rd.DISK_UNKNOWN:
+            self._event(Event.WARN, "DISK_LOW", "storage free space unknown: no watched filesystem could be read")
+        elif was != rd.DISK_OK:
+            self._event(Event.INFO, "DISK_LOW", f"storage is no longer low ({st.free_mb} MB free)")
+
+    def _boot_report(self, now: float, missing: str) -> None:
+        """One event at the end of boot, in words the operator can act on. `missing` is
+        base_missing()'s list; each item is named with what the operator does about it,
+        so the 70 s safety-reset case (2026-09-22) reads as a sentence, not a FAULT screen."""
+        if self._boot_reported:
+            return
+        self._boot_reported = True
+        after = ""
+        if self._verdict is not None and self._verdict.kind == uptime.POWER_LOSS:
+            after = "after a power loss, "
+        if not missing:
+            self._event_when_heard(Event.INFO, "BOOT_READY", f"{after}the vehicle is ready")
+            return
+        actions = {
+            "drives": "press the safety reset on the cabinet",
+            "panel": "check the control panel and its I/O island",
+            "wheel feedback": "press the safety reset on the cabinet",
+            "mux": "call the engineer: the command mux did not start",
+        }
+        parts = [f"{item} ({actions.get(item, 'see the Alarms page')})" for item in missing.split(", ")]
+        self._event_when_heard(Event.WARN, "BASE_NOT_READY", f"{after}not ready: " + "; ".join(parts))
 
     def _fail_active(self, code: str, why: str) -> None:
         """Terminal failure of whatever is in flight (review R25): the transaction's or the
@@ -548,28 +726,16 @@ class Supervisor(Node):
                 t.step = fsm.COMMIT
                 return
             try:
-                if t.target == fsm.MAPPING:
-                    self.groups["layer"] = self._launch(
-                        "layer",
-                        "mapping_layer.launch.py",
-                        maps_dir=self.maps_dir,
-                        generation=self.generation,
-                        internal="true",
-                    )
-                else:
-                    self.groups["layer"] = self._launch(
-                        "layer",
-                        "navigation_layer.launch.py",
-                        maps_dir=self.maps_dir,
-                        map_id=t.map_id,
-                        revision=t.map_revision,
-                        generation=self.generation,
-                        autostart="false",
-                    )
+                # Explicit dispatch, never a fallthrough: an unhandled target must fail
+                # loudly here rather than silently start the wrong layer.
+                start = self._LAYER_START.get(t.target)
+                if start is None:
+                    raise KeyError(f"no layer launch for mode {fsm.MODE_NAMES.get(t.target, t.target)}")
+                self.groups["layer"] = start(self, t)
             except Exception as e:  # noqa: BLE001
                 self._fail(op, "SPAWN_FAILED", str(e))
                 return
-            t.deadline = now + self.budget["layer_start_s"]
+            t.deadline = now + self._layer_start_budget(t)
             t.notes.append("lm:none")
             self.book.phase(op, "starting new layer")
             t.advance()
@@ -585,13 +751,18 @@ class Supervisor(Node):
                 return
             if now > t.deadline:
                 self._fail(
-                    op, "LAYER_START_TIMEOUT", f"new layer not ready in {self.budget['layer_start_s']:.0f} s"
+                    op, "LAYER_START_TIMEOUT", f"new layer not ready in {self._layer_start_budget(t):.0f} s"
                 )
                 return
-            if t.target == fsm.MAPPING:
-                self._ready_mapping(t, now)
-            else:
-                self._ready_navigation(t, now)
+            ready = self._LAYER_READY.get(t.target)
+            if ready is None:
+                self._fail(
+                    op,
+                    "LAYER_NO_READINESS",
+                    f"no readiness check for mode {fsm.MODE_NAMES.get(t.target, t.target)}",
+                )
+                return
+            ready(self, t, now)
             return
         if t.step == fsm.COMMIT:
             self.txn = None
@@ -606,6 +777,43 @@ class Supervisor(Node):
             self._set(t.target, "", "")
             return
 
+    def _layer_start_budget(self, t: fsm.Transaction) -> float:
+        """A continued survey also loads a saved pose graph before it is ready."""
+        extra = self.budget["continue_load_s"] if t.target == fsm.MAPPING and t.map_revision > 0 else 0.0
+        return self.budget["layer_start_s"] + extra
+
+    def _start_mapping(self, t: fsm.Transaction):
+        return self._launch(
+            "layer",
+            "mapping_layer.launch.py",
+            maps_dir=self.maps_dir,
+            generation=self.generation,
+            internal="true",
+        )
+
+    def _start_navigation(self, t: fsm.Transaction):
+        return self._launch(
+            "layer",
+            "navigation_layer.launch.py",
+            maps_dir=self.maps_dir,
+            map_id=t.map_id,
+            revision=t.map_revision,
+            generation=self.generation,
+            autostart="false",
+        )
+
+    def _start_line(self, t: fsm.Transaction):
+        return self._launch(
+            "layer", "line_layer.launch.py", generation=self.generation, real=str(self.real).lower()
+        )
+
+    def _ready_line(self, t: fsm.Transaction, now: float) -> None:
+        """The line layer is ready as soon as it reports its own state on THIS generation.
+        No RPC: unlike a survey, nothing has to be handed to it to start (Increment 1)."""
+        if not self.snap.line_state_for(self.generation):
+            return
+        t.step = fsm.COMMIT
+
     def _ready_mapping(self, t: fsm.Transaction, now: float) -> None:
         if not self.snap.mapping_state_for(self.generation):
             return  # coordinator not up yet
@@ -615,6 +823,10 @@ class Supervisor(Node):
             req = StartSurvey.Request()
             req.map_id = t.map_id
             req.description = self.book.get(t.operation_id).message
+            if t.map_revision > 0 and self._continue_hint is not None:
+                req.continue_revision = int(t.map_revision)
+                hx, hy, hyaw = self._continue_hint
+                req.hint = Pose2D(x=hx, y=hy, theta=hyaw)
             self._pending_future = self._cli["start"].call_async(req)
             self.book.phase(t.operation_id, "starting survey")
             return
@@ -676,6 +888,20 @@ class Supervisor(Node):
         if stage == "lm:ok":
             if self.snap.run_state_for(self.generation) and self.snap.loc_state_for(self.generation):
                 t.step = fsm.COMMIT
+
+    # Layer dispatch. Every mode in fsm.LAYER_MODES must appear in BOTH tables; a missing
+    # entry fails the transaction loudly (SPAWN_FAILED / LAYER_NO_READINESS) instead of
+    # silently starting the wrong layer, which is what the old bare `else` did.
+    _LAYER_START = {
+        fsm.MAPPING: _start_mapping,
+        fsm.NAVIGATION: _start_navigation,
+        fsm.LINE: _start_line,
+    }
+    _LAYER_READY = {
+        fsm.MAPPING: _ready_mapping,
+        fsm.NAVIGATION: _ready_navigation,
+        fsm.LINE: _ready_line,
+    }
 
     # ---------------------------------------------------------- survey follow-ups
 
@@ -741,6 +967,23 @@ class Supervisor(Node):
     # ------------------------------------------------------------------ the loop
 
     def _boot(self) -> None:
+        # Before anything else: what happened last time? A marker that survived is the
+        # only evidence a power cut leaves, and the operator needs it in the first
+        # sentence, not after a failed arm (power-loss plan W1).
+        self._verdict = uptime.verdict(self.state_dir)
+        if self._verdict is not None:
+            self._event_when_heard(
+                Event.ERROR if self._verdict.kind == uptime.POWER_LOSS else Event.WARN,
+                "UNCLEAN_SHUTDOWN" if self._verdict.kind == uptime.POWER_LOSS else "SERVICE_CRASHED",
+                self._verdict.sentence(),
+            )
+            self.get_logger().warn(self._verdict.sentence())
+        self._mark()
+        # Nothing is live at boot, so every per-generation costmap footprint left behind
+        # is stale (power-loss plan W2); they accumulated one per mode change.
+        stale = logs.sweep_generation_files(self.state_dir)
+        if stale:
+            self.get_logger().info(f"swept {len(stale)} stale generation files")
         p = self.get_parameter
         if p("web").value:
             argv = [
@@ -751,6 +994,7 @@ class Supervisor(Node):
                 "-p",
                 f"maps_dir:={self.maps_dir}",
             ]
+            self._respawnable["web"] = argv
             self.groups["web"] = Group.spawn(
                 "web", argv, env=self._env(), log_path=os.path.join(self._logs, "web.log")
             )
@@ -768,10 +1012,12 @@ class Supervisor(Node):
         self.groups["base"] = self._launch("base", "base.launch.py", **base_args)
         if p("foxglove").value:
             argv = ["ros2", "launch", "foxglove_bridge", "foxglove_bridge_launch.xml"]
+            self._respawnable["foxglove"] = argv
             self.groups["foxglove"] = Group.spawn(
                 "foxglove", argv, env=self._env(), log_path=os.path.join(self._logs, "foxglove.log")
             )
         self._boot_deadline = self._now() + self.budget["base_ready_s"]
+        self._boot_reported = False
 
     def _reap(self, now: float) -> None:
         """An unrequested exit of base or the layer is a fault - once. The dead
@@ -783,9 +1029,41 @@ class Supervisor(Node):
             g.requested_stop = True  # handled; never reap it again
             if role in ("base", "layer"):
                 self._fail_active(f"{role.upper()}_EXITED", f"{g.describe()} exited unrequested")
+            elif role in self._respawnable:
+                # The web is the operator's only window and was the least protected
+                # process in the stack: bring it back on a bounded backoff, then say
+                # loudly that it is gone (plan phase 3.1).
+                self.get_logger().warn(f"{g.describe()} exited; respawning in {RESPAWN_BACKOFF_S:.0f} s")
+                self.groups.pop(role, None)
+                self._respawn_at[role] = now + RESPAWN_BACKOFF_S
             else:
                 self.get_logger().warn(f"{g.describe()} exited; optional group, not restarted")
                 self.groups.pop(role, None)
+        self._respawn_due(now)
+
+    def _respawn_due(self, now: float) -> None:
+        for role, when in list(self._respawn_at.items()):
+            if now < when:
+                continue
+            del self._respawn_at[role]
+            tries = self._respawn_tries.get(role, 0) + 1
+            self._respawn_tries[role] = tries
+            if tries > RESPAWN_TRIES:
+                self.get_logger().error(f"{role} died {tries - 1} times; not restarting it again")
+                self._event(Event.ERROR, "WEB_DOWN" if role == "web" else "SPAWN_FAILED",
+                            f"{role} keeps stopping; restart the service")
+                continue
+            try:
+                self.groups[role] = Group.spawn(
+                    role,
+                    self._respawnable[role],
+                    env=self._env(),
+                    log_path=os.path.join(self._logs, f"{role}.log"),
+                )
+                self.get_logger().warn(f"{role} respawned (attempt {tries} of {RESPAWN_TRIES})")
+            except Exception as e:  # noqa: BLE001 - an optional group must never fault the vehicle
+                self.get_logger().error(f"{role} respawn failed: {e!r}")
+                self._respawn_at[role] = now + RESPAWN_BACKOFF_S
 
     def _loop(self) -> None:
         with self._lock:
@@ -795,9 +1073,24 @@ class Supervisor(Node):
                 self.get_logger().error(f"boot error: {e!r}")
                 self._boot_deadline = self._now()
                 self._fail_active("BOOT_ERROR", f"boot failed: {e!r}")
+        # systemd: the unit is Type=notify, so nothing downstream starts until the
+        # groups are spawned, and WatchdogSec restarts a WEDGED loop (plan phase 3.2).
+        self._notify.ready()
         period = 0.1
+        t_cap = 0.0
         while not self._stop.is_set():
             t0 = self._now()
+            self._notify.watchdog()
+            self._flush_deferred()
+            if t0 - self._t_disk >= 30.0:
+                self._t_disk = t0
+                self._check_disk()
+            if t0 - t_cap >= 60.0:
+                t_cap = t0
+                # A single bad run can fill the disk between restarts; children append,
+                # so truncating underneath them is safe (power-loss plan W2).
+                for name in logs.cap_dir(self._logs):
+                    self.get_logger().warn(f"{name} passed the size cap and was truncated")
             with self._lock:
                 try:
                     self._tick(t0)
@@ -819,12 +1112,27 @@ class Supervisor(Node):
         self._reap(now)
         if self.mode == fsm.STARTING:
             if rd.base_ready(self.snap, now) and self.snap.mux_acknowledged(self.generation, now):
+                self._boot_report(now, "")
                 self._set(fsm.IDLE, "", "")
+                self._auto_enter_line()
             elif now > self._boot_deadline:
-                self._set(fsm.FAULT, "base not ready", rd.base_missing(self.snap, now), "BASE_NOT_READY")
+                missing = rd.base_missing(self.snap, now)
+                self._boot_report(now, missing)
+                self._set(fsm.FAULT, "base not ready", missing, "BASE_NOT_READY")
             return
         if self.mode == fsm.STOPPING:
             return
+        if self.mode == fsm.FAULT and self.fault_code == "BASE_NOT_READY" and self.txn is None:
+            # The base came up after the boot budget (2026-09-22: the drives sat in
+            # "Switch on disabled" until the safety reset was pressed 70 s after boot).
+            # The group is alive and healthy, nothing needs rebuilding: enter IDLE the
+            # same way STARTING does instead of demanding a service restart.
+            if rd.base_ready(self.snap, now) and self.snap.mux_acknowledged(self.generation, now):
+                self.get_logger().info("base ready after the boot budget")
+                self._boot_report(now, "")
+                self._set(fsm.IDLE, "", "")
+                self._auto_enter_line()
+                return
         if self.txn is not None:
             self._step_transaction(now)
         elif self.survey_op is not None:
@@ -843,6 +1151,7 @@ class Supervisor(Node):
         actually revokes motion."""
         self._stop.set()
         self._stopping = True
+        self._notify.stopping()
         got = self._lock.acquire(timeout=2.0)
         try:
             self.mode, self.phase = fsm.STOPPING, "stopping"
@@ -866,6 +1175,9 @@ class Supervisor(Node):
         pend = self.book.pending
         if pend:
             self.book.finish(pend.operation_id, ops.INTERRUPTED, "service stopped")
+        # LAST, after the children are down: a kill during teardown must still read as
+        # unclean next time (power-loss plan W1). Nothing may be added below this line.
+        uptime.clear(self.state_dir)
 
 
 def main(args=None) -> None:

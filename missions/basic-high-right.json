@@ -1,0 +1,10 @@
+{
+  "mission_name": "basic-high-right",
+  "branch_default": "right",
+  "branch_latch": [],
+  "high_zone": {"shortest_straight_m": 10.0, "pair_spacing_m": 0.5, "outer_code": 2, "inner_code": 1},
+  "tags": [
+    {"tag": "0180", "action": "u_turn", "ignore_s": 2, "direction": "cw", "approach_mps": 0.1, "decel_m": 0.3, "max_approach_m": 2.0, "label": "U-turn CW"},
+    {"tag": "0190", "action": "u_turn", "ignore_s": 2, "direction": "ccw", "approach_mps": 0.1, "decel_m": 0.3, "max_approach_m": 2.0, "label": "U-turn CCW"}
+  ]
+}

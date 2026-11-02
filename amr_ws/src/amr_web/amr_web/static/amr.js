@@ -65,17 +65,25 @@ function rail(st) {
   const d = st.drives;
   if (!d) tile('tel-drives', '–', 'no drive status', 'bad');
   else if (d.age_s > FRESH_S) tile('tel-drives', 'STALE', `${num(d.age_s, 1)} s old`, 'bad');
-  else tile('tel-drives', d.operational ? 'ARMED' : 'OFF', `${d.left || '?'} · ${d.right || '?'}`, d.operational ? '' : 'warn');
+  // both drives in the same state is the normal case: say it once, the rail row is one line
+  // off in standby is normal (powered on demand, 2026-10-08): say why instead of the statuswords
+  else tile('tel-drives', d.operational ? 'ARMED' : 'OFF', (!d.operational && d.link === 'standby' && d.power_reason) ? d.power_reason : (d.left === d.right ? (d.left || '?') : `${d.left || '?'} · ${d.right || '?'}`), d.operational ? '' : 'warn');
   const mx = st.mux, mxStale = !mx || mx.age_s > FRESH_S;
   tile('tel-source', mx ? mx.source : '–', mx ? (mx.inhibited ? 'inhibited' : '—') : 'no mux state', mx && mx.inhibited ? 'warn' : '', mxStale);
-  tile('tel-wheels', mx ? `${num(mx.left_rad_s, 2)} / ${num(mx.right_rad_s, 2)}` : '–', 'rad/s · L / R', '', mxStale);
+  // Scanner fields as the mux applies them: protective stops AUTO, warning 1 x0.5, warning 2 a deceleration stop (factor 0).
+  if (!mx) tile('tel-field', '–', 'no mux state', 'bad');
+  else if (!mx.field_fresh) tile('tel-field', 'NO DATA', 'auto held at zero', 'bad', mxStale);
+  else if (!mx.protective_clear) tile('tel-field', 'PROTECT', 'protective field: auto stopped', 'bad', mxStale);
+  else if (mx.warning_active) tile('tel-field', `WARNING ${mx.warning_level || ''}`.trim(), (mx.speed_scale < 0.01 ? 'auto stopped' : `auto speed x${num(mx.speed_scale, 2)}`), 'warn', mxStale);
+  else tile('tel-field', 'CLEAR', 'fields clear', '', mxStale);
+  tile('tel-wheels', mx ? `${num(mx.left_mps, 2)} / ${num(mx.right_mps, 2)}` : '–', 'm/s · L / R', '', mxStale);
   const l = st.localization;
   tile('tel-loc', l ? l.state_name : '–', st.localization_stale ? 'stale (replaced layer)' : (l ? '—' : 'no layer'),
        l ? LOC_LEVEL[l.state_name] : '', st.localization_stale);
   const r = st.run;
   // the run's own reason (Start refused / ignored, hold, fault) also lands in the log box on
-  // every page, where operators look after pressing START (2026-09-24: "no error" while the
-  // refusal was only on the Run page)
+  // every page, where operators look after pressing START (AMR QR 2026-09-24: "no error" while
+  // the refusal was only on the Run page)
   const why = r && !st.run_stale ? (r.reason || '') : '';
   if (why && why !== railRunReason) log(`run ${r.state_name}: ${why}`, ['FAULT', 'BLOCKED'].includes(r.state_name) || /refus|ignor/i.test(why) ? 'bad' : '');
   railRunReason = why;
@@ -83,8 +91,50 @@ function rail(st) {
        r ? RUN_LEVEL[r.state_name] : '', st.run_stale);
   tile('tel-gen', m ? String(m.generation) : '–', st.lease ? 'lease' : 'no lease', st.lease ? '' : 'warn');
 }
+// Header chips beside NET: drive supply voltage and IPC CPU temperature (both <10 s old).
+function headerChips(st) {
+  const sv = document.getElementById('supply'), tc = document.getElementById('ipc-temp');
+  const s = st.drive_supply;
+  if (sv) {
+    const vals = s ? ['left', 'right'].map(k => s[k]).filter(v => typeof v === 'number') : [];
+    const stale = !s || s.age_s > 10;
+    sv.textContent = vals.length && !stale ? `${num(Math.min(...vals), 1)} V` : '– V';
+    sv.title = s ? `Drive main supply: left ${num(s.left, 1)} V · right ${num(s.right, 1)} V (${num(s.age_s, 0)} s ago)` : 'Drive main supply: no report';
+    sv.className = 'chip' + (stale ? ' stale' : '');
+  }
+  if (tc) {
+    const t = st.ipc_temp;
+    tc.textContent = t ? `${num(t.package_c, 0)} °C` : '– °C';
+    tc.title = t ? `IPC CPU: package ${num(t.package_c, 0)} °C, hottest core ${num(t.core_max_c, 0)} °C` : 'IPC CPU temperature unavailable';
+    tc.className = 'chip' + (t && t.package_c >= 85 ? ' bad' : t && t.package_c >= 75 ? ' warn' : '');
+  }
+}
 let railRunReason = null;
 function railStale(on) { const e = document.getElementById('telemetry'); if (e) e.classList.toggle('stale', on); }
+
+// One alarms poll for every page (amr_web/alarms.py decides; nothing is re-derived
+// client-side). Pages register with onAlarms(); the rail always shows the top row.
+const alarmListeners = [];
+function onAlarms(fn) { alarmListeners.push(fn); }
+async function pollAlarms() {
+  try {
+    const { status, data } = await apiGet('/api/alarms');
+    if (status === 200) {
+      const top = (data.alarms || [])[0];
+      const el = document.getElementById('rail-alarm');
+      if (el) {
+        el.hidden = !top;
+        if (top) {
+          el.className = 'rail-alarm ' + (top.level === 'error' ? 'bad' : top.level === 'warn' ? 'warn' : '');
+          el.innerHTML = `<b>${esc(top.title)}</b><i>${esc(top.action)}</i>`;
+        }
+      }
+      alarmListeners.forEach(fn => fn(data));
+    }
+  } catch (e) { /* the state poll already reports the disconnection */ }
+  setTimeout(pollAlarms, 1000);
+}
+pollAlarms();
 
 async function poll() {
   try {
@@ -94,6 +144,7 @@ async function poll() {
       pill('pill-link', 'connected', 'ok');
       railStale(false);
       rail(data);
+      headerChips(data);
       stateListeners.forEach(fn => fn(data));
     } else { pill('pill-link', 'error ' + status, 'bad'); railStale(true); }
   } catch (e) { pill('pill-link', 'disconnected', 'bad'); railStale(true); }
@@ -164,4 +215,123 @@ async function followOperation(id, onDone) {
   log(`operation ${id}: still pending after 5 min (outcome unknown)`, 'bad');
   if (onDone) onDone(null);
   return null;
+}
+
+// Page error boundary (plan phase 3.4): a bug in a page script used to leave buttons
+// silently dead. Now it says so, keeps the rail polling, and gives the operator a
+// reference to read out. Reported to the server so it lands in the event log too.
+(function () {
+  let reported = false;
+  function show(what) {
+    const el = document.getElementById('page-error');
+    if (!el) return;
+    el.hidden = false;
+    el.textContent = `Page error — reload this page. (${what})`;
+    if (!reported) {
+      reported = true;  // one report per page load: a loop of errors must not flood the log
+      try { api('/api/page-error', { where: location.pathname, what: String(what).slice(0, 300) }); } catch (e) { /* offline */ }
+    }
+  }
+  window.addEventListener('error', e => show(e.message || 'script error'));
+  window.addEventListener('unhandledrejection', e => show((e.reason && e.reason.message) || 'request failed'));
+})();
+
+// Role switch (amr_web/role.py): operator <-> engineer. The PIN is typed here and
+// checked on the server; it is a mistake guard, not security.
+(function () {
+  const btn = document.getElementById('role-btn');
+  if (!btn) return;
+  btn.onclick = async () => {
+    if (btn.dataset.role === 'engineer') {
+      await api('/api/role', { role: 'operator' });
+      location.href = '/home';
+      return;
+    }
+    openPinPad();
+  };
+
+  // On-page keypad, not a browser prompt: the kiosk has no on-screen keyboard.
+  const pad = document.getElementById('pin-pad');
+  const dots = document.getElementById('pin-dots');
+  const msg = document.getElementById('pin-msg');
+  const MAX = 8;
+  let pin = '';
+  let busy = false;
+  const draw = () => { dots.textContent = pin ? '●'.repeat(pin.length) : '–'; };
+  function openPinPad() {
+    pin = ''; msg.textContent = ''; draw();
+    pad.showModal();
+  }
+  async function submit() {
+    if (!pin || busy) return;
+    busy = true;
+    const { status, data } = await api('/api/role', { role: 'engineer', pin });
+    busy = false;
+    if (status === 200) { pad.close(); location.href = '/status'; return; }
+    pin = ''; draw();
+    msg.textContent = (data && data.message) || 'wrong PIN';
+  }
+  function key(k) {
+    if (k === 'cancel') { pad.close(); return; }
+    if (k === 'ok') { submit(); return; }
+    if (k === 'back') pin = pin.slice(0, -1);
+    else if (/^[0-9]$/.test(k) && pin.length < MAX) pin += k;
+    msg.textContent = ''; draw();
+  }
+  pad.addEventListener('click', e => {
+    const b = e.target.closest('button[data-k]');
+    if (b) key(b.dataset.k);
+  });
+  pad.addEventListener('keydown', e => {
+    if (/^[0-9]$/.test(e.key)) key(e.key);
+    else if (e.key === 'Backspace') key('back');
+    else if (e.key === 'Enter') key('ok');
+    else return;                       // Escape: the dialog's own cancel
+    e.preventDefault();
+  });
+})();
+
+// Display size knob (amr.css "one layout, three sizes"): s -> m -> l -> s. Stored per
+// device; base.html applies the stored value before first paint. The canvases size
+// themselves from their box, so a resize event makes them follow the new scale.
+(function () {
+  const btn = document.getElementById('ui-size');
+  if (!btn) return;
+  const NEXT = { s: 'm', m: 'l', l: 's' };
+  const show = () => { btn.textContent = { s: 'Aa', m: 'Aa+', l: 'Aa++' }[document.documentElement.dataset.ui] || 'Aa'; };
+  btn.onclick = () => {
+    const u = NEXT[document.documentElement.dataset.ui] || 's';
+    document.documentElement.dataset.ui = u;
+    try { localStorage.setItem('amr.ui', u); } catch (e) { /* storage blocked: this page only */ }
+    show();
+    window.dispatchEvent(new Event('resize'));
+  };
+  show();
+})();
+
+// Reload (↻): the touch panel has no keyboard and no browser toolbar. Like Ctrl+Shift+R:
+// re-download this page's CSS and JS into the cache first, so a software update shows.
+(function () {
+  const btn = document.getElementById('reload-btn');
+  if (!btn) return;
+  btn.onclick = async () => {
+    btn.disabled = true;
+    const urls = [...document.querySelectorAll('link[rel="stylesheet"][href], script[src]')].map(e => e.href || e.src);
+    await Promise.allSettled(urls.map(u => fetch(u, { cache: 'reload' })));
+    location.reload();
+  };
+})();
+
+// In-page tabs: <div class="tabs" id=X><button class="tab" data-tab="a">…</button></div>
+// followed by sibling <div class="tabpane" data-tab="a"> panes. Presentation only.
+function tabs(id) {
+  const bar = document.getElementById(id); if (!bar) return;
+  const panes = [...bar.parentElement.querySelectorAll('.tabpane')];
+  const pick = name => {
+    bar.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === name));
+    panes.forEach(p => { p.hidden = p.dataset.tab !== name; });
+  };
+  bar.querySelectorAll('.tab').forEach(b => { b.onclick = () => pick(b.dataset.tab); });
+  const on = bar.querySelector('.tab.on') || bar.querySelector('.tab');
+  if (on) pick(on.dataset.tab);
 }

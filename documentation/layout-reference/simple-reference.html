@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TN Demo Loop</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700&family=IBM+Plex+Mono:wght@600&family=IBM+Plex+Sans:wght@500&display=swap" rel="stylesheet">
+<style>
+  /* Drawing-only layout image. Canvas 1920x1080; shown at ~0.47 scale on the slide,
+     so keep every text >= 26px here. Tag meanings live on the slide itself. */
+  :root {
+    --paper: #e9edf2;
+    --surface: #ffffff;
+    --ink: #14171d;
+    --ink-2: #3d4553;
+    --ink-3: #636b7c;
+    --rule: #cbd2de;
+    --route: #1f3f7a; --route-dark: #152c57; --route-wash: #dde6f5;
+    --slow: #e09a00;  --slow-wash: #fde9b8;  --slow-ink: #8a5e00;
+    --tag: #c8176b;
+    --agv: #23272f;
+    color-scheme: light;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding-block: 0 40px;
+    background: var(--paper);
+    color: var(--ink);
+    font: 16px/1.45 "IBM Plex Sans", Arial, Helvetica, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------------- toolbar (never captured) ---------------- */
+  .toolbar {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+    padding: 10px 16px;
+    background: var(--surface);
+    border-bottom: 2px solid var(--ink);
+  }
+  .toolbar strong { margin-right: 8px; font: 700 15px "Archivo", Arial, sans-serif; }
+  .seg { display: flex; border: 1.5px solid var(--ink); }
+  .seg button, .toolbar .go {
+    border: 0; border-left: 1px solid var(--rule);
+    background: var(--surface); color: var(--ink-2);
+    padding: 7px 12px; cursor: pointer;
+    font: 600 11px "IBM Plex Mono", ui-monospace, monospace;
+    letter-spacing: .07em; text-transform: uppercase;
+  }
+  .seg button:first-child { border-left: 0; }
+  .seg button[aria-pressed="true"] { background: var(--agv); color: #fff; }
+  .toolbar .go { border: 1.5px solid var(--route-dark); background: var(--route); color: #fff; }
+  .toolbar .go:disabled { opacity: .6; cursor: progress; }
+  .toolbar button:focus-visible { outline: 2px solid var(--tag); outline-offset: 2px; }
+  .toolbar .status {
+    margin-left: auto; color: var(--ink-3);
+    font: 600 11px "IBM Plex Mono", ui-monospace, monospace; letter-spacing: .05em; text-transform: uppercase;
+  }
+
+  .stage-wrap { padding: 20px 16px 0; }
+  .stage { position: relative; margin: 0 auto; box-shadow: 0 1px 0 var(--rule), 0 10px 30px rgba(20,30,50,.12); }
+
+  /* ---------------- canvas 1920 x 1080 ---------------- */
+  .slide {
+    position: absolute; top: 0; left: 0;
+    width: 1920px; height: 1080px;
+    transform-origin: top left;
+    overflow: hidden;
+    background: var(--surface);
+  }
+
+  .dwg { position: absolute; inset: 0; width: 1920px; height: 1080px; }
+  .dwg text { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+  .head { font: 700 40px "Archivo", Arial, sans-serif !important; text-transform: uppercase; }
+  .lbl { font-size: 28px; font-weight: 600; letter-spacing: .03em; }
+  .tagno { font: 700 28px "Archivo", Arial, sans-serif !important; fill: #fff; }
+  .env { fill: none; stroke: var(--route-wash); stroke-width: 56; stroke-linejoin: round; }
+  .slowband { fill: none; stroke: var(--slow-wash); stroke-width: 56; }
+  .slowedge { fill: none; stroke: var(--slow); stroke-width: 3; stroke-dasharray: 12 8; }
+  .lane { fill: none; stroke: var(--route); stroke-width: 7; stroke-linejoin: round; }
+  .chev { fill: none; stroke: var(--route-dark); stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; }
+
+  .legend {
+    position: absolute; left: 60px; top: 962px; width: 1800px; height: 76px;
+    display: flex; align-items: center; justify-content: space-between;
+    margin: 0; padding: 0; list-style: none;
+    color: var(--ink-2); font: 500 28px "IBM Plex Sans", Arial, sans-serif;
+  }
+  .legend li { display: flex; align-items: center; gap: 16px; white-space: nowrap; }
+  .legend svg { flex: none; width: 64px; height: 40px; }
+</style>
+</head>
+<body>
+
+<nav class="toolbar" aria-label="Export">
+  <strong>TN Demo Loop</strong>
+  <div class="seg" role="group" aria-label="Resolution">
+    <button type="button" id="res-2" data-res="2" aria-pressed="false">2× · 3840</button>
+    <button type="button" id="res-3" data-res="3" aria-pressed="true">3× · 5760</button>
+  </div>
+  <div class="seg" role="group" aria-label="Background">
+    <button type="button" id="bg-white" data-bg="white" aria-pressed="true">White</button>
+    <button type="button" id="bg-none" data-bg="none" aria-pressed="false">Transparent</button>
+  </div>
+  <button type="button" class="go" id="download">Download PNG</button>
+  <span class="status" id="status">16:9 · 1920 × 1080 base</span>
+</nav>
+
+<div class="stage-wrap">
+<div class="stage" id="stage">
+<section class="slide" id="slide" aria-label="TN demo loop layout">
+
+  <svg class="dwg" id="dwg" viewBox="0 0 1920 1080" role="img" aria-label="Clockwise stadium loop. Home with tag 10 at the bottom centre. Slow zones on both curves between tag 20 and tag 30. Stop 1 with tag 40 releases the trolley, Stop 2 with tag 50 couples one.">
+    <defs>
+      <path id="chev" d="M-9 -13 L9 0 L-9 13"/>
+      <marker id="mk-cw" markerUnits="userSpaceOnUse" markerWidth="30" markerHeight="28" refX="20" refY="14" orient="auto"><path d="M0,0 L30,14 L0,28 Z" fill="#1f3f7a"/></marker>
+    </defs>
+
+    <rect x="60" y="40" width="1800" height="890" fill="#f5f6f8" stroke="#2a2f3a" stroke-width="6"/>
+
+    <!-- route: envelope, slow zones on the curves, centreline -->
+    <path class="env" d="M960 810 H560 A330 330 0 0 1 560 150 H1360 A330 330 0 0 1 1360 810 Z"/>
+    <path class="slowband" d="M640 810 H560 A330 330 0 0 1 560 150 H640"/>
+    <path class="slowband" d="M1280 150 H1360 A330 330 0 0 1 1360 810 H1280"/>
+    <path class="lane" d="M960 810 H560 A330 330 0 0 1 560 150 H1360 A330 330 0 0 1 1360 810 Z"/>
+    <g id="chevrons"></g>
+
+    <text class="lbl" x="400" y="490" text-anchor="middle" fill="#8a5e00">SLOW ZONE</text>
+    <text class="lbl" x="1520" y="490" text-anchor="middle" fill="#8a5e00">SLOW ZONE</text>
+
+    <!-- direction -->
+    <path d="M1010 520 A60 60 0 1 1 960 460" fill="none" stroke="#1f3f7a" stroke-width="7" marker-end="url(#mk-cw)" transform="rotate(-90 960 520)"/>
+    <text class="lbl" x="960" y="630" text-anchor="middle" fill="#1f3f7a">CLOCKWISE</text>
+
+    <g id="things"></g>
+
+    <!-- stop labels -->
+    <text class="head" x="770" y="250" text-anchor="middle" fill="#14171d">Stop 1</text>
+    <text class="lbl"  x="770" y="292" text-anchor="middle" fill="#3d4553">Pin down · release</text>
+    <text class="head" x="1150" y="250" text-anchor="middle" fill="#14171d">Stop 2</text>
+    <text class="lbl"  x="1150" y="292" text-anchor="middle" fill="#3d4553">Pin up · couple</text>
+    <text class="head" x="960" y="760" text-anchor="middle" fill="#14171d">Home</text>
+    <text class="lbl"  x="960" y="892" text-anchor="middle" fill="#3d4553">Arrive: pin down · Depart: pin up</text>
+  </svg>
+
+  <ul class="legend">
+    <li><svg viewBox="0 0 64 40"><path d="M2 20 H62" stroke="#dde6f5" stroke-width="30"/><path d="M2 20 H62" stroke="#1f3f7a" stroke-width="5"/><path d="M26 11 L38 20 L26 29" fill="none" stroke="#152c57" stroke-width="4" stroke-linecap="round"/></svg>AGV route</li>
+    <li><svg viewBox="0 0 64 40"><path d="M2 20 H62" stroke="#fde9b8" stroke-width="30"/><path d="M2 20 H62" stroke="#1f3f7a" stroke-width="5"/></svg>Slow zone</li>
+    <li><svg viewBox="0 0 64 40"><rect x="18" y="6" width="28" height="28" transform="rotate(45 32 20)" fill="#c8176b" stroke="#fff" stroke-width="3"/></svg>RFID tag</li>
+    <li><svg viewBox="0 0 64 40"><polygon points="4,6 46,6 60,16 60,24 46,34 4,34" fill="#23272f"/><path d="M52 20 L34 11 V29 Z" fill="#fff"/></svg>AGV</li>
+    <li><svg viewBox="0 0 64 40"><rect x="6" y="5" width="52" height="30" rx="3" fill="#fff" stroke="#3d4553" stroke-width="3"/><rect x="14" y="11" width="36" height="18" fill="#cfd8e6" stroke="#1f3f7a" stroke-width="2.5"/></svg>Trolley</li>
+  </ul>
+</section>
+</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/dist/html-to-image.js"></script>
+<script>
+  const FILE_NAME = 'tn-demo-loop';
+
+  /* ---------------- drawing ---------------- */
+  const NS = 'http://www.w3.org/2000/svg';
+  const el = (tag, attrs, parent) => {
+    const n = document.createElementNS(NS, tag);
+    for (const k in attrs) n.setAttribute(k, attrs[k]);
+    parent.appendChild(n);
+    return n;
+  };
+  const text = (str, attrs, parent) => { const t = el('text', attrs, parent); t.textContent = str; return t; };
+
+  const G = document.getElementById('things');
+  function trolley(cx, cy) {
+    el('rect', { x: cx - 32, y: cy - 21, width: 64, height: 42, rx: 3, fill: '#fff', stroke: '#3d4553', 'stroke-width': 3 }, G);
+    el('rect', { x: cx - 22, y: cy - 13, width: 44, height: 26, fill: '#cfd8e6', stroke: '#1f3f7a', 'stroke-width': 2.5 }, G);
+  }
+  // AGV heading west (nose on the left) — bottom straight runs west in a clockwise loop
+  function agvWest(front, cy) {
+    el('polygon', { points: `${front + 16},${cy - 22} ${front + 76},${cy - 22} ${front + 76},${cy + 22} ${front + 16},${cy + 22} ${front},${cy + 8} ${front},${cy - 8}`, fill: '#23272f' }, G);
+    el('path', { d: `M${front + 14} ${cy} L${front + 38} ${cy - 13} V${cy + 13} Z`, fill: '#fff' }, G);
+  }
+  function tag(n, cx, cy) {
+    el('rect', { x: cx - 26, y: cy - 26, width: 52, height: 52, transform: `rotate(45 ${cx} ${cy})`, fill: '#c8176b', stroke: '#fff', 'stroke-width': 4 }, G);
+    text(String(n), { x: cx, y: cy + 10, 'text-anchor': 'middle', class: 'tagno' }, G);
+  }
+
+  // AGV approaching home with its trolley in tow; a trolley waits at Stop 2 to be coupled
+  agvWest(1010, 810);
+  el('path', { d: 'M1086 810 H1100', stroke: '#3d4553', 'stroke-width': 5 }, G);
+  trolley(1132, 810);
+  trolley(1040, 150);
+
+  // RFID tags along the loop
+  [[10, 960, 810], [20, 640, 810], [30, 640, 150], [40, 800, 150], [50, 1120, 150], [20, 1280, 150], [30, 1280, 810]]
+    .forEach(([n, x, y]) => tag(n, x, y));
+
+  // clockwise chevrons [x, y, heading°]
+  const C = document.getElementById('chevrons');
+  [
+    [800, 810, 180], [1200, 810, 180],
+    [230, 480, -90], [960, 150, 0],
+    [1690, 480, 90],
+  ].forEach(([x, y, a]) => el('use', { href: '#chev', class: 'chev', transform: `translate(${x} ${y}) rotate(${a})` }, C));
+
+  /* ---- fit the 1920x1080 canvas to the window ---- */
+  const stage = document.getElementById('stage');
+  const slide = document.getElementById('slide');
+  function fit() {
+    const avail = Math.min(document.documentElement.clientWidth - 32, 1920);
+    const s = avail / 1920;
+    stage.style.width = 1920 * s + 'px';
+    stage.style.height = 1080 * s + 'px';
+    slide.style.transform = `scale(${s})`;
+  }
+  addEventListener('resize', fit);
+  fit();
+
+  /* ---- export ---- */
+  let res = 3, bg = 'white';
+  document.querySelectorAll('[data-res]').forEach(b => b.addEventListener('click', () => {
+    res = +b.dataset.res;
+    document.querySelectorAll('[data-res]').forEach(x => x.setAttribute('aria-pressed', x === b));
+  }));
+  document.querySelectorAll('[data-bg]').forEach(b => b.addEventListener('click', () => {
+    bg = b.dataset.bg;
+    document.querySelectorAll('[data-bg]').forEach(x => x.setAttribute('aria-pressed', x === b));
+  }));
+
+  const status = document.getElementById('status');
+  const btn = document.getElementById('download');
+  btn.addEventListener('click', async () => {
+    if (!window.htmlToImage) { status.textContent = 'Export library did not load — check internet connection'; return; }
+    btn.disabled = true;
+    status.textContent = 'Rendering…';
+    try {
+      await document.fonts.ready;
+      const transparent = bg === 'none';
+      const url = await htmlToImage.toPng(slide, {
+        width: 1920, height: 1080, pixelRatio: res,
+        backgroundColor: transparent ? undefined : '#ffffff',
+        style: { transform: 'none', background: transparent ? 'transparent' : '#ffffff' },
+      });
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${FILE_NAME}@${res}x${transparent ? '-transparent' : ''}.png`;
+      document.body.appendChild(a); a.click(); a.remove();
+      status.textContent = `Saved ${1920 * res} × ${1080 * res} PNG`;
+    } catch (e) {
+      console.error(e);
+      status.textContent = 'Export failed — see console';
+    } finally {
+      btn.disabled = false;
+    }
+  });
+</script>
+</body>
+</html>

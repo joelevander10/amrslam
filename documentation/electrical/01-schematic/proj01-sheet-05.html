@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PROJ01 Sheet 5</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../kit/jis-sheet.css">
+</head>
+<body>
+
+<nav class="toolbar" aria-label="Export">
+  <strong>PROJ01 · Sheet 5 / «XX» · 12V power distribution</strong>
+  <button type="button" class="primary" id="png">Download PNG</button>
+  <button type="button" id="pdf">Print / PDF</button>
+  <span class="status" id="status">A4 portrait · vector</span>
+</nav>
+
+<main class="wrap"><div class="sheet" id="sheet"></div></main>
+
+<script src="https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/dist/html-to-image.js"></script>
+<script src="../kit/jis-sheet.js"></script>
+<script>
+  // source: input-sketch/proj01/page05.jpg (upright)
+  const META = {
+    customer: '«CUSTOMER»', designer: '«DESIGNER»',
+    content: '12V POWER DISTRIBUTION',
+    approval: '«NAME»', checked: '«NAME»', designed: '«NAME»', drawn: '«NAME»',
+    date: '«DD/MM/YY»', scale: '',
+    title: 'ELECTRIC DIAGRAM',
+    model: '«MODEL»', dwg: '«-00-00-»', sheet: 5, of: '«XX»',
+    note: '',
+    refs: [],
+  };
+
+  // loads fed from 1P12 / 1N12 through a terminal pair; device-end labels are struck out in the sketch
+  const LOADS = [
+    { row: 5, tb: ['TB29', 'TB30'], wout: ['IPC POWER CABLE', ''], name: ['IPC POWER', 'BARREL JACK'] },
+    { row: 8, tb: ['TB31', 'TB32'], wout: ['RFID POWER CABLE', ''], name: ['RFID READER', 'BARREL JACK'] },
+  ];
+
+  JIS.render(document.getElementById('sheet'), {
+    meta: META,
+    file: 'PROJ01-05',
+    textScale: 1.25,          // drawing text +25% (frame and title block unchanged)
+    label: '12 V power distribution: P12/N12 from sheet 01 through MCB-05 to the IPC and RFID reader barrel jacks.',
+    draw(s) {
+      const bus = [23.8, 29.8];              // P12 / N12, 1P12 / 1N12 after MCB-05
+      const TBX = 72, DX = 140, DW = 36;
+      const pair = r => [s.row(r), s.row(r) + 5];
+      const NET = ['1P12', '1N12'];
+
+      // terminal block terminal: circle with slash (no kit symbol)
+      const tb = (x, y, name) => {
+        s.ring(x, y, 0.8);
+        s.line(x - 1.2, y + 1.2, x + 1.2, y - 1.2, 0.2);
+        s.text(x, y - 1.6, name, { size: 1.7, anchor: 'middle' });
+      };
+      // device box with terminals on its left edge
+      const box = (ys, name) => {
+        s.rect(DX, ys[0] - 5, DW, ys[1] - ys[0] + 10, 0.3);
+        ys.forEach(y => s.dot(DX, y));
+        name.forEach((n, i) => s.text(DX + DW / 2, ys[0] + 1.2 + 4.2 * i, n,
+          { size: 2.2, weight: i === 0 ? 600 : 500, anchor: 'middle' }));
+      };
+
+      // P12 / N12 from sheet 01 → MCB-05 → 1P12 / 1N12
+      s.bus(bus, 23, JIS.G.gridY, ['P12', 'N12'], 'tee');
+      bus.forEach(x => {
+        s.line(x - 0.9, 23, x + 0.9, 23, 0.3);
+        s.text(x, 19.4, '0114', { size: 1.5, anchor: 'middle' });
+      });
+      bus.forEach((x, i) => s.text(x + 0.5, s.row(3) + 1, NET[i], { size: 1.45 }));
+
+      LOADS.forEach(l => {
+        const ys = pair(l.row);
+        ys.forEach((y, i) => { s.line(bus[i], y, DX, y); s.dot(bus[i], y); });
+        box(ys, l.name);
+        // wire labels (cable markers): bus → TB, TB → device
+        ys.forEach((y, i) => {
+          s.text(56, y - 0.6, NET[i], { size: 1.9 });
+          s.text(TBX + 4, y - 0.6, NET[i], { size: 1.9 });
+        });
+      });
+
+      // cable marks, breaker and terminals last, so they cut the conductors
+      s.mccbV(bus, 36, 'MCB-05', '2P 10A');
+      LOADS.forEach(l => {
+        const ys = pair(l.row);
+        s.wire(46, ys, 'AWG22', 'BLUE');
+        s.wire(94, ys, l.wout[0], l.wout[1]);
+        ys.forEach((y, i) => tb(TBX, y, l.tb[i]));
+      });
+    },
+  });
+</script>
+</body>
+</html>

@@ -24,10 +24,18 @@ float64 cross_track_m       # for a straight in progress
 float64 step_v_mps          # the speed a straight in progress runs at (route cap or long-straight boost); 0 otherwise
 uint8 localization_state    # LocalizationState value
 bool resume_prepared        # a Start edge will continue the remaining step
-string hold_cause           # BLOCKED only: field | estop | obstacle | controller | pending (auto-resume plan)
+string hold_cause           # BLOCKED only: field | estop | controller | pending (auto-resume plan)
 bool auto_resume            # BLOCKED and this hold resumes by itself once clear
 bool pose_valid
 float64 pose_x
 float64 pose_y
 float64 pose_yaw
 string reason
+string fault_code           # alarm catalogue code (agv_core/alarms.py); "" when not FAULT/BLOCKED.
+                            # BLOCKED carries the hold's code too, so one lookup explains any stop.
+# Drive power (2026-10-08). APPEND ONLY. drive_power: what this run asks of drive_node's
+# power policy under AUTO (EXECUTING, including the pre-move warning, and holds that
+# resume by themselves). premove: EXECUTING but still in the pre-move warning after a
+# Start (alarm horn on, no goal sent yet).
+bool drive_power
+bool premove

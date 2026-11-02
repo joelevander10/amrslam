@@ -1,0 +1,14 @@
+# Two commands the operator pages need, and nothing else.
+#
+#   install -o root -g root -m 0440 amr-web.sudoers /etc/sudoers.d/amr-web
+#   visudo -c        # always check before trusting it
+#
+# restart amr.service : the Home page's "Restart" button, for a base the supervisor
+#                       cannot rebuild (the drives must be re-armed). The page refuses
+#                       it while the wheels turn or a run is live; sudo does not care,
+#                       so keep the command list exactly this narrow.
+# journalctl          : the "Save report" button packages the last two hours.
+#
+# NOPASSWD is required: there is no terminal behind a button press.
+amrslam ALL=(root) NOPASSWD: /usr/bin/systemctl restart amr.service
+amrslam ALL=(root) NOPASSWD: /usr/bin/journalctl -u amr.service --since -2h --no-pager

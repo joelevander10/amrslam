@@ -1,0 +1,227 @@
+================================================================================
+VEHICLE ACCEPTANCE PROMPT — LINE layer, Increment 1 (2026-09-21)
+Paste this whole file to an agent, or work it by hand, ON THE AGV PC.
+Prerequisite: VEHICLE-TEST-agv_core-restructure.txt has passed.
+================================================================================
+
+ROLE
+You are commissioning a magnetic-tape line follower that was ported from the
+gy-demo controller into the ROS 2 stack as a third supervisor layer. The
+control law is byte-for-byte the engine that already drove this vehicle on
+tape; what is NEW and UNPROVEN is everything around it: the ROS command path,
+the authority chain (lease / panel / Start edge), the holds, the sensor rate
+gate, and the layer swap. Nothing below has run in a ROS graph before. The
+laptop proved only the maths: the ported gains still meet gy-demo's own
+step-response limits with the extra 20 ms of ROS transport delay (40 ms total).
+
+HARD RULES
+  * Blocks under the wheels before ANY armed step. Person at the E-stop for
+    every floor step. Nobody in front of the vehicle, ever.
+  * Stop at the first failure. Report exact output. Do not fix forward.
+  * You may fix environment problems. You may NOT edit amr_line/, agv_core/,
+    amr_base/, amr_bringup/ or profiles/ without asking. In particular do NOT
+    touch autopilot.py or branch.py: they are the port, and the plan forbids
+    editing them.
+  * If the gains look wrong on the vehicle, the GAINS move (profile), not the
+    architecture, and not before section 6 has a number.
+
+WHAT WAS BUILT
+  amr_line/                 new package: runtime, autopilot, branch, track, job,
+                            line_follow_node
+  LineState.msg             new; IDLE=0 ARMED=1 RUNNING=2 HOLD=3 DONE=4 FAULT=5
+  LineTrack.msg             +sample_age_s +seq (drive_node fills them)
+  line_layer.launch.py      one required node, generation:= only
+  gating.py                 LINE branch on the AUTO side, above LEASE_AUTONOMOUS
+  cmd_mux                   subscribes generation-private /amr/line_cmd
+  supervisor_node           now subscribes LineState (was missing)
+  profiles/agv-01.json      autopilot block restored (35 gy-demo scalars) plus
+                            line_min_track_hz = 40
+  tape_synth_node           sim tape, for the swap test without a vehicle
+
+--------------------------------------------------------------------------------
+0. BEFORE ANYTHING MOVES — the MLS transmission type. TWO MINUTES. DO NOT SKIP.
+--------------------------------------------------------------------------------
+This is risk R1 in the plan and it decides whether the rest of this file is a
+commissioning or a bench demo. The MLS is Pre-operational; nothing registers
+0x18A today, and the SDO fallback measured 9.8 Hz on 2026-09-19 against a PID
+tuned at 50 Hz. The follower REFUSES to run on SDO samples or below 40 Hz.
+
+0.1  With nothing else on can0 (stop amr.service and agv_controller.service):
+         cd ~/agv_can
+         python3 -m agv_core.drivers.canbus.verify_drivers      # sanity, read-only
+     Then read node 10's TPDO1 communication parameters. Use the SDO helper
+     the bench tools expose, or `cansend`/`candump` by hand:
+         1800h:01  COB-ID          expect 0x18A (bit 31 clear = enabled)
+         1800h:02  transmission    254/255 = event-driven; 1..240 = sync;
+                                   anything else -> report it
+         1800h:05  event timer     ms; 0 = on change only
+     Record all three verbatim.
+
+0.2  Verdict, and write it down before continuing:
+     - 1800h:02 = 254/255 with event timer 0 or <= 20 ms  -> control-rate
+       TPDO is available. Continue.
+     - event timer 100 ms                                  -> TPDO gives
+       latency but not rate: 10 Hz. The follower will refuse (rate hold).
+       Increment 1 stops at a 0.2 m/s bench demo with accept_sdo_track:=true
+       and line_min_track_hz lowered IN THE PROFILE, clearly labelled as a
+       bench-only profile. Do NOT run on the floor like that. Report and stop
+       after section 3.
+     - anything else                                       -> report and stop.
+
+--------------------------------------------------------------------------------
+1. BUILD AND STATIC CHECKS (no hardware)
+--------------------------------------------------------------------------------
+1.1      cd ~/agv_can/amr_ws && rm -rf build install log
+         colcon build --symlink-install
+     PASS: amr_interfaces builds (LineState is new), amr_line builds, no errors.
+
+1.2  The profile loads with the restored block:
+         cd ~/agv_can && python3 -c "
+         from agv_core import config
+         print(config.K_RATIO, config.KD, config.AUTO_RPM, config.LINE_MIN_TRACK_HZ)"
+     PASS: 11.3 0.94 1000.0 40.0
+
+1.3  The engine's namespace loads and matches the offline rig:
+         python3 -m pytest ~/agv_can/amr_ws/src/amr_line/test -q
+     PASS: 53 passed. This includes gy-demo's 14 control tests and the
+     K_RATIO=100 negative control. If test_step_response fails HERE it means
+     the vehicle's profile differs from the laptop's — diff profiles/agv-01.json
+     against git before anything else.
+
+1.4  The layer launch composes with only generation:
+         python3 -m pytest ~/agv_can/amr_ws/src/amr_bringup/test/test_launch_layers.py -q -k line
+     PASS.
+
+--------------------------------------------------------------------------------
+2. SIM — the layer swap, no vehicle involved
+--------------------------------------------------------------------------------
+2.1  Source the sim env (env/sim.sh), bring up the sim base as the RUNBOOK
+     describes, plus:
+         ros2 run amr_sim tape_synth_node --ros-args -p y0_mm:=30.0 -p tape_length_m:=6.0
+     Confirm /amr/line_track streams at ~100 Hz with source "tpdo", seq
+     incrementing, valid[1] true, lcp_mm[1] near -30:
+         ros2 topic hz /amr/line_track
+         ros2 topic echo /amr/line_track --once
+
+2.2  Request LINE mode from the supervisor (RequestMode, target LINE=7).
+     PASS: /amr/mode_state goes TRANSITIONING -> LINE within a few seconds,
+     line_available true, and /amr/line_state shows state 0 (IDLE) with the
+     CURRENT generation. FAIL modes:
+       LAYER_START_TIMEOUT after 30 s -> the supervisor is not receiving
+         LineState, or the generation stamped on it is wrong. Check
+         `ros2 topic echo /amr/line_state` shows generation == mode_state's.
+       SPAWN_FAILED -> line_layer.launch.py refused an argument; the only one
+         passed is generation.
+
+2.3  Leaving LINE while IDLE must be allowed; while ARMED it must be refused:
+         ros2 service call /amr/line/arm std_srvs/srv/Trigger
+     (with the fake panel in AUTO and a lease granted, it should arm; if it
+     refuses, the message says exactly which prerequisite — report it.)
+     Then request IDLE mode. PASS: refused with "line follower is armed or
+     running; disarm it first". Clear it:
+         ros2 service call /amr/line/clear std_srvs/srv/Trigger
+     Request IDLE again. PASS: allowed.
+
+2.4  Full run in sim: arm, then a Start edge from the fake panel.
+     PASS: line_state RUNNING, /amr/line_cmd (generation-private topic
+     /amr/layers/g<N>/amr/line_cmd) carries a twist with linear.x <= 0.30,
+     /amr/mux_state source = LINE (7), the sim vehicle converges (lcp_mm[1]
+     -> 0), and after ~6 m the tape ends and line_state goes DONE with
+     message "track lost ...". The mux reports "line: no fresh command" after
+     DONE. Then IDLE mode must be allowed (DONE is not 1..3).
+
+2.5  Record from /amr/line_state during the run: track_hz, sample_age_s,
+     error_mm trajectory. Expect ~100 Hz, ~0 s, and a 30 mm -> 0 convergence
+     with overshoot under 25 mm.
+
+--------------------------------------------------------------------------------
+3. VEHICLE, JACKED UP — wheels off the floor, tape under the sensor
+--------------------------------------------------------------------------------
+3.1  Hardware bring-up (amr.service or the RUNBOOK's manual launch). Confirm
+     /amr/line_track on the REAL MLS:
+         ros2 topic hz /amr/line_track
+         ros2 topic echo /amr/line_track --once
+     PASS: source "tpdo" (not "sdo"), hz >= 40, sample_age_s < 0.02, seq
+     contiguous. Slide the tape under the sensor: lcp_mm[1] tracks it, sign
+     negative when the tape is to the LEFT (the 2026-08-31 polarity).
+     FAIL: source "sdo" or hz < 40 -> the follower will refuse with a "rate"
+     hold. That is the R1 outcome from section 0; do not work around it here.
+
+3.2  Request LINE mode. Selector in AUTO. Arm:
+         ros2 service call /amr/line/arm std_srvs/srv/Trigger
+     PASS: ARMED. Physical Start on the panel -> RUNNING. Wheels turn FORWARD
+     (both). Move the tape left under the sensor: the vehicle steers toward
+     it (left wheel slows / right speeds). Body speed on /amr/line_cmd never
+     above 0.30 m/s.
+
+3.3  Physical Reset -> the run ends (DONE or IDLE), wheels stop within the
+     mux's freshness window (< 0.3 s), /amr/line_cmd goes quiet.
+
+3.4  Arm and Start again, then E-stop. PASS: line_state HOLD with hold_cause
+     "estop", auto_resume false. Release the E-stop and wait 10 s: it must
+     NOT resume by itself. Press Start: it resumes. (Increment 1 ships with
+     auto_resume_estop false.)
+
+3.5  Arm and Start, then trip the protective field by hand. PASS: HOLD with
+     hold_cause "field", auto_resume true; clear the field; resumes on its own
+     after auto_resume_clear_s (2 s) of clear.
+
+3.6  Arm and Start, then move the selector to MANUAL mid-run. PASS: stops at
+     once (the lease is withdrawn; the job reports "authority" and FAULT).
+     Requires Reset to clear.
+
+3.7  Arm and Start, then lift the tape away entirely. PASS: the vehicle coasts
+     the line-loss distance budget (LINE_LOSS_GRACE_M = 0.075 m — on a jack that
+     is a time ceiling, ~1.5 s) then line_state DONE "track lost".
+
+--------------------------------------------------------------------------------
+4. VEHICLE, ON THE FLOOR — 5 m of straight tape, 0.20 m/s
+--------------------------------------------------------------------------------
+Only after every step in 3 passed. Lower the cap for the first run:
+    ros2 param set /line_follow v_max_mps 0.20
+(the launch default is 0.30; the mux caps independently). Person at the
+E-stop, walking alongside, hand on it.
+
+4.1  Place the vehicle with the sensor ~30 mm to one side of the tape. Arm,
+     Start. PASS: converges onto the tape within ~2 m, no visible oscillation,
+     no overshoot you would call more than a few cm, runs the 5 m, stops DONE
+     at the end of the tape by itself.
+
+4.2  Repeat from the other side.
+
+4.3  Repeat at 0.30 m/s (the launch default).
+
+4.4  Record for each run, from a `ros2 bag record /amr/line_state
+     /amr/line_track /amr/line_cmd /amr/mux_state` started before Arm:
+       - track_hz and sample_age_s at speed
+       - peak |error_mm| after the first metre
+       - time from Start to error under 2 mm
+     These are the three numbers the plan asks for. Put them in the report.
+
+--------------------------------------------------------------------------------
+5. THE OTHER LAYERS STILL WORK
+--------------------------------------------------------------------------------
+5.1  Leave LINE (IDLE), then request NAVIGATION on a known map. PASS: the swap
+     completes exactly as before this change. This is the regression that
+     matters most: gating.py and cmd_mux were edited.
+5.2  A browser jog under MANUAL still works. A pendant jog still works.
+5.3  Request LINE while a navigation mission is EXECUTING. PASS: refused.
+
+--------------------------------------------------------------------------------
+6. WHAT TO REPORT BACK
+--------------------------------------------------------------------------------
+For each step PASS / FAIL / SKIPPED with exact output where not clean. Then:
+  * the three 1800h values from 0.1 and the verdict from 0.2
+  * pytest count from 1.3
+  * the three numbers from 4.4, per run
+  * git hash you tested; anything you changed on the vehicle, file by file
+  * whether the gains needed to move (they should not have)
+
+ROLLBACK
+    cd ~/agv_can && git log --oneline -8
+The LINE work is four commits titled "Port the tape engine...", "Port commit
+2 of 2...", "amr_line: the injected runtime namespace...", "LINE layer: the
+tape follower runs inside the ROS stack", plus one for the sim plant. Reverting
+them in reverse order restores the tree; then `colcon build` again. The
+restructure commit beneath them (dc9f608) is separate and stays.
+================================================================================

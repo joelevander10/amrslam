@@ -249,6 +249,76 @@ def test_route_store_revisions(tmp_path):
         store.save_mission(str(tmp_path), "../x", "sim_factory", 1, "a", "r1", 1, "b")
 
 
+# ---- F10: the read boundary refuses what the write boundary refuses ------------------
+
+
+def test_store_readers_refuse_escaping_names(tmp_path):
+    """load_mission(maps, "../../outside") used to open that file."""
+    maps = tmp_path / "maps"
+    (maps / "missions").mkdir(parents=True)
+    (tmp_path / "outside.yaml").write_text(
+        "mission_id: outside\nmap: {id: m, revision: 1}\nroute: {id: r, revision: 1}\n"
+    )
+    for bad in ("../outside", "../../outside", "/etc/passwd", ".hidden", "", "a/b", "a\\b"):
+        with pytest.raises(store.StoreError):
+            store.load_mission(str(maps), bad)
+        with pytest.raises(store.StoreError):
+            store.load_route(str(maps), bad, "r1", 1)
+        with pytest.raises(store.StoreError):
+            store.load_route(str(maps), "sim_factory", bad, 1)
+    for bad_rev in (0, -1, True, "1"):
+        with pytest.raises(store.StoreError):
+            store.load_route(str(maps), "sim_factory", "r1", bad_rev)
+
+
+def test_store_readers_refuse_symlinks_out_of_the_store(tmp_path):
+    maps = tmp_path / "maps"
+    (maps / "missions").mkdir(parents=True)
+    (tmp_path / "outside.yaml").write_text(
+        "mission_id: esc\nmap: {id: m, revision: 1}\nroute: {id: r, revision: 1}\n"
+    )
+    os.symlink(tmp_path / "outside.yaml", maps / "missions" / "esc.yaml")
+    with pytest.raises(store.StoreError, match="escapes"):
+        store.load_mission(str(maps), "esc")
+
+
+def test_store_readers_give_bounded_refusals_on_bad_yaml(tmp_path):
+    maps = tmp_path / "maps"
+    (maps / "missions").mkdir(parents=True)
+    (maps / "missions" / "scalar.yaml").write_text("just a string\n")
+    (maps / "missions" / "broken.yaml").write_text("mission_id: [\n")
+    (maps / "missions" / "wrong.yaml").write_text(
+        "mission_id: other\nmap: {id: m, revision: 1}\nroute: {id: r, revision: 1}\n"
+    )
+    (maps / "missions" / "badrev.yaml").write_text(
+        "mission_id: badrev\nmap: {id: m, revision: 0}\nroute: {id: r, revision: 1}\n"
+    )
+    for mid in ("scalar", "broken", "wrong", "badrev"):
+        with pytest.raises(store.StoreError):
+            store.load_mission(str(maps), mid)
+    assert store.list_missions(str(maps)) == [
+        {"mission_id": "badrev", "map": {"id": "m", "revision": 0}, "route": {"id": "r", "revision": 1}},
+        {"mission_id": "other", "map": {"id": "m", "revision": 1}, "route": {"id": "r", "revision": 1}},
+    ]
+
+
+def test_a_route_file_must_carry_the_identity_it_was_asked_for(tmp_path):
+    import shutil  # noqa: PLC0415
+
+    d = str(tmp_path)
+    _, path, _ = store.save_route(d, route([straight("s1", 1.0, 0.0)]))
+    # copy rev1 in as rev2 (identity inside still says rev1) and under another route id
+    shutil.copy(path, os.path.join(os.path.dirname(path), "rev2.yaml"))
+    other = store.routes_dir(d, "sim_factory", "r9")
+    os.makedirs(other)
+    shutil.copy(path, os.path.join(other, "rev1.yaml"))
+    with pytest.raises(store.StoreError, match="identity"):
+        store.load_route(d, "sim_factory", "r1", 2)
+    with pytest.raises(store.StoreError, match="identity"):
+        store.load_route(d, "sim_factory", "r9", 1)
+    assert store.load_route(d, "sim_factory", "r1", 1)[0].revision == 1
+
+
 # ---- R10: map bounds are never "clear" -------------------------------------------------
 
 SMALL = GridMeta(0.05, -2.5, -2.5)  # 5 m x 5 m, x and y in [-2.5, 2.5]
@@ -372,10 +442,6 @@ def _mut(path, value):
         (("repeat_count",), 101),  # amr_mission run_fsm MAX_PASSES = 100
         (("revision",), 1.5),
         (("schema_version",), "1"),
-        (("limits", "linear_mps"), 0),
-        (("limits", "linear_mps"), float("nan")),
-        (("limits", "linear_mps"), float("inf")),
-        (("limits", "linear_mps"), "fast"),
         (("limits", "angular_rad_s"), -0.3),
         (("limits", "warp"), 1.0),
         (("limits",), [1, 2]),
@@ -407,10 +473,10 @@ def test_r21_malformed_routes_raise_route_error(path, value):
 def test_r21_well_formed_inputs_still_accepted():
     back = Route.from_dict(good_dict())
     assert back.repeat_count == 2 and back.steps[1].angle_deg == 270
-    d = _mut(("limits",), {"linear_mps": 0.5})  # JSON number from the browser
+    d = _mut(("limits",), {"angular_rad_s": 0.3})  # JSON number from the browser
     d["start"] = {"x_m": 0, "y_m": 0, "yaw_deg": 0}
     d["steps"][1]["angle_deg"] = 270  # int from JSON; stored revisions carry 270.0
-    assert Route.from_dict(d).limits.linear_mps == 0.5
+    assert Route.from_dict(d).limits.angular_rad_s == 0.3
     assert Route.from_dict(_mut(("limits",), KeyError)).limits == Limits()
     assert Route.from_dict(_mut(("repeat_count",), 0)).repeat_count == 0  # validate() reports it
     assert Route.from_dict(_mut(("repeat_count",), 100)).repeat_count == 100
@@ -426,8 +492,8 @@ def test_r21_validate_bounds_repeat_count_of_constructed_routes():
 
 def test_r21_compiler_refuses_zero_speed_and_unbounded_work():
     r = route([straight("s1", 3.0, 0.0)])
-    r.limits.linear_mps = 0.0
-    with pytest.raises(RouteError, match="linear_mps"):
+    r.limits.angular_rad_s = 0.0
+    with pytest.raises(RouteError, match="angular_rad_s"):
         compile_route(r)
     r = route([straight("s1", 9000.0, 0.0), rotate("t", "ccw", 180), straight("s2", -9000.0, 0.0)])
     with pytest.raises(RouteError, match="too long"):
@@ -514,77 +580,48 @@ def test_r23_existing_revision_is_never_replaced(tmp_path):
     assert b"other" not in open(path, "rb").read()
 
 
-# ---- autonomous defaults 0.55 / 0.37 / arcs 0.40 (2026-09-19) ----
+# ---- ONE trackless speed, 0.60 m/s, a vehicle constant (2026-10-02) ----
 
 
-def test_limits_default_to_055_and_037_and_explicit_values_survive():
+def test_trackless_speed_is_the_vehicle_constant_and_old_speed_keys_are_dropped():
+    from amr_navigation.compiler import step_speed
+    from amr_navigation.route import VEHICLE_V_MAX, VEHICLE_W_MAX
+
+    assert (VEHICLE_V_MAX, VEHICLE_W_MAX) == (0.60, 0.37)
     d = good_dict()
     del d["limits"]
     r = Route.from_dict(d)
-    assert (r.limits.linear_mps, r.limits.angular_rad_s, r.limits.arc_linear_mps) == (0.55, 0.37, 0.40)
-    assert r.limits.long_linear_mps is None  # no boost unless the file says so
+    assert (r.limits.linear_mps, r.limits.angular_rad_s) == (0.60, 0.37)
     c = compile_route(r)
     assert c.steps[1].time_allowance_s > math.radians(270) / 0.37
+    # a file saved before 2026-10-02 still loads; its speeds are read and dropped, never written back
     d = good_dict()
-    d["limits"] = {"linear_mps": 0.15, "angular_rad_s": 0.10}
+    d["limits"] = {"linear_mps": 0.3, "long_linear_mps": 0.85, "long_min_length_m": 4.0,
+                   "arc_linear_mps": 0.4, "angular_rad_s": 0.10}
     r = Route.from_dict(d)
-    assert (r.limits.linear_mps, r.limits.angular_rad_s) == (0.15, 0.10)
+    assert r.limits.linear_mps == 0.60 and r.limits.angular_rad_s == 0.10
+    assert set(r.to_dict()["limits"]).isdisjoint({"linear_mps", "long_linear_mps", "long_min_length_m", "arc_linear_mps"})
     assert compile_route(r).steps[1].time_allowance_s > math.radians(270) / 0.10
-    assert r.to_dict()["limits"]["linear_mps"] == 0.15  # never rewritten
-
-
-def test_vehicle_ceilings_and_long_straight_boost():
-    from amr_navigation.compiler import step_speed
-    from amr_navigation.route import BASE_V_MAX, VEHICLE_V_MAX, VEHICLE_W_MAX
-
-    # linear above the vehicle ceiling is refused; angular above it is CLAMPED (old files carry 0.30)
-    d = good_dict()
-    d["limits"] = {"linear_mps": VEHICLE_V_MAX + 0.01}
-    with pytest.raises(RouteError, match="linear_mps"):
-        Route.from_dict(d)
-    # the BASE speed is bounded lower than the ceiling: only the boost goes near 0.85 (2026-09-19)
-    assert (BASE_V_MAX, VEHICLE_V_MAX, VEHICLE_W_MAX) == (0.60, 0.85, 0.37)
-    d["limits"] = {"linear_mps": 0.61}
-    with pytest.raises(RouteError, match="linear_mps"):
-        Route.from_dict(d)
-    d["limits"] = {"linear_mps": 0.60, "long_linear_mps": 0.85, "arc_linear_mps": 0.60}
-    Route.from_dict(d)
-    d["limits"] = {"arc_linear_mps": 0.61}
-    with pytest.raises(RouteError, match="arc_linear_mps"):
-        Route.from_dict(d)
-    d["limits"] = {"long_linear_mps": VEHICLE_V_MAX + 0.01}
-    with pytest.raises(RouteError, match="long_linear_mps"):
-        Route.from_dict(d)
+    # angular above the ceiling is CLAMPED (old files carry 0.30) and never rewritten
     d["limits"] = {"angular_rad_s": VEHICLE_W_MAX + 0.1}
     r = Route.from_dict(d)
     assert r.limits.angular_rad_s == VEHICLE_W_MAX + 0.1 and r.limits.w_mps == VEHICLE_W_MAX
-    assert r.to_dict()["limits"]["angular_rad_s"] == VEHICLE_W_MAX + 0.1  # the file is never rewritten
-    # a boost slower than the base speed is a typo
-    d["limits"] = {"linear_mps": 0.5, "long_linear_mps": 0.4}
-    with pytest.raises(RouteError, match="long_linear_mps"):
-        Route.from_dict(d)
-    # null = off, and survives a round trip
-    d["limits"] = {"linear_mps": 0.5, "long_linear_mps": None}
-    r = Route.from_dict(d)
-    assert r.limits.long_linear_mps is None and r.to_dict()["limits"]["long_linear_mps"] is None
-    # per-step speed: strictly LONGER than the threshold boosts, equal does not
-    d["limits"] = {"linear_mps": 0.5, "long_linear_mps": 0.7, "long_min_length_m": 4.0}
-    lim = Route.from_dict(d).limits
-    assert step_speed(lim, 4.0) == 0.5 and step_speed(lim, 4.01) == 0.7 and step_speed(lim, 2.0) == 0.5
+    assert r.to_dict()["limits"]["angular_rad_s"] == VEHICLE_W_MAX + 0.1
+    # every forward straight runs at the one speed, whatever its length (no long-straight boost)
+    assert step_speed(r.limits, 2.0) == step_speed(r.limits, 40.0) == 0.60
     d["steps"] = [
         {"id": "s1", "type": "straight", "to": {"x_m": 3.0, "y_m": 0.0}},
         {"id": "s2", "type": "straight", "to": {"x_m": 9.0, "y_m": 0.0}},
     ]
     c = compile_route(Route.from_dict(d))
-    assert [s.v_mps for s in c.steps] == [0.5, 0.7]
-    assert c.steps[1].duration_est_s == pytest.approx(6.0 / 0.7)
+    assert [s.v_mps for s in c.steps] == [0.60, 0.60]
+    assert c.steps[1].duration_est_s == pytest.approx(6.0 / 0.60)
 
 
 def test_reverse_step_is_bounded_slow_and_backs_along_the_heading():
     from amr_navigation.route import REVERSE, REVERSE_MAX_M
 
     d = good_dict()
-    d["limits"] = {"linear_mps": 0.5, "long_linear_mps": 0.7, "long_min_length_m": 1.0}
     d["steps"] = [
         {"id": "s1", "type": "straight", "to": {"x_m": 3.0, "y_m": 0.0}},
         {"id": "s2", "type": "reverse", "distance_m": 1.5},
@@ -598,7 +635,7 @@ def test_reverse_step_is_bounded_slow_and_backs_along_the_heading():
     assert st.end == pytest.approx((1.5, 0.0, 0.0))
     assert st.length_m == 1.5 and st.samples[0] == pytest.approx((3.0, 0.0, 0.0))
     assert st.samples[-1] == pytest.approx((1.5, 0.0, 0.0)) and all(s[2] == 0.0 for s in st.samples)
-    assert st.v_mps == pytest.approx(0.25)  # half the BASE speed, never the boost (1.5 m > 1.0 m threshold)
+    assert st.v_mps == pytest.approx(0.30)  # half the trackless speed: the rear is outside the scanner field
     assert st.travel_yaw == pytest.approx(math.pi)
     assert c.total_length_m == pytest.approx(4.5) and c.end == pytest.approx((1.5, 0.0, 0.0))
     # bounded to REVERSE_MAX_M, and never zero
@@ -617,7 +654,7 @@ def test_arc_step_bounds_geometry_and_speed():
     from amr_navigation import footprint as fpmod
 
     d = good_dict()
-    d["limits"] = {"linear_mps": 0.5, "long_linear_mps": 0.7, "long_min_length_m": 1.0, "angular_rad_s": 0.34}
+    d["limits"] = {"angular_rad_s": 0.34}
     arc = {"id": "s1", "type": "arc", "direction": "ccw", "angle_deg": 90, "radius_m": 1.0}
     d["steps"] = [arc]
     r = Route.from_dict(d)
@@ -641,18 +678,12 @@ def test_arc_step_bounds_geometry_and_speed():
     mid = st.samples[len(st.samples) // 2]
     assert math.hypot(mid[0] - 0.0, mid[1] - 1.0) == pytest.approx(1.0) and 0 < mid[2] < math.pi / 2
     assert c.total_turn_rad == pytest.approx(math.pi / 2) and c.total_length_m == pytest.approx(math.pi / 2)
-    # speed (2026-09-19): arc_linear_mps (0.40), never the boost, never above linear_mps, or less
-    # where v/R would pass 90 % of the ARC turn ceiling 0.45 (R 0.5 would ask 0.2025)
-    assert r.limits.arc_linear_mps == 0.40
-    assert st.v_mps == pytest.approx(0.40) and st.v_mps == arc_speed(r.limits, 1.0)
-    assert arc_speed(r.limits, 5.0) == pytest.approx(0.40) and arc_speed(r.limits, 0.5) == pytest.approx(
+    # speed (2026-10-02): the trackless speed, or less where v/R would pass 90 % of the ARC
+    # turn ceiling 0.45 (R 1.0 -> 0.405, R 0.5 -> 0.2025)
+    assert st.v_mps == pytest.approx(0.405) and st.v_mps == arc_speed(r.limits, 1.0)
+    assert arc_speed(r.limits, 5.0) == pytest.approx(0.60) and arc_speed(r.limits, 0.5) == pytest.approx(
         0.2025
     )
-    from amr_navigation.route import Limits
-
-    slow = Limits(linear_mps=0.30)  # a slow route: the arc never outruns its straights
-    assert arc_speed(slow, 3.0) == pytest.approx(0.30)
-    assert Limits(linear_mps=0.30).arc_linear_mps == 0.40  # stored as is, applied as the lower
     # cw mirrors; 180 deg ends across the diameter
     d["steps"] = [{**arc, "direction": "cw", "angle_deg": 180}]
     st = compile_route(Route.from_dict(d)).steps[0]

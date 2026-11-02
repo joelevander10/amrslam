@@ -5,7 +5,7 @@
 <section class="cols">
   <div class="panel" id="br-form">
     <h2>Blind move <small>one move per Start · measured on the floor afterwards</small></h2>
-    <div class="bar" id="br-kinds" style="margin-top:4px">
+    <div class="bar" id="br-kinds" style="margin-top:.4rem">
       <button class="tool" data-kind="straight">Straight</button>
       <button class="tool" data-kind="rotate">Rotate</button>
       <button class="tool" data-kind="arc">Arc</button>
@@ -30,16 +30,16 @@
         <option value="pv" selected>PV — profile velocity (software position loop)</option>
         <option value="pp" disabled>PP — profile position (in the drive)</option>
       </select></label>
-    <div id="br-warn" class="warn-box stop" hidden style="margin-top:10px"></div>
+    <div id="br-warn" class="warn-box stop" hidden style="margin-top:.8rem"></div>
     <label class="check"><input id="br-check" type="checkbox"> Area clear · E-stop within reach · the speed is within the protective field sizing</label>
     <p id="br-errors" class="note"></p>
     <div class="bar">
       <button id="btn-plan" class="big run" disabled>Hold move</button>
       <button id="btn-clear" class="danger">Clear / abort</button>
     </div>
-    <h3 style="margin-top:14px">Held move</h3>
+    <h3 style="margin-top:1.2rem">Held move</h3>
     <div id="planned" class="list"><div class="none">no plan held</div></div>
-    <details class="pm-note" style="margin-top:12px"><summary>Advanced: plan JSON (PV, several segments)</summary>
+    <details class="pm-note" style="margin-top:1rem"><summary>Advanced: plan JSON (PV, several segments)</summary>
       <label class="field">Plan <small>kinds: straight {distance_m} · arc {radius_m, angle_deg} · pivot {angle_deg} · pulses {left, right}; "backend": "pv" | "pp"</small>
         <textarea id="plan" rows="9">{
   "id": "straight-1m",
@@ -71,7 +71,7 @@
     <div class="bar"><button id="btn-measure" class="big">Save measurement</button></div>
   </div>
 </section>
-<section class="panel" style="margin-top:14px">
+<section class="panel" style="margin-top:1.2rem">
   <h2>History <small>commanded vs measured · newest first</small></h2>
   <div id="history" class="list"><div class="none">no runs yet</div></div>
   <p class="note">Error = measured − commanded (mm, mm, °). Results measure the drive and the vehicle; nothing here corrects anything.</p>

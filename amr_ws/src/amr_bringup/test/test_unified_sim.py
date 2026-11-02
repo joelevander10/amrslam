@@ -46,7 +46,7 @@ R1 = QoSProfile(depth=1, reliability=QoSReliabilityPolicy.RELIABLE)
 LATCHED = QoSProfile(
     depth=1, reliability=QoSReliabilityPolicy.RELIABLE, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL
 )
-NAMES = ["STARTING", "IDLE", "MAPPING", "NAVIGATION", "TRANSITIONING", "FAULT", "STOPPING"]
+NAMES = ["STARTING", "IDLE", "MAPPING", "NAVIGATION", "TRANSITIONING", "FAULT", "STOPPING", "LINE"]
 
 
 class Probe(Node):
@@ -292,7 +292,11 @@ def settled_lease(p: Probe, expect_allowed: int):
 
 def test_unified_workflow_and_layer_restart(stack):
     p, proc, state = stack
-    assert p.wait_mode(1, 60), "IDLE"
+    # The default profile carries both products (tracked null): it boots into LINE
+    # (2026-10-08), and trackless starts from IDLE - the Home switch's request.
+    assert p.wait_mode(7, 90), "LINE at boot"
+    r = p.request_mode(1)
+    assert r.accepted and p.wait_mode(1, 40) and p.wait_op(r.operation_id, 5).status == 1
     settled_lease(p, 1)
     pids0 = base_pids(proc.pid)
     assert len(pids0) >= 4
@@ -363,13 +367,22 @@ def test_unified_workflow_and_layer_restart(stack):
     for _ in range(3):
         p.init_pub.publish(m)
         p.spin(0.2)
-    p.jog_for(1.2, 0.15, 0.0)
+    jog_peak = p.jog_for(1.2, 0.15, 0.0)
     p.spin(0.5)
-    p.wait_until(
-        lambda: p.loc is not None and p.loc.generation == p.mode.generation and p.loc.can_confirm,
-        40,
-        "can_confirm",
-    )
+    try:
+        p.wait_until(
+            lambda: p.loc is not None and p.loc.generation == p.mode.generation and p.loc.can_confirm,
+            40,
+            "can_confirm",
+        )
+    except AssertionError:
+        # say which readiness rule held it back (fix plan 001 B5: timeout vs refusal)
+        if p.loc is not None:
+            print(f"   readiness: state {p.loc.state} gen {p.loc.generation}/{p.mode.generation} "
+                  f"reason {p.loc.reason!r} code {p.loc.code!r}; jog wheel peak {jog_peak:.2f}, "
+                  f"ages amcl {p.loc.amcl_age_s:.1f} scan {p.loc.scan_age_s:.1f} "
+                  f"wheels {p.loc.wheels_age_s:.1f} tf {p.loc.tf_age_s:.1f} s")
+        raise
     assert p.call(p.c_confirm, Trigger.Request()).success
     p.jog_for(1.2, -0.15, 0.0)
     p.spin(1.0)

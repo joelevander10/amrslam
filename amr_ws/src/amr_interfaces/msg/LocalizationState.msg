@@ -39,3 +39,4 @@ float64 tf_age_s
 float64 amcl_age_s
 
 string reason
+string code                 # alarm catalogue code for `reason` (LOC_*); "" while READY

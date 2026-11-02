@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PROJ01 Sheet 3</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../kit/jis-sheet.css">
+</head>
+<body>
+
+<nav class="toolbar" aria-label="Export">
+  <strong>PROJ01 · Sheet 3 / «XX» · 24V power distribution (part 1)</strong>
+  <button type="button" class="primary" id="png">Download PNG</button>
+  <button type="button" id="pdf">Print / PDF</button>
+  <span class="status" id="status">A4 portrait · vector</span>
+</nav>
+
+<main class="wrap"><div class="sheet" id="sheet"></div></main>
+
+<script src="https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/dist/html-to-image.js"></script>
+<script src="../kit/jis-sheet.js"></script>
+<script>
+  // source: input-sketch/proj01/page03.jpg (upright)
+  const META = {
+    customer: '«CUSTOMER»', designer: '«DESIGNER»',
+    content: '24V POWER DISTRIBUTION (PART 1)',
+    approval: '«NAME»', checked: '«NAME»', designed: '«NAME»', drawn: '«NAME»',
+    date: '«DD/MM/YY»', scale: '',
+    title: 'ELECTRIC DIAGRAM',
+    model: '«MODEL»', dwg: '«-00-00-»', sheet: 3, of: '«XX»',
+    note: '',
+    refs: [],
+  };
+
+  // loads fed straight from 1P24 / 1N24 through a terminal pair.
+  // t = terminal names inside the box; end = wire label at the device end (as in the sketch)
+  const LOADS = [
+    { row: 5,  tb: ['TB07', 'TB08'], win: ['NYAF 0.5mm²', 'BLUE'], wout: ['SICK CONNECTION CABLE', ''],
+      end: true, name: ['SAFETY LIDAR 01', 'NANOSCAN3'] },
+    { row: 8,  tb: ['TB09', 'TB10'], win: ['NYAF 0.5mm²', 'BLUE'], wout: ['SICK CONNECTION CABLE', ''],
+      end: true, name: ['SAFETY LIDAR 02', 'NANOSCAN3'] },
+    { row: 11, tb: ['TB11', 'TB12'], win: ['AWG22', 'BLUE'], wout: ['AWG22', 'BLUE'],
+      t: ['A1', 'A2'], name: ['SAFETY PLC', 'XTIO MODULE'] },
+    { row: 15.5, tb: ['TB13', 'TB14'], win: ['AWG22', 'BLUE'], wout: ['AWG22', 'BLUE'],
+      end: true, name: ['AUDIO HORN 01', 'PATLITE'] },
+    // digital IO module: single 24V / 0V supply (VIN pair removed; TB27 / TB28 now spare), see sheet 09
+    { row: 18, tb: ['TB25', 'TB26'],
+      win: ['AWG22', 'BLUE'], wout: ['AWG22', 'BLUE'],
+      t: ['24V', '0V'], name: ['DIGITAL IO', 'CK-EC5163'] },
+  ];
+  // CPU module is fed in parallel with the XTIO module, after TB11 / TB12
+  const CPU = { row: 13, t: ['A1', 'A2'], name: ['SAFETY PLC', 'CPU MODULE'] };
+
+  JIS.render(document.getElementById('sheet'), {
+    meta: META,
+    file: 'PROJ01-03',
+    textScale: 1.25,          // drawing text +25% (frame and title block unchanged)
+    label: '24 V power distribution part 1: P24/N24 from sheet 01 through MCB-04 to the safety lidars, safety PLC modules, audio horn and digital I/O module.',
+    draw(s) {
+      const bus = [23.8, 29.8];              // P24 / N24, 1P24 / 1N24 after MCB-04
+      const TBX = 72, DX = 140, DW = 36;
+      const pair = r => [s.row(r), s.row(r) + 5];
+      const NET = ['1P24', '1N24'];
+      // conductors of a load, 5 mm apart, each with its source bus
+      const src = l => l.src || [0, 1];
+      const cond = l => src(l).map((b, k) => s.row(l.row) + 5 * k);
+
+      // terminal block terminal: circle with slash (no kit symbol)
+      const tb = (x, y, name) => {
+        s.ring(x, y, 0.8);
+        s.line(x - 1.2, y + 1.2, x + 1.2, y - 1.2, 0.2);
+        s.text(x, y - 1.6, name, { size: 1.7, anchor: 'middle' });
+      };
+      // device box with terminals on its left edge
+      const box = (ys, t, name) => {
+        s.rect(DX, ys[0] - 5, DW, ys[ys.length - 1] - ys[0] + 10, 0.3);
+        ys.forEach((y, i) => { s.dot(DX, y); if (t) s.text(DX + 1.5, y + 0.7, t[i], { size: 1.9 }); });
+        name.forEach((n, i) => s.text(DX + DW / 2 + (t ? 4 : 0), ys[0] + 1.2 + 4.2 * i, n,
+          { size: 2.2, weight: i === 0 ? 600 : 500, anchor: 'middle' }));
+      };
+
+      // P24 / N24 from sheet 01 → MCB-04 → 1P24 / 1N24 (continues on sheet 04)
+      s.bus(bus, 23, JIS.G.gridY, ['P24', 'N24'], 'tee');
+      bus.forEach(x => {
+        s.line(x - 0.9, 23, x + 0.9, 23, 0.3);
+        s.text(x, 19.4, '0110', { size: 1.5, anchor: 'middle' });
+      });
+      bus.forEach((x, i) => s.text(x + 0.5, s.row(3) + 1, ['1P24', '1N24'][i], { size: 1.45 }));
+
+      LOADS.forEach(l => {
+        const ys = cond(l), b = src(l);
+        ys.forEach((y, i) => { s.line(bus[b[i]], y, DX, y); s.dot(bus[b[i]], y); });
+        box(ys, l.t, l.name);
+        // wire labels (cable markers): bus → TB, TB → device, device end
+        ys.forEach((y, i) => {
+          s.text(56, y - 0.6, NET[b[i]], { size: 1.9 });
+          s.text(TBX + 4, y - 0.6, NET[b[i]], { size: 1.9 });
+          if (l.end) s.text(DX - 1.5, y - 0.6, NET[b[i]], { size: 1.9, anchor: 'end' });
+        });
+      });
+
+      // CPU module: A1 drops from the + line (crosses the − line, not connected), A2 from the − line
+      const xt = pair(11), cpu = pair(CPU.row), dropP = 124, dropN = 118;
+      s.line(dropP, xt[0], dropP, cpu[0]); s.dot(dropP, xt[0]);
+      s.line(dropN, xt[1], dropN, cpu[1]); s.dot(dropN, xt[1]);
+      s.line(dropP, cpu[0], DX, cpu[0]);
+      s.line(dropN, cpu[1], DX, cpu[1]);
+      box(cpu, CPU.t, CPU.name);
+
+      // horn sound select is wired from the digital IO module (sheet 09)
+      const hy = s.row(15.5) + 5;
+      s.text(DX, hy + 9.2, 'SOUND 1 / 2 ← DO0 / DO1 (SH.09)', { size: 1.6 });
+      s.text(DX, hy + 12, 'HORN COM JUMPERED TO 1N24', { size: 1.6 });
+
+      // cable marks, breaker and terminals last, so they cut the conductors
+      s.mccbV(bus, 36, 'MCB-04', '2P 10A');
+      LOADS.forEach(l => {
+        const ys = cond(l);
+        s.wire(46, ys, l.win[0], l.win[1]);
+        s.wire(94, ys, l.wout[0], l.wout[1]);
+        ys.forEach((y, i) => tb(TBX, y, l.tb[i]));
+      });
+    },
+  });
+</script>
+</body>
+</html>

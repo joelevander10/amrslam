@@ -1,0 +1,58 @@
+{
+  "_comment": "Everything the DEMO page says. Edit text here; no code change needed. Restart amr.service after editing. near_m: how close (m, from the vehicle outline) counts as 'It sees you'; raise or lower it on site.",
+  "product": "AGV I-PRIME",
+  "expansion": "Automated Guided Vehicle",
+  "tagline": "Smart material handling solution system",
+  "rotate_s": 8,
+  "near_m": 1.0,
+  "specs": [
+    {
+      "value": "2 T",
+      "label": "capacity, up to"
+    },
+    {
+      "value": "1 m/s",
+      "label": "travel speed, up to"
+    },
+    {
+      "value": "Custom",
+      "label": "carrying method, built to your load"
+    },
+    {
+      "value": "2 modes",
+      "label": "tape guided or tape-free"
+    }
+  ],
+  "cards": [
+    {
+      "kicker": "Safety first",
+      "title": "It watches where it goes",
+      "body": "The live view on the left is what its laser safety scanner sees right now. On the move, the AGV stops for people in its path and continues by itself once the way is clear."
+    },
+    {
+      "kicker": "One platform",
+      "title": "Two ways to find its way",
+      "body": "Start with magnetic tape on the floor today. When your layout changes, the same vehicle can move to tape-free navigation."
+    },
+    {
+      "kicker": "Tape guided",
+      "title": "Follows a line, reliably",
+      "body": "The AGV follows a magnetic strip on the floor and stops at marked stations. Quick to install, easy to change: move the tape, change the route."
+    },
+    {
+      "kicker": "Tape-free",
+      "title": "Learns your factory",
+      "body": "Drive it around the site once and it builds its own map. Routes are drawn on a screen. No floor work at all."
+    },
+    {
+      "kicker": "Always in reach",
+      "title": "Stop it any time",
+      "body": "Emergency stop buttons sit on the vehicle, within reach from every side. One press stops the drive at once."
+    },
+    {
+      "kicker": "Your factory",
+      "title": "Made for your material flow",
+      "body": "Tell us what you move, how far and how often. We configure AGV I-PRIME for your load, your route and your line."
+    }
+  ]
+}

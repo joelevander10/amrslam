@@ -4,46 +4,110 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}AMR{% endblock %}</title>
+{# The size knob (amr.css: one layout, three sizes) is set before the stylesheet applies so
+   the page never flashes at the wrong size. ?ui=s|m|l forces and stores it; otherwise the
+   stored choice; otherwise a coarse pointer (the touch HMI) gets "l", a desk gets "s". #}
+<script>
+(function () {
+  var u = null;
+  try {
+    var q = new URLSearchParams(location.search).get('ui');
+    if (q === 's' || q === 'm' || q === 'l') { localStorage.setItem('amr.ui', q); u = q; }
+    else u = localStorage.getItem('amr.ui');
+  } catch (e) { /* storage blocked: fall through to the pointer test */ }
+  if (u !== 's' && u !== 'm' && u !== 'l') u = window.matchMedia && matchMedia('(pointer:coarse)').matches ? 'l' : 's';
+  document.documentElement.dataset.ui = u;
+})();
+</script>
 <link rel="stylesheet" href="/static/amr.css">
 </head>
 <body>
 <header>
   <h1>AMR control</h1>
+  {# Two navs, one page. The operator gets four tabs (everything they can act on);
+     the engineer keeps all ten. Hidden pages stay reachable by URL - the PIN is a
+     mistake guard, not security (amr_web/role.py). #}
   <nav>
-    <a href="/status" class="{{ 'on' if page == 'status' }}">Status</a>
+    <a href="/home"   class="{{ 'on' if page == 'home' }}">Home</a>
+    {# Two navigation types, two run tabs (2026-10-02). A tab for a product the profile
+       does not carry is not offered at all (its pages answer 404). #}
+    {% if tracked_ok %}<a href="/run-tracked" class="{{ 'on' if page == 'run_tracked' }}">Run tracked</a>{% endif %}
+    {% if trackless_ok %}<a href="/run" class="{{ 'on' if page == 'run' }}">Run trackless</a>{% endif %}
     <a href="/manual" class="{{ 'on' if page == 'manual' }}">Manual</a>
-    <a href="/maps"   class="{{ 'on' if page == 'maps' }}">Maps</a>
-    <a href="/editor" class="{{ 'on' if page == 'editor' }}">Routes</a>
-    <a href="/run"    class="{{ 'on' if page == 'run' }}">Run</a>
+    <a href="/alarms" class="{{ 'on' if page == 'alarms' }}">Alarms</a>
+    {% if role == ENGINEER %}
+    <a href="/status" class="{{ 'on' if page == 'status' }}">Status</a>
     <a href="/monitor" class="{{ 'on' if page == 'monitor' }}">Monitor</a>
     <a href="/io"     class="{{ 'on' if page == 'io' }}">I/O</a>
-    <a href="/alarms" class="{{ 'on' if page == 'alarms' }}">Alarms</a>
     <a href="/params" class="{{ 'on' if page == 'params' }}">Params</a>
     <a href="/commissioning" class="{{ 'on' if page == 'commissioning' }}">Commission</a>
+    {% if tracked_ok %}<a href="/teach" class="{{ 'on' if page == 'teach' }}">Teach</a>{% endif %}
+    {% endif %}
+    {# The visitors' Demo page (/demo, demo.py) is DEPRECATED since 2026-10-02: no nav link;
+       the route still serves for anyone who has the URL. #}
   </nav>
-  <span id="pill-link" class="pill">connecting…</span>
-  <span id="wifi" class="wifi" title="Wi-Fi link"><i class="bars"><b></b><b></b><b></b><b></b></i><span id="wifi-text">–</span></span>
-  <span id="net" class="net" title="Internet, as the robot sees it (rechecked every 4 s)"><i></i><span id="net-text">NET</span></span>
+  <button id="role-btn" class="ui-size role-btn" type="button"
+          title="{{ 'Engineer view: press to go back to the operator view' if role == ENGINEER else 'Engineer view (PIN)' }}"
+          data-role="{{ role }}">{{ 'Eng' if role == ENGINEER else 'Op' }}</button>
+  <button id="ui-size" class="ui-size" type="button" title="Display size: small (desk) · medium · large (vehicle panel)">Aa</button>
+  <button id="reload-btn" class="ui-size" type="button" title="Reload this page (fresh, like Ctrl+Shift+R)" aria-label="Reload page"><svg class="reload-ico" viewBox="0 0 40 40" aria-hidden="true"><path d="M27.5 15.5 A9 9 0 1 0 29 22"/><path d="M28.5 9.5 V16 H22"/></svg></button>
 </header>
+
+<div id="page-error" class="page-error" hidden></div>
 
 <div class="shell">
   {# The shared rail: what somebody standing next to the vehicle needs on every
      page. Every tile says "–" until the first poll; a failed poll dims them all. #}
   <aside id="telemetry" class="stale">
-    <div class="tel-grid">
+    <div class="rail-link">
+      <span id="pill-link" class="pill">connecting…</span>
+      <span id="wifi" class="wifi" title="Wi-Fi link"><i class="bars"><b></b><b></b><b></b><b></b></i><span id="wifi-text">–</span></span>
+      <span id="net" class="net" title="Internet, as the robot sees it (rechecked every 4 s)"><i></i><span id="net-text">NET</span></span>
+      <span id="supply" class="chip" title="Drive main supply voltage (40A4h), lower of the two drives">– V</span>
+      <span id="ipc-temp" class="chip" title="IPC CPU temperature (coretemp package)">– °C</span>
+    </div>
+    <div class="tel-grid rows">
       <div class="tel" id="tel-mode"><span>Mode</span><b>–</b><i>—</i></div>
       <div class="tel" id="tel-selector"><span>Selector</span><b>–</b><i>—</i></div>
       <div class="tel" id="tel-drives"><span>Drives</span><b>–</b><i>—</i></div>
       <div class="tel" id="tel-source"><span>Command</span><b>–</b><i>—</i></div>
-      <div class="tel" id="tel-loc"><span>Localisation</span><b>–</b><i>—</i></div>
+      <div class="tel" id="tel-field"><span>Scanner</span><b>–</b><i>—</i></div>
+      <div class="tel" id="tel-loc"><span>Localis.</span><b>–</b><i>—</i></div>
       <div class="tel" id="tel-run"><span>Run</span><b>–</b><i>—</i></div>
-      <div class="tel" id="tel-wheels"><span>Wheels</span><b>–</b><i>rad/s · L / R</i></div>
-      <div class="tel" id="tel-gen"><span>Generation</span><b>–</b><i>—</i></div>
+      <div class="tel" id="tel-wheels"><span>Wheels</span><b>–</b><i>m/s · L / R</i></div>
+      <div class="tel" id="tel-gen"><span>Gen.</span><b>–</b><i>—</i></div>
     </div>
+    <div id="rail-alarm" class="rail-alarm" hidden></div>
     <pre id="log"></pre>
   </aside>
-  <main class="{% block main_class %}{% endblock %}">{% block body %}{% endblock %}</main>
+  <main class="{% block main_class %}{% endblock %}">
+    {% if sub %}{# Maps and Routes are SLAM things: they live inside Run trackless. #}
+    <nav class="subnav">
+      <a href="/run" class="{{ 'on' if sub == 'run' }}">Run</a>
+      {% if role == ENGINEER %}
+      <a href="/maps" class="{{ 'on' if sub == 'maps' }}">Maps</a>
+      <a href="/editor" class="{{ 'on' if sub == 'editor' }}">Routes</a>
+      {% endif %}
+    </nav>
+    {% endif %}
+    {% block body %}{% endblock %}</main>
 </div>
+
+{# Engineer PIN pad. The kiosk is bare X11 + matchbox with no on-screen keyboard, and
+   desktop Chromium has none of its own, so a prompt() box cannot be typed into on
+   the touch panel. Digits are buttons; a USB keyboard still works too. #}
+<dialog id="pin-pad" class="pin-pad" aria-label="Engineer PIN">
+  <div class="pin-title">Engineer PIN</div>
+  <div id="pin-dots" class="pin-dots" aria-live="polite"></div>
+  <div id="pin-msg" class="pin-msg"></div>
+  <div class="pin-keys">
+    {% for k in ['1','2','3','4','5','6','7','8','9'] %}<button type="button" data-k="{{ k }}">{{ k }}</button>{% endfor %}
+    <button type="button" data-k="back" aria-label="Delete">⌫</button>
+    <button type="button" data-k="0">0</button>
+    <button type="button" data-k="ok" class="pin-ok">OK</button>
+  </div>
+  <button type="button" data-k="cancel" class="pin-cancel">Cancel</button>
+</dialog>
 <script src="/static/amr.js"></script>
 {% block scripts %}{% endblock %}
 </body>

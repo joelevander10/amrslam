@@ -15,9 +15,7 @@ function el(id, tag) {
 ['ed-canvas', 'tool-start', 'tool-line', 'btn-start-survey', 'btn-undo', 'btn-redo', 'btn-clear', 'btn-validate', 'btn-save',
  'btn-mission', 'ed-steps', 'ed-result', 'ed-hint', 'ed-route-id', 'ed-load', 'ed-map'].forEach(id => el(id));
 el('ed-repeat', 'INPUT').value = '1';
-el('ed-speed', 'INPUT').value = '0.55';   // a NUMBER input, as in editor.html (not a <select>)
-el('ed-speed-long', 'INPUT').value = '0.85'; el('ed-long-min', 'INPUT').value = '4';
-el('ed-speed-arc', 'INPUT').value = '0.40';
+el('ed-speed').dataset.v = '0.60';   // read-only: route.VEHICLE_V_MAX rendered by the server (2026-10-02)
 // the typed straight length: a number input read through valueAsNumber (NaN when empty), as in the browser
 Object.defineProperty(el('ed-len', 'INPUT'), 'valueAsNumber', { get() { return this.value === '' ? NaN : Number(this.value); } });
 el('btn-line-len', 'BUTTON'); el('btn-reverse-len', 'BUTTON'); el('btn-arc-l', 'BUTTON'); el('btn-arc-r', 'BUTTON');
@@ -47,18 +45,13 @@ const flush = () => new Promise(r => setImmediate(r));
   scripted['/api/footprint'] = () => ({ status: 200, data: { polygon: [[-0.5, -0.35], [1.1, -0.35], [1.1, 0.35], [-0.5, 0.35]], margin_m: 0.1, reach_m: 1.15 } });
   scripted['/api/maps/m1/1'] = () => ({ status: 200, data: { routes: { slow: [1] } } });
   for (let i = 0; i < 5; i++) await flush();
-  out.new_draft_speed = els['ed-speed'].value;                       // refresh() ran on the new draft: 0.50, no TypeError
-  out.new_draft_long = [els['ed-speed-long'].value, els['ed-long-min'].value];
-  out.new_draft_arc = els['ed-speed-arc'].value;
-  // load a saved route with 0.3: shown as 0.3, model untouched
-  scripted['/api/maps/m1/1/routes/slow/1'] = () => ({ status: 200, data: { ok: true, route: { route_id: 'slow', start: { x_m: 0, y_m: 0, yaw_deg: 0 }, steps: [], repeat_count: 1, limits: { linear_mps: 0.3 } }, issues: [] } });
+  out.new_draft_rows = els['ed-steps'].innerHTML;                    // refresh() ran on the new draft, no TypeError
+  // load a route saved before 2026-10-02 with its own speeds: they are dropped, other limits kept
+  scripted['/api/maps/m1/1/routes/slow/1'] = () => ({ status: 200, data: { ok: true, route: { route_id: 'slow', start: { x_m: 0, y_m: 0, yaw_deg: 0 }, steps: [], repeat_count: 1, limits: { linear_mps: 0.3, long_linear_mps: 0.85, long_min_length_m: 4, arc_linear_mps: 0.4, angular_rad_s: 0.3 } }, issues: [] } });
   els['ed-load'].value = 'slow/1';
   await els['ed-load'].onchange({ target: els['ed-load'] });
   for (let i = 0; i < 3; i++) await flush();
-  out.loaded_speed_shown = els['ed-speed'].value;
-  out.loaded_long_shown = els['ed-speed-long'].value;                // no long_linear_mps in the file: shown EMPTY, not 0.85
-  out.loaded_arc_shown = els['ed-speed-arc'].value;                  // no arc_linear_mps in the file: the 0.40 default, not written
-  // a save carries the loaded value, not the default
+  // a save carries the non-speed limits only
   scripted['/api/maps/m1/1/routes/save'] = body => { out.saved_limits = body.limits; return { status: 200, data: { route_id: 'slow', revision: 2, sha256: 'abcdef123456' } }; };
   await els['btn-save'].onclick();
   for (let i = 0; i < 3; i++) await flush();
@@ -66,8 +59,9 @@ const flush = () => new Promise(r => setImmediate(r));
   els['ed-map'].value = 'm1/1';
   await els['ed-map'].onchange({ target: els['ed-map'] });
   for (let i = 0; i < 3; i++) await flush();
-  out.reset_speed = els['ed-speed'].value;
-  out.reset_long = els['ed-speed-long'].value;
+  scripted['/api/maps/m1/1/routes/save'] = body => { out.reset_saved = body.limits; return { status: 200, data: { route_id: 'n', revision: 1, sha256: 'abcdef123456' } }; };
+  await els['btn-save'].onclick();
+  for (let i = 0; i < 3; i++) await flush();
   // --- straights in mm: typed length and clicked point share one rule and one display ---
   scripted['/api/maps/m1/1/routes/save'] = body => { out.mm_saved_steps = JSON.parse(JSON.stringify(body.steps)); return { status: 200, data: { route_id: 'r', revision: 1, sha256: 'abcdef123456' } }; };
   theView.tool = 'start'; theView.onClick([0, 0]);              // start at the origin, heading +x
@@ -85,20 +79,10 @@ const flush = () => new Promise(r => setImmediate(r));
   await els['btn-save'].onclick();
   for (let i = 0; i < 3; i++) await flush();
   out.mm_rows = els['ed-steps'].innerHTML;
-  // --- long-straight boost: the row marks a straight LONGER than the threshold, the payload carries the limits ---
-  els['ed-len'].value = '4000'; els['btn-line-len'].onclick();      // exactly 4.000 m: not boosted
-  els['ed-len'].value = '4500'; els['btn-line-len'].onclick();      // 4.5 m: boosted
-  out.boost_rows = els['ed-steps'].innerHTML;
-  let savedLimits = null;
-  scripted['/api/maps/m1/1/routes/save'] = body => { savedLimits = JSON.parse(JSON.stringify(body.limits)); return { status: 200, data: { route_id: 'r', revision: 2, sha256: 'abcdef123456' } }; };
-  await els['btn-save'].onclick();
-  for (let i = 0; i < 3; i++) await flush();
-  out.boost_saved_limits = savedLimits;
-  els['ed-speed-long'].value = ''; els['ed-speed-long'].onchange({ target: els['ed-speed-long'] });   // boost off
-  out.boost_off_rows = els['ed-steps'].innerHTML;
-  await els['btn-save'].onclick();
-  for (let i = 0; i < 3; i++) await flush();
-  out.boost_off_limits = savedLimits;
+  // --- one trackless speed: long straights are not marked or sped up ---
+  els['ed-len'].value = '4000'; els['btn-line-len'].onclick();
+  els['ed-len'].value = '4500'; els['btn-line-len'].onclick();
+  out.long_rows = els['ed-steps'].innerHTML;
   // --- reverse: bounded to 2000 mm, stored as a distance, drawn backwards along the heading ---
   const before = els['ed-steps'].innerHTML;
   els['ed-len'].value = '2500'; els['btn-reverse-len'].onclick();     // over the bound: refused

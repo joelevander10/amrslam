@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PROJ01 Sheet 7</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../kit/jis-sheet.css">
+</head>
+<body>
+
+<nav class="toolbar" aria-label="Export">
+  <strong>PROJ01 · Sheet 7 / «XX» · Motor driver wiring</strong>
+  <button type="button" class="primary" id="png">Download PNG</button>
+  <button type="button" id="pdf">Print / PDF</button>
+  <span class="status" id="status">A4 portrait · vector</span>
+</nav>
+
+<main class="wrap"><div class="sheet" id="sheet"></div></main>
+
+<script src="https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/dist/html-to-image.js"></script>
+<script src="../kit/jis-sheet.js"></script>
+<script>
+  // source: input-sketch/proj01/page07.jpg (upright) + BLVD-KRD pinout table from the user
+  // layout loosely follows the manufacturer pinout: connector face, two pin tables, notes
+  const META = {
+    customer: '«CUSTOMER»', designer: '«DESIGNER»',
+    content: 'MOTOR DRIVER WIRING',
+    approval: '«NAME»', checked: '«NAME»', designed: '«NAME»', drawn: '«NAME»',
+    date: '«DD/MM/YY»', scale: '',
+    title: 'ELECTRIC DIAGRAM',
+    model: '«MODEL»', dwg: '«-00-00-»', sheet: 7, of: '«XX»',
+    note: '',
+    refs: [],
+  };
+
+  // [pin, signal, connected to, TB driver 01, TB driver 02]; '' = not connected
+  // CAN pins: TBs from sheet 06; NET-VIN / NET-GND: TBs from sheet 04; TB43–TB54 are new here
+  const PINS = [
+    [1, 'OUT0+'], [2, 'OUT0−'], [3, 'OUT1+'], [4, 'OUT1−'],
+    [5, 'CAN_L', 'CAN L → SHEET 06', 'TB34', 'TB36'],
+    [6, 'CAN_H', 'CAN H → SHEET 06', 'TB33', 'TB35'],
+    [7, 'CAN_GND', 'CAN GND → SHEET 06', 'TB39', 'TB40'],
+    [8, '485GND'], [9, 'TR+'], [10, 'TR−'],
+    [11, 'HWTO1+', 'SAFETY PLC Q1', 'TB43', 'TB49'],
+    [12, 'HWTO1−', '1N24', 'TB44', 'TB50'],
+    [13, '0V'],
+    [14, 'EDM−', 'SAFETY PLC I3 / I4', 'TB45', 'TB51'],
+    [15, 'IN-COM'], [16, 'IN0'], [17, 'IN1'], [18, 'IN2'], [19, 'IN3'],
+    [20, 'NET-VIN', '1P24 → SHEET 04', 'TB21', 'TB23'],
+    [21, 'NET-GND', '1N24 → SHEET 04', 'TB22', 'TB24'],
+    [22, '485GND'], [23, 'TR+'], [24, 'TR−'], [25, '+V'],
+    [26, 'HWTO2+', 'SAFETY PLC Q2', 'TB46', 'TB52'],
+    [27, 'HWTO2−', '1N24', 'TB47', 'TB53'],
+    [28, 'EDM+', '1P24', 'TB48', 'TB54'],
+  ];
+  const JUMPERS = [[11, 25], [12, 26], [13, 27]];   // factory fitted, all removed
+
+  // new wiring through terminal blocks, one group per driver
+  const NEW = [11, 12, 14, 26, 27, 28];
+  const DRIVERS = [
+    { y0: 171, col: 3, name: ['DRIVER 01', 'BLVD-KRD', '(LEFT)'], plcIn: 'I3' },
+    { y0: 207, col: 4, name: ['DRIVER 02', 'BLVD-KRD', '(RIGHT)'], plcIn: 'I4' },
+  ];
+
+  JIS.render(document.getElementById('sheet'), {
+    meta: META,
+    file: 'PROJ01-07',
+    textScale: 1.25,          // drawing text +25% (frame and title block unchanged)
+    label: 'Motor driver wiring: BLVD-KRD 28-pin connector pinout for both drivers, factory jumpers removed, safety (HWTO / EDM) wiring through TB43–TB54.',
+    draw(s) {
+      const pin = n => PINS[n - 1];
+
+      /* ---- connector face (pins 1–14 top row, 15–28 bottom row) ---- */
+      const CX0 = 28, PITCH = 4.4, RY = [31, 39];
+      const px = n => CX0 + PITCH * ((n - 1) % 14);
+      const py = n => RY[n > 14 ? 1 : 0];
+      s.text(20, 17, 'BLVD-KRD 28-PIN CONNECTOR', { size: 2.4, weight: 600 });
+      s.rect(24, 25, 65, 20, 0.3);
+      JUMPERS.forEach(([a, b]) => s.line(px(a), py(a) + 1.2, px(b), py(b) - 1.2, 0.3, '0.8 0.6'));
+      PINS.forEach(p => {
+        s.ring(px(p[0]), py(p[0]), 1.2);
+        if (p[2]) s.dot(px(p[0]), py(p[0]), 0.6);
+      });
+      [1, 7, 14].forEach(n => {
+        s.line(px(n), 22.8, px(n), 25, 0.18);
+        s.text(px(n), 22, String(n), { size: 1.9, anchor: 'middle' });
+      });
+      [15, 21, 28].forEach(n => {
+        s.line(px(n), 45, px(n), 47.2, 0.18);
+        s.text(px(n), 49.8, String(n), { size: 1.9, anchor: 'middle' });
+      });
+      s.text(91.5, 34, 'JUMPERS:', { size: 1.7 });
+      s.text(91.5, 37.2, 'REMOVE', { size: 1.7, weight: 600 });
+      s.dot(25.2, 54.3, 0.6);
+      s.text(27.2, 55, '= WIRED PIN', { size: 1.7 });
+      s.line(52, 54.3, 55.5, 54.3, 0.3, '0.8 0.6');
+      s.text(57, 55, '= FACTORY JUMPER', { size: 1.7 });
+
+      /* ---- notes ---- */
+      const NX = 114;
+      s.text(NX, 17, 'NOTES', { size: 2.2, weight: 600 });
+      [
+        '1. APPLIES TO DRIVER 01 (LEFT) AND DRIVER 02 (RIGHT).',
+        '2. OUT OF THE BOX CONFIG: JUMPERS 11–25, 12–26,',
+        '   13–27 FITTED. DISCONNECT ALL.',
+        '3. POWER CONNECTOR: LC03D06A CABLE FROM ORIENTAL',
+        '   MOTOR, FOR THE DRIVER POWER WIRING ON SHEET 02.',
+        '4. DRIVER–MOTOR CONNECTION: CCM010B1AAF CABLE',
+        '   FROM ORIENTAL MOTOR (UVW & ENCODER).',
+        '5. TB49 / TB52 ARE JUMPERED FROM TB43 / TB46',
+        '   (SAFETY PLC Q1 / Q2, SEE SHEET 08).',
+      ].forEach((t, i) => s.text(t.startsWith(' ') ? NX + 3.3 : NX, 22.5 + 4 * i, t.trim(), { size: 1.8 }));
+
+      /* ---- pin tables ---- */
+      const TY = 62, HH = 9, RH = 6;
+      const COLS = [8, 16, 35, 15, 15];               // pin, signal, connected to, TB 01, TB 02
+      const table = (x0, first) => {
+        const xs = COLS.reduce((a, w) => (a.push(a[a.length - 1] + w), a), [x0]);
+        const yEnd = TY + HH + RH * 14;
+        s.rect(x0, TY, xs[5] - x0, yEnd - TY, 0.3);
+        s.line(x0, TY + HH, xs[5], TY + HH, 0.3);
+        xs.slice(1, 5).forEach(x => s.line(x, TY, x, yEnd, 0.18));
+        for (let i = 1; i < 14; i++) s.line(x0, TY + HH + RH * i, xs[5], TY + HH + RH * i, 0.12);
+        const hc = i => (xs[i] + xs[i + 1]) / 2;
+        const H = { size: 1.8, weight: 600, anchor: 'middle' };
+        s.text(hc(0), TY + 3.6, 'PIN', H); s.text(hc(0), TY + 6.8, 'NO.', H);
+        s.text(hc(1), TY + 3.6, 'SIGNAL', H); s.text(hc(1), TY + 6.8, 'NAME', H);
+        s.text(hc(2), TY + 5.2, 'CONNECTED TO', H);
+        s.text(hc(3), TY + 3.6, 'DRIVER 01', H); s.text(hc(3), TY + 6.8, 'TB', H);
+        s.text(hc(4), TY + 3.6, 'DRIVER 02', H); s.text(hc(4), TY + 6.8, 'TB', H);
+        for (let i = 0; i < 14; i++) {
+          const p = pin(first + i), y = TY + HH + RH * i + 4;
+          const wired = !!p[2], o = { size: 1.9, weight: wired ? 600 : 500 };
+          s.text(hc(0), y, String(p[0]), { ...o, anchor: 'middle' });
+          s.text(xs[1] + 1.2, y, p[1], o);
+          s.text(xs[2] + 1.2, y, wired ? p[2] : '—', o);
+          s.text(hc(3), y, wired ? p[3] : '—', { ...o, anchor: 'middle' });
+          s.text(hc(4), y, wired ? p[4] : '—', { ...o, anchor: 'middle' });
+        }
+      };
+      table(21, 1);
+      table(112, 15);
+      s.text(21, 160.5, 'SAFETY PLC I3 = DRIVER 01 (LEFT) · SAFETY PLC I4 = DRIVER 02 (RIGHT) · — = NOT CONNECTED',
+        { size: 1.7 });
+
+      /* ---- terminal block wiring TB43–TB54 ---- */
+      const EX = 58, TBX = 90, DX = 140, DW = 36, GAP = 4.6;
+      const tb = (x, y, name) => {
+        s.ring(x, y, 0.8);
+        s.line(x - 1.2, y + 1.2, x + 1.2, y - 1.2, 0.2);
+        s.text(x, y - 1.6, name, { size: 1.7, anchor: 'middle' });
+      };
+      s.text(20, 166, 'SAFETY WIRING (HWTO / EDM)', { size: 2.2, weight: 600 });
+      DRIVERS.forEach(d => {
+        const ys = NEW.map((_, i) => d.y0 + GAP * i), last = ys[ys.length - 1];
+        ys.forEach((y, i) => {
+          const p = pin(NEW[i]);
+          const dest = p[0] === 14 ? 'SAFETY PLC ' + d.plcIn : p[2];
+          s.line(EX, y, DX, y);
+          s.path(`M${EX} ${y} L${EX + 1.4} ${y - 0.6} L${EX + 1.4} ${y + 0.6} Z`, 0.1, '#111');
+          s.text(EX - 1.2, y + 0.7, dest, { size: 1.9, anchor: 'end' });
+        });
+        s.rect(DX, ys[0] - 5, DW, last - ys[0] + 10, 0.3);
+        ys.forEach((y, i) => {
+          const p = pin(NEW[i]);
+          s.ring(DX, y, 0.6);
+          s.text(DX + 1.5, y + 0.7, p[0] + '/' + p[1], { size: 1.9 });
+        });
+        const cx = DX + DW / 2 + 6, mid = (ys[0] + last) / 2;
+        d.name.forEach((n, i) => s.text(cx, mid - 3.4 + 4.2 * i, n,
+          { size: 2.2, weight: i === 0 ? 600 : 500, anchor: 'middle' }));
+        // safety cables: AWG22 ORANGE on both segments; marks and terminals last, so they cut the conductors
+        s.wire(66, ys, 'AWG22', 'ORANGE');
+        s.wire(110, ys, 'AWG22', 'ORANGE');
+        ys.forEach((y, i) => tb(TBX, y, pin(NEW[i])[d.col]));
+      });
+    },
+  });
+</script>
+</body>
+</html>

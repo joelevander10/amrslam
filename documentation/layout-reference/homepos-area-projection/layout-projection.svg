@@ -1,0 +1,257 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-2700.0 -9900.0 9300.0 13200.0" class="layout" role="img" aria-label="Magnetic tape layout projection, top view, mm"><style>
+svg{--bg:#ffffff;--ink:#1d2228;--muted:#6b7280;--grid:#eceee9;--gridM:#dcdfd8;
+--pillar:#c9cdd3;--tape:#16181b;--cl:#f2c200;--feat:rgba(120,130,140,.10);--featS:#9aa1a9;
+--dim:#1f5fbf;--est:#c2410c;--accent:#b91c1c;--card:#ffffff;--line:#e3e5e0}
+
+    .gm{stroke:var(--grid);stroke-width:4}
+    .gM{stroke:var(--gridM);stroke-width:7}
+    .pillar{fill:var(--pillar);stroke:var(--ink);stroke-width:10}
+    .px{stroke:var(--ink);stroke-width:5;opacity:.5}
+    .plab{font:700 110px system-ui,sans-serif;fill:var(--ink)}
+    .tape path{fill:none;stroke:var(--tape);stroke-width:30;stroke-linejoin:round}
+    .cl path{fill:none;stroke:var(--cl);stroke-width:4;stroke-dasharray:60 30}
+    .feature path{fill:var(--feat);stroke:var(--featS);stroke-width:8;stroke-dasharray:40 25}
+    .feature text{font:italic 80px system-ui,sans-serif;fill:var(--muted)}
+    .datum{stroke:var(--muted);stroke-width:5;stroke-dasharray:30 20}
+    .mp{fill:var(--accent)}
+    .dim line{stroke:var(--dim);stroke-width:6}
+    .dim line.ext{stroke-width:4}
+    .dim text{font:600 95px system-ui,sans-serif;fill:var(--dim)}
+    .dim.est line{stroke:var(--est)} .dim.est text{fill:var(--est)}
+    .rad line,.note line{stroke:var(--muted);stroke-width:5}
+    .rad circle,.note circle{fill:var(--muted)}
+    .rad text{font:700 95px system-ui,sans-serif;fill:var(--accent)}
+    .note text{font:600 80px system-ui,sans-serif;fill:var(--ink)}
+    .origin line{stroke:var(--accent);stroke-width:10}
+    .origin text,.scale text{font:600 80px system-ui,sans-serif;fill:var(--ink)}
+    .sb1{fill:var(--ink)} .sb0{fill:var(--bg);stroke:var(--ink);stroke-width:5}
+    #arrp{fill:var(--dim)}
+    
+.ptape path{fill:none;stroke:var(--tape);stroke-width:30;stroke-linejoin:miter}
+.pnode{fill:var(--tape)}
+.pleg line{stroke-width:30} .pleg .lt{stroke:var(--tape)} .pleg .la{stroke:#f2a900;stroke-width:45}
+.darrow{stroke:#f2a900;stroke-width:60}
+.dbox{fill:#3f6fc4;stroke:#1d3f7a;stroke-width:10}
+.dtxt{font:600 100px system-ui,sans-serif;fill:#ffffff}
+.pleg text{font:600 85px system-ui,sans-serif;fill:var(--ink)}
+.pnote text{font:500 80px ui-monospace,Consolas,monospace;fill:var(--ink);white-space:pre}
+.pnote text.h{font:700 90px system-ui,sans-serif}
+</style><defs><marker id="arr" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="70" markerHeight="50" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path id="arrp" d="M0,0 L10,5 L0,10 z"/></marker></defs><rect class="bg" x="-2700" y="-9900" width="9300" height="13200" fill="#ffffff"/><line class="gM" x1="-3000" y1="-9900.0" x2="-3000" y2="3300.0"/>
+<line class="gm" x1="-2500" y1="-9900.0" x2="-2500" y2="3300.0"/>
+<line class="gM" x1="-2000" y1="-9900.0" x2="-2000" y2="3300.0"/>
+<line class="gm" x1="-1500" y1="-9900.0" x2="-1500" y2="3300.0"/>
+<line class="gM" x1="-1000" y1="-9900.0" x2="-1000" y2="3300.0"/>
+<line class="gm" x1="-500" y1="-9900.0" x2="-500" y2="3300.0"/>
+<line class="gM" x1="0" y1="-9900.0" x2="0" y2="3300.0"/>
+<line class="gm" x1="500" y1="-9900.0" x2="500" y2="3300.0"/>
+<line class="gM" x1="1000" y1="-9900.0" x2="1000" y2="3300.0"/>
+<line class="gm" x1="1500" y1="-9900.0" x2="1500" y2="3300.0"/>
+<line class="gM" x1="2000" y1="-9900.0" x2="2000" y2="3300.0"/>
+<line class="gm" x1="2500" y1="-9900.0" x2="2500" y2="3300.0"/>
+<line class="gM" x1="3000" y1="-9900.0" x2="3000" y2="3300.0"/>
+<line class="gm" x1="3500" y1="-9900.0" x2="3500" y2="3300.0"/>
+<line class="gM" x1="4000" y1="-9900.0" x2="4000" y2="3300.0"/>
+<line class="gm" x1="4500" y1="-9900.0" x2="4500" y2="3300.0"/>
+<line class="gM" x1="5000" y1="-9900.0" x2="5000" y2="3300.0"/>
+<line class="gm" x1="5500" y1="-9900.0" x2="5500" y2="3300.0"/>
+<line class="gM" x1="6000" y1="-9900.0" x2="6000" y2="3300.0"/>
+<line class="gm" x1="6500" y1="-9900.0" x2="6500" y2="3300.0"/>
+<line class="gm" x1="-2700.0" y1="3500" x2="6600.0" y2="3500"/>
+<line class="gM" x1="-2700.0" y1="3000" x2="6600.0" y2="3000"/>
+<line class="gm" x1="-2700.0" y1="2500" x2="6600.0" y2="2500"/>
+<line class="gM" x1="-2700.0" y1="2000" x2="6600.0" y2="2000"/>
+<line class="gm" x1="-2700.0" y1="1500" x2="6600.0" y2="1500"/>
+<line class="gM" x1="-2700.0" y1="1000" x2="6600.0" y2="1000"/>
+<line class="gm" x1="-2700.0" y1="500" x2="6600.0" y2="500"/>
+<line class="gM" x1="-2700.0" y1="0" x2="6600.0" y2="0"/>
+<line class="gm" x1="-2700.0" y1="-500" x2="6600.0" y2="-500"/>
+<line class="gM" x1="-2700.0" y1="-1000" x2="6600.0" y2="-1000"/>
+<line class="gm" x1="-2700.0" y1="-1500" x2="6600.0" y2="-1500"/>
+<line class="gM" x1="-2700.0" y1="-2000" x2="6600.0" y2="-2000"/>
+<line class="gm" x1="-2700.0" y1="-2500" x2="6600.0" y2="-2500"/>
+<line class="gM" x1="-2700.0" y1="-3000" x2="6600.0" y2="-3000"/>
+<line class="gm" x1="-2700.0" y1="-3500" x2="6600.0" y2="-3500"/>
+<line class="gM" x1="-2700.0" y1="-4000" x2="6600.0" y2="-4000"/>
+<line class="gm" x1="-2700.0" y1="-4500" x2="6600.0" y2="-4500"/>
+<line class="gM" x1="-2700.0" y1="-5000" x2="6600.0" y2="-5000"/>
+<line class="gm" x1="-2700.0" y1="-5500" x2="6600.0" y2="-5500"/>
+<line class="gM" x1="-2700.0" y1="-6000" x2="6600.0" y2="-6000"/>
+<line class="gm" x1="-2700.0" y1="-6500" x2="6600.0" y2="-6500"/>
+<line class="gM" x1="-2700.0" y1="-7000" x2="6600.0" y2="-7000"/>
+<line class="gm" x1="-2700.0" y1="-7500" x2="6600.0" y2="-7500"/>
+<line class="gM" x1="-2700.0" y1="-8000" x2="6600.0" y2="-8000"/>
+<line class="gm" x1="-2700.0" y1="-8500" x2="6600.0" y2="-8500"/>
+<line class="gM" x1="-2700.0" y1="-9000" x2="6600.0" y2="-9000"/>
+<line class="gm" x1="-2700.0" y1="-9500" x2="6600.0" y2="-9500"/>
+<g class="feature"><path d="M-2500,-4135 L130,-4135 L130,-3690 L-2500,-3640"/><path d="M5700,-4140 L4200,-4140 L4200,-3930 Q4200,-3870 4300,-3870 L5700,-3800"/><text x="-2450" y="-3880">floor feature (indicative, not dimensioned)</text></g>
+<rect class="pillar" x="0.0" y="-3460.0" width="240.0" height="240.0"/><line class="px" x1="0.0" y1="-3460.0" x2="240.0" y2="-3220.0"/><line class="px" x1="240.0" y1="-3460.0" x2="0.0" y2="-3220.0"/>
+<text class="plab" x="-40.0" y="-3310.0" text-anchor="end">LL</text>
+<rect class="pillar" x="0.0" y="-4475.0" width="240.0" height="240.0"/><line class="px" x1="0.0" y1="-4475.0" x2="240.0" y2="-4235.0"/><line class="px" x1="240.0" y1="-4475.0" x2="0.0" y2="-4235.0"/>
+<text class="plab" x="-40.0" y="-4325.0" text-anchor="end">UL</text>
+<rect class="pillar" x="3764.0" y="-3460.0" width="240.0" height="240.0"/><line class="px" x1="3764.0" y1="-3460.0" x2="4004.0" y2="-3220.0"/><line class="px" x1="4004.0" y1="-3460.0" x2="3764.0" y2="-3220.0"/>
+<text class="plab" x="4044.0" y="-3310.0" text-anchor="start">LR</text>
+<rect class="pillar" x="3764.0" y="-4475.0" width="240.0" height="240.0"/><line class="px" x1="3764.0" y1="-4475.0" x2="4004.0" y2="-4235.0"/><line class="px" x1="4004.0" y1="-4475.0" x2="3764.0" y2="-4235.0"/>
+<text class="plab" x="4044.0" y="-4325.0" text-anchor="start">UR</text>
+<g class="tape"><path d="M-1800,0 L40,0"><title>bottom left</title></path><path d="M4044,0 L5600,0"><title>bottom right</title></path><path d="M1040,-5175 L1040,-3200 L1420,-2650 L1420,-1380"><title>left vertical + jog</title></path><path d="M1420,-1380 A1380,1380 0 0 1 40,0"><title>left -> left merge</title></path><path d="M1420,-2624 A2624,2624 0 0 0 4044,0"><title>left -> right merge</title></path><path d="M2474,-5175 L2474,-1570"><title>right vertical</title></path><path d="M2474,-2434 A2434,2434 0 0 1 40,0"><title>right -> left merge</title></path><path d="M2474,-1570 A1570,1570 0 0 0 4044,0"><title>right -> right merge</title></path></g>
+<g class="cl"><path d="M-1800,0 L40,0"/><path d="M4044,0 L5600,0"/><path d="M1040,-5175 L1040,-3200 L1420,-2650 L1420,-1380"/><path d="M1420,-1380 A1380,1380 0 0 1 40,0"/><path d="M1420,-2624 A2624,2624 0 0 0 4044,0"/><path d="M2474,-5175 L2474,-1570"/><path d="M2474,-2434 A2434,2434 0 0 1 40,0"/><path d="M2474,-1570 A1570,1570 0 0 0 4044,0"/></g>
+<g class="ptape"><path d="M1040,-5175 L465,-5650 L465,-7400 L1040,-8450"><title>loop left branch</title></path><path d="M1040,-5175 L1615,-5650 L1615,-7400 L1040,-8450"><title>loop right branch</title></path><path d="M1040,-8450 L1040,-8800 A717,717 0 0 1 2474,-8800 L2474,-5175"><title>stem + U-turn + right tape up</title></path><path d="M2474,-1570 L2474,1600"><title>right tape down</title></path></g>
+<g class="cl"><path d="M1040,-5175 L465,-5650 L465,-7400 L1040,-8450"/><path d="M1040,-5175 L1615,-5650 L1615,-7400 L1040,-8450"/><path d="M1040,-8450 L1040,-8800 A717,717 0 0 1 2474,-8800 L2474,-5175"/><path d="M2474,-1570 L2474,1600"/></g>
+<circle class="pnode" cx="1040.0" cy="-5175.0" r="35"/>
+<circle class="pnode" cx="1040.0" cy="-8450" r="35"/>
+<circle class="pnode" cx="2474.0" cy="-521.5071938291917" r="35"/>
+<g class="dim est">
+<line class="ext" x1="465.0" y1="-6620.0" x2="465.0" y2="-6660.0"/>
+<line class="ext" x1="1040.0" y1="-6620.0" x2="1040.0" y2="-6660.0"/>
+<line class="dl" x1="465.0" y1="-6600.0" x2="1040.0" y2="-6600.0" marker-start="url(#arr)" marker-end="url(#arr)"/>
+<text x="752.5" y="-6640.0" transform="rotate(-0.0 752.5 -6640.0)" text-anchor="middle" dominant-baseline="auto">~575</text>
+</g>
+<g class="dim est">
+<line class="ext" x1="1040.0" y1="-6620.0" x2="1040.0" y2="-6660.0"/>
+<line class="ext" x1="1615.0" y1="-6620.0" x2="1615.0" y2="-6660.0"/>
+<line class="dl" x1="1040.0" y1="-6600.0" x2="1615.0" y2="-6600.0" marker-start="url(#arr)" marker-end="url(#arr)"/>
+<text x="1327.5" y="-6640.0" transform="rotate(-0.0 1327.5 -6640.0)" text-anchor="middle" dominant-baseline="auto">~575</text>
+</g>
+<g class="dim est">
+<line class="ext" x1="205.0" y1="-7400.0" x2="245.0" y2="-7400.0"/>
+<line class="ext" x1="205.0" y1="-5650.0" x2="245.0" y2="-5650.0"/>
+<line class="dl" x1="185.0" y1="-7400.0" x2="185.0" y2="-5650.0" marker-start="url(#arr)" marker-end="url(#arr)"/>
+<text x="225.0" y="-6525.0" transform="rotate(90.0 225.0 -6525.0)" text-anchor="middle" dominant-baseline="auto">~1750</text>
+</g>
+<g class="dim est">
+<line class="ext" x1="1915.0" y1="-7400.0" x2="1955.0" y2="-7400.0"/>
+<line class="ext" x1="1915.0" y1="-5650.0" x2="1955.0" y2="-5650.0"/>
+<line class="dl" x1="1895.0" y1="-7400.0" x2="1895.0" y2="-5650.0" marker-start="url(#arr)" marker-end="url(#arr)"/>
+<text x="1855.0" y="-6525.0" transform="rotate(90.0 1855.0 -6525.0)" text-anchor="middle" dominant-baseline="hanging">~1750</text>
+</g>
+<g class="dim est">
+<line class="ext" x1="-2020.0" y1="-4475.0" x2="-2060.0" y2="-4475.0"/>
+<line class="ext" x1="-2020.0" y1="-5175.0" x2="-2060.0" y2="-5175.0"/>
+<line class="dl" x1="-2000.0" y1="-4475.0" x2="-2000.0" y2="-5175.0" marker-start="url(#arr)" marker-end="url(#arr)"/>
+<text x="-2040.0" y="-4825.0" transform="rotate(90.0 -2040.0 -4825.0)" text-anchor="middle" dominant-baseline="auto">~700</text>
+</g>
+<g class="dim est">
+<line class="ext" x1="-2020.0" y1="-5175.0" x2="-2060.0" y2="-5175.0"/>
+<line class="ext" x1="-2020.0" y1="-8450.0" x2="-2060.0" y2="-8450.0"/>
+<line class="dl" x1="-2000.0" y1="-5175.0" x2="-2000.0" y2="-8450.0" marker-start="url(#arr)" marker-end="url(#arr)"/>
+<text x="-2040.0" y="-6812.5" transform="rotate(90.0 -2040.0 -6812.5)" text-anchor="middle" dominant-baseline="auto">~3275</text>
+</g>
+<g class="dim est">
+<line class="ext" x1="-2020.0" y1="-8450.0" x2="-2060.0" y2="-8450.0"/>
+<line class="ext" x1="-2020.0" y1="-8800.0" x2="-2060.0" y2="-8800.0"/>
+<line class="dl" x1="-2000.0" y1="-8450.0" x2="-2000.0" y2="-8800.0" marker-start="url(#arr)" marker-end="url(#arr)"/>
+<text x="-2040.0" y="-8625.0" transform="rotate(90.0 -2040.0 -8625.0)" text-anchor="middle" dominant-baseline="auto">~350</text>
+</g>
+<g class="dim est">
+<line class="ext" x1="2824.0" y1="-0.0" x2="2864.0" y2="-0.0"/>
+<line class="ext" x1="2824.0" y1="1600.0" x2="2864.0" y2="1600.0"/>
+<line class="dl" x1="2804.0" y1="-0.0" x2="2804.0" y2="1600.0" marker-start="url(#arr)" marker-end="url(#arr)"/>
+<text x="2764.0" y="800.0" transform="rotate(90.0 2764.0 800.0)" text-anchor="middle" dominant-baseline="hanging">≥1600</text>
+</g>
+<g class="rad"><line x1="1250.0" y1="-9307.0" x2="350.0" y2="-9657.0"/><circle cx="1250.0" cy="-9307.0" r="14"/><text x="330.0" y="-9627.0" text-anchor="end">U-turn R717</text></g>
+<g class="note"><line x1="1040.0" y1="-5175.0" x2="-260.0" y2="-4825.0"/><circle cx="1040.0" cy="-5175.0" r="14"/><text x="-280.0" y="-4795.0" text-anchor="end">split (1040, 5175)</text></g>
+<g class="note"><line x1="1040.0" y1="-8450.0" x2="-60.0" y2="-8700.0"/><circle cx="1040.0" cy="-8450.0" r="14"/><text x="-80.0" y="-8670.0" text-anchor="end">merge (1040, ~8450)</text></g>
+<g class="note"><line x1="2474.0" y1="-521.5" x2="3024.0" y2="128.5"/><circle cx="2474.0" cy="-521.5" r="14"/><text x="3044.0" y="158.5" text-anchor="start">crossing R2624 (2474, 522)</text></g>
+<g class="note"><line x1="2474.0" y1="1600.0" x2="3174.0" y2="1750.0"/><circle cx="2474.0" cy="1600.0" r="14"/><text x="3194.0" y="1780.0" text-anchor="start">continues (beyond view)</text></g>
+<line class="darrow" x1="-2400" y1="0" x2="-1850" y2="0" marker-end="url(#darr)" marker-start="url(#darr)"/>
+<rect class="dbox" x="-2600" y="650" width="3000" height="525" rx="40"/>
+<text class="dtxt" x="-1100.0" y="825" text-anchor="middle">TO and FROM MRU 1-4</text><text class="dtxt" x="-1100.0" y="950" text-anchor="middle">FROM BTU 9-24</text><text class="dtxt" x="-1100.0" y="1075" text-anchor="middle">(AGV 1 only)</text>
+<line class="darrow" x1="5650" y1="0" x2="6400" y2="0" marker-end="url(#darr)" marker-start="url(#darr)"/>
+<rect class="dbox" x="3800" y="1050" width="2750" height="525" rx="40"/>
+<text class="dtxt" x="5175.0" y="1225" text-anchor="middle">TO STU 1-4</text><text class="dtxt" x="5175.0" y="1350" text-anchor="middle">FROM BTU 1-8 &amp; STU 1-4</text><text class="dtxt" x="5175.0" y="1475" text-anchor="middle">(AGV 2 only)</text>
+<line class="darrow" x1="2474.0" y1="1700" x2="2474.0" y2="2250" marker-end="url(#darr)"/>
+<rect class="dbox" x="724.0" y="2400" width="3500" height="400" rx="40"/>
+<text class="dtxt" x="2474.0" y="2575" text-anchor="middle">TO BTU 9-24 (AGV 1) and</text><text class="dtxt" x="2474.0" y="2700" text-anchor="middle">BTU 1-8 &amp; STU 1-6 (AGV 2)</text>
+<defs><marker id="darr" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="200" markerHeight="200" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M0,0 L10,5 L0,10 z" fill="#f2a900"/></marker></defs>
+<g class="pleg"><line x1="3250" y1="-9420" x2="3510" y2="-9420" class="lt"/><text x="3570" y="-9390">magnetic tape 30 mm</text><line x1="3250" y1="-9270" x2="3510" y2="-9270" class="la"/><text x="3570" y="-9240">traffic to / from</text></g>
+<g class="pnote"><text x="3250" y="-9000" class="h">PROJECTION: red-mark additions</text><text x="3250" y="-8875" class="">Tape above y 5175 and below y 1570 on the</text><text x="3250" y="-8750" class="">right line is inferred from a hand mark-up</text><text x="3250" y="-8625" class="">(~12.4 mm/px, rounded, loop made symmetric).</text><text x="3250" y="-8500" class="">~ dims: ±~200 mm, verify on site.</text><text x="3250" y="-8250" class="h">Inferred geometry (mm)</text><text x="3250" y="-8125" class="">split          (1040, 5175)</text><text x="3250" y="-8000" class="">loop left      x 465, y 5650–7400</text><text x="3250" y="-7875" class="">loop right     x 1615, y 5650–7400</text><text x="3250" y="-7750" class="">merge          (1040, 8450)</text><text x="3250" y="-7625" class="">U-turn         R717, centre (1757, 8800)</text><text x="3250" y="-7500" class="">               top y 9517</text><text x="3250" y="-7375" class="">right tape     up to y 8800; down to ≤ -1600</text><text x="3250" y="-7250" class="">split kinks    ±50.4°</text><text x="3250" y="-7125" class="">merge kinks    ±28.7°</text></g>
+<line class="datum" x1="0" y1="-3220.0" x2="0" y2="250"/>
+<line class="datum" x1="4004.0" y1="-3220.0" x2="4004.0" y2="250"/>
+<circle class="mp" cx="40.0" cy="0" r="35"/>
+<circle class="mp" cx="4044.0" cy="0" r="35"/>
+<g class="dim">
+<line class="ext" x1="0.0" y1="-4495.0" x2="0.0" y2="-4795.0"/>
+<line class="ext" x1="240.0" y1="-4495.0" x2="240.0" y2="-4795.0"/>
+<line class="dl" x1="0.0" y1="-4735.0" x2="240.0" y2="-4735.0" marker-start="url(#arr)" marker-end="url(#arr)"/>
+<text x="120.0" y="-4775.0" transform="rotate(-0.0 120.0 -4775.0)" text-anchor="middle" dominant-baseline="auto">240</text>
+</g>
+<g class="dim">
+<line class="ext" x1="260.0" y1="-4475.0" x2="500.0" y2="-4475.0"/>
+<line class="ext" x1="260.0" y1="-4235.0" x2="500.0" y2="-4235.0"/>
+<line class="dl" x1="440.0" y1="-4475.0" x2="440.0" y2="-4235.0" marker-start="url(#arr)" marker-end="url(#arr)"/>
+<text x="480.0" y="-4355.0" transform="rotate(90.0 480.0 -4355.0)" text-anchor="middle" dominant-baseline="auto">240</text>
+</g>
+<g class="dim">
+<line class="ext" x1="240.0" y1="-4495.0" x2="240.0" y2="-5055.0"/>
+<line class="ext" x1="3764.0" y1="-4495.0" x2="3764.0" y2="-5055.0"/>
+<line class="dl" x1="240.0" y1="-4995.0" x2="3764.0" y2="-4995.0" marker-start="url(#arr)" marker-end="url(#arr)"/>
+<text x="2002.0" y="-5035.0" transform="rotate(-0.0 2002.0 -5035.0)" text-anchor="middle" dominant-baseline="auto">3524</text>
+</g>
+<g class="dim">
+<line class="ext" x1="-20.0" y1="-3460.0" x2="-320.0" y2="-3460.0"/>
+<line class="ext" x1="-20.0" y1="-4235.0" x2="-320.0" y2="-4235.0"/>
+<line class="dl" x1="-260.0" y1="-3460.0" x2="-260.0" y2="-4235.0" marker-start="url(#arr)" marker-end="url(#arr)"/>
+<text x="-220.0" y="-3847.5" transform="rotate(90.0 -220.0 -3847.5)" text-anchor="middle" dominant-baseline="hanging">775</text>
+</g>
+<g class="dim">
+<line class="ext" x1="240.0" y1="-3360.0" x2="240.0" y2="-3400.0"/>
+<line class="ext" x1="1040.0" y1="-3360.0" x2="1040.0" y2="-3400.0"/>
+<line class="dl" x1="240.0" y1="-3340.0" x2="1040.0" y2="-3340.0" marker-start="url(#arr)" marker-end="url(#arr)"/>
+<text x="640.0" y="-3380.0" transform="rotate(-0.0 640.0 -3380.0)" text-anchor="middle" dominant-baseline="auto">800</text>
+</g>
+<g class="dim">
+<line class="ext" x1="2474.0" y1="-3360.0" x2="2474.0" y2="-3400.0"/>
+<line class="ext" x1="3764.0" y1="-3360.0" x2="3764.0" y2="-3400.0"/>
+<line class="dl" x1="2474.0" y1="-3340.0" x2="3764.0" y2="-3340.0" marker-start="url(#arr)" marker-end="url(#arr)"/>
+<text x="3119.0" y="-3380.0" transform="rotate(-0.0 3119.0 -3380.0)" text-anchor="middle" dominant-baseline="auto">1290</text>
+</g>
+<g class="dim">
+<line class="ext" x1="200.0" y1="-3220.0" x2="240.0" y2="-3220.0"/>
+<line class="ext" x1="200.0" y1="-0.0" x2="240.0" y2="-0.0"/>
+<line class="dl" x1="180.0" y1="-3220.0" x2="180.0" y2="-0.0" marker-start="url(#arr)" marker-end="url(#arr)"/>
+<text x="220.0" y="-1610.0" transform="rotate(90.0 220.0 -1610.0)" text-anchor="middle" dominant-baseline="auto">3220</text>
+</g>
+<g class="dim">
+<line class="ext" x1="3964.0" y1="-3220.0" x2="4004.0" y2="-3220.0"/>
+<line class="ext" x1="3964.0" y1="-0.0" x2="4004.0" y2="-0.0"/>
+<line class="dl" x1="3944.0" y1="-3220.0" x2="3944.0" y2="-0.0" marker-start="url(#arr)" marker-end="url(#arr)"/>
+<text x="3984.0" y="-1610.0" transform="rotate(90.0 3984.0 -1610.0)" text-anchor="middle" dominant-baseline="auto">3220</text>
+</g>
+<g class="dim">
+<line class="ext" x1="0.0" y1="20.0" x2="0.0" y2="320.0"/>
+<line class="ext" x1="40.0" y1="20.0" x2="40.0" y2="320.0"/>
+<line class="dl" x1="0.0" y1="260.0" x2="40.0" y2="260.0" marker-start="url(#arr)" marker-end="url(#arr)"/>
+<text x="20.0" y="300.0" transform="rotate(-0.0 20.0 300.0)" text-anchor="middle" dominant-baseline="hanging">40</text>
+</g>
+<g class="dim est">
+<line class="ext" x1="4004.0" y1="20.0" x2="4004.0" y2="320.0"/>
+<line class="ext" x1="4044.0" y1="20.0" x2="4044.0" y2="320.0"/>
+<line class="dl" x1="4004.0" y1="260.0" x2="4044.0" y2="260.0" marker-start="url(#arr)" marker-end="url(#arr)"/>
+<text x="4024.0" y="300.0" transform="rotate(-0.0 4024.0 300.0)" text-anchor="middle" dominant-baseline="hanging">40*</text>
+</g>
+<g class="dim est">
+<line class="ext" x1="1040.0" y1="-2450.0" x2="1040.0" y2="-2490.0"/>
+<line class="ext" x1="1420.0" y1="-2450.0" x2="1420.0" y2="-2490.0"/>
+<line class="dl" x1="1040.0" y1="-2430.0" x2="1420.0" y2="-2430.0" marker-start="url(#arr)" marker-end="url(#arr)"/>
+<text x="1230.0" y="-2390.0" transform="rotate(-0.0 1230.0 -2390.0)" text-anchor="middle" dominant-baseline="hanging">380*</text>
+</g>
+<g class="dim est">
+<line class="ext" x1="730.0" y1="-3200.0" x2="770.0" y2="-3200.0"/>
+<line class="ext" x1="730.0" y1="-2650.0" x2="770.0" y2="-2650.0"/>
+<line class="dl" x1="710.0" y1="-3200.0" x2="710.0" y2="-2650.0" marker-start="url(#arr)" marker-end="url(#arr)"/>
+<text x="750.0" y="-2925.0" transform="rotate(90.0 750.0 -2925.0)" text-anchor="middle" dominant-baseline="auto">550*</text>
+</g>
+<g class="dim est">
+<line class="ext" x1="730.0" y1="-2650.0" x2="770.0" y2="-2650.0"/>
+<line class="ext" x1="730.0" y1="-0.0" x2="770.0" y2="-0.0"/>
+<line class="dl" x1="710.0" y1="-2650.0" x2="710.0" y2="-0.0" marker-start="url(#arr)" marker-end="url(#arr)"/>
+<text x="750.0" y="-1325.0" transform="rotate(90.0 750.0 -1325.0)" text-anchor="middle" dominant-baseline="auto">2650*</text>
+</g>
+<g class="rad"><line x1="730.0" y1="-184.9" x2="80.0" y2="-444.9"/><circle cx="730.0" cy="-184.9" r="14"/><text x="60.0" y="-414.9" text-anchor="end">R1380</text></g>
+<g class="rad"><line x1="2246.0" y1="-1405.3" x2="1946.0" y2="-2355.3"/><circle cx="2246.0" cy="-1405.3" r="14"/><text x="1926.0" y="-2325.3" text-anchor="end">R2434</text></g>
+<g class="rad"><line x1="2357.3" y1="-613.9" x2="2507.3" y2="-1513.9"/><circle cx="2357.3" cy="-613.9" r="14"/><text x="2527.3" y="-1483.9" text-anchor="start">R2624</text></g>
+<g class="rad"><line x1="2568.7" y1="-1033.0" x2="3568.7" y2="-1733.0"/><circle cx="2568.7" cy="-1033.0" r="14"/><text x="3588.7" y="-1703.0" text-anchor="start">R1570</text></g>
+<g class="note"><line x1="1995.3" y1="-984.4" x2="2345.3" y2="420.0"/><circle cx="1995.3" cy="-984.4" r="14"/><text x="2365.3" y="450.0" text-anchor="start">crossing (1995, 984)</text></g>
+<g class="note"><line x1="40.0" y1="0.0" x2="-860.0" y2="330.0"/><circle cx="40.0" cy="0.0" r="14"/><text x="-880.0" y="360.0" text-anchor="end">merge L (40, 0)</text></g>
+<g class="note"><line x1="4044.0" y1="0.0" x2="4544.0" y2="330.0"/><circle cx="4044.0" cy="0.0" r="14"/><text x="4564.0" y="360.0" text-anchor="start">merge R (4044, 0)</text></g>
+<g class="origin"><line x1="0" y1="0" x2="300" y2="0"/><line x1="0" y1="0" x2="0" y2="-300"/><text x="-30" y="80" text-anchor="end">(0,0)</text></g>
+<g class="scale"><rect x="3600" y="450" width="250" height="40" class="sb1"/><rect x="3850" y="450" width="250" height="40" class="sb0"/><rect x="4100" y="450" width="250" height="40" class="sb1"/><rect x="4350" y="450" width="250" height="40" class="sb0"/><text x="3600" y="570">0</text><text x="4600" y="570" text-anchor="end">1 m</text></g></svg>

@@ -12,3 +12,6 @@ bool pendant_fwd
 bool pendant_rvs
 bool pendant_left
 bool pendant_right
+# Manual Arm (panel.di_manual_arm, DI08 on agv-01), debounced level. Under MANUAL the
+# drives are powered only while this is true (amr_base/arm_policy). False when invalid.
+bool manual_arm

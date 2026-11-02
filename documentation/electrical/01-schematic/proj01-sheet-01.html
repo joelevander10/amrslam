@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PROJ01 Sheet 1</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../kit/jis-sheet.css">
+</head>
+<body>
+
+<nav class="toolbar" aria-label="Export">
+  <strong>PROJ01 · Sheet 1 / «XX» · Battery power distribution</strong>
+  <button type="button" class="primary" id="png">Download PNG</button>
+  <button type="button" id="pdf">Print / PDF</button>
+  <span class="status" id="status">A4 portrait · vector</span>
+</nav>
+
+<main class="wrap"><div class="sheet" id="sheet"></div></main>
+
+<script src="https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/dist/html-to-image.js"></script>
+<script src="../kit/jis-sheet.js"></script>
+<script>
+  // source: input-sketch/proj01/page01.jpg (photographed rotated 90° CCW)
+  const META = {
+    customer: '«CUSTOMER»', designer: '«DESIGNER»',
+    content: 'BATTERY POWER DISTRIBUTION',
+    approval: '«NAME»', checked: '«NAME»', designed: '«NAME»', drawn: '«NAME»',
+    date: '«DD/MM/YY»', scale: '',
+    title: 'ELECTRIC DIAGRAM',
+    model: '«MODEL»', dwg: '«-00-00-»', sheet: 1, of: '«XX»',
+    note: '',
+    refs: [],
+  };
+
+  // single-pole feeders off 1P48, leaving the sheet to the right
+  const FEEDERS = [
+    { row: 5, cb: 'MCB-02', rating: '1P 10A', out: '2P48' },
+    { row: 7, cb: 'MCB-03', rating: '1P 10A', out: '3P48' },
+  ];
+
+  // DC/DC converters (no kit symbol: labelled box), fed from 1P48 / 1N48
+  const BUCKS = [
+    { row: 10, name: 'BUCK01', v: '48→24V', a: '6.25A (150W)', out: ['P24', 'N24'] },
+    { row: 14, name: 'BUCK02', v: '48→12V', a: '8.3A (100W)', out: ['P12', 'N12'] },
+  ];
+
+  JIS.render(document.getElementById('sheet'), {
+    meta: META,
+    file: 'PROJ01-01',
+    textScale: 1.25,          // drawing text +25% (frame and title block unchanged)
+    label: 'Battery power distribution: 48 V battery through MCB-01 to the 1P48/1N48 bus, two 10 A feeders and two buck converters.',
+    draw(s) {
+      const bus = [23.8, 29.8];              // P48 / N48, 1P48 / 1N48 after MCB-01
+      const END = 150;
+
+      // cable spec on vertical conductors (kit wire() is for horizontal flow)
+      const wireV = (xs, y, l1, l2) => {
+        const xl = xs[xs.length - 1];
+        s.line(xs[0] - 0.9, y, xl + 1.6, y, 0.18);
+        xs.forEach(x => s.path(`M${x + 1.15} ${y - 0.45} L${x + 1.15} ${y + 0.45} L${x} ${y} Z`, 0.1, '#111'));
+        const w = Math.max(l1.length, l2.length) * 1.2 * s.textScale + 0.4;
+        s.line(xl + 1.6, y, xl + 3.2, y - 1.3, 0.18);
+        s.line(xl + 3.2, y - 1.3, xl + 3.2 + w, y - 1.3, 0.18);
+        s.text(xl + 3.4, y - 1.8, l1, { size: 2 });
+        s.text(xl + 3.4, y + 1.2, l2, { size: 2 });
+      };
+
+      // battery → P48 / N48 → MCB-01 → 1P48 / 1N48 (continues on sheet 02)
+      s.text(44, 14.8, 'P48 : +48V (Batt)', { size: 2.2, weight: 600 });
+      s.text(44, 18.8, 'N48 : 0V (Batt)', { size: 2.2, weight: 600 });
+      s.bus(bus, 23, JIS.G.gridY, ['P48', 'N48'], 'tee');
+      bus.forEach(x => s.line(x - 0.9, 23, x + 0.9, 23, 0.3));
+      bus.forEach((x, i) => s.text(x + 0.5, s.row(3) + 1, ['1P48', '1N48'][i], { size: 1.45 }));
+
+      // feeders: conductor from 1P48 (crosses 1N48, not connected)
+      FEEDERS.forEach(f => {
+        const y = s.row(f.row);
+        s.line(bus[0], y, END, y); s.dot(bus[0], y);
+        s.endLabels(END, [y], [f.out]);
+      });
+
+      // buck converters: in 1P48 / 1N48; out VOUT+ (top), VOUT- (middle, jumper), VOUT- (bottom)
+      const bx = 76, bw = 32, bxr = bx + 32;
+      const outs = b => { const y = s.row(b.row); return [y, y + 4, y + 8]; };
+      BUCKS.forEach(b => {
+        const o = outs(b), ys = [o[0], o[2]];
+        const by = ys[0] - 5, bh = 18;
+        ys.forEach((y, i) => {
+          s.line(bus[i], y, END, y); s.dot(bus[i], y);
+          s.text(64, y - 0.6, ['1P48', '1N48'][i], { size: 1.9 });
+        });
+        s.rect(bx, by, bw, bh, 0.3);
+        ys.forEach(y => s.ring(bx, y, 0.6));
+        o.forEach((y, i) => {
+          s.ring(bxr, y, 0.6);
+          s.text(bxr - 1.3, y + 0.7, ['VOUT+', 'VOUT-', 'VOUT-'][i], { size: 1.7, anchor: 'end' });
+        });
+        s.text(bx + 12, by + 5, b.name, { size: 2.2, weight: 600, anchor: 'middle' });
+        s.text(bx + 12, by + 9.6, b.v, { size: 2.2, anchor: 'middle' });
+        s.text(bx + 12, by + 14.2, b.a, { size: 2.2, anchor: 'middle' });
+        s.endLabels(END, ys, b.out);
+        s.wire(42, ys, 'NYAF 0.75mm²', 'BLUE');
+        s.wire(118, ys, 'NYAF 0.75mm²', 'BLUE');
+      });
+
+      // jumper between the VOUT- terminals of BUCK01 and BUCK02 (common 0 V);
+      // it crosses N24 and P12 without connecting
+      const j1 = outs(BUCKS[0])[1], j2 = outs(BUCKS[1])[1], jx = 112;
+      s.line(bxr + 0.6, j1, jx, j1);
+      s.line(jx, j1, jx, j2);
+      s.line(bxr + 0.6, j2, jx, j2);
+
+      // cable marks and breakers last, so they cut the conductors
+      wireV(bus, 28, 'NYAF 4mm²', 'RED');
+      s.mccbV(bus, 36, 'MCB-01', '2P 32A');
+      FEEDERS.forEach(f => {
+        const y = s.row(f.row);
+        s.wire(38, [y], 'NYAF 2.5mm²', 'RED');
+        s.mccb(64, [y], f.cb);
+        s.text(69.4, y - 1.6, f.rating, { size: 1.9 });   // clear of the thermal jog
+        s.text(30.4, y - 0.6, '1P48', { size: 1.9 });       // wire label ahead of the breaker
+        s.wire(90, [y], 'NYAF 2.5mm²', 'RED');
+      });
+    },
+  });
+</script>
+</body>
+</html>

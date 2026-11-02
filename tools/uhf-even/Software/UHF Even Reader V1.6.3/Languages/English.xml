@@ -1,0 +1,472 @@
+﻿<?xml version="1.0" encoding="utf-8" ?>
+<SimplifiedChinese>
+  <Form>
+    <!--这是 panelRFSetting界面的英文翻译-->
+    <Name>panelRFSetting</Name>
+    <Controls>
+      <Control name="groupBox1">Connection </Control>
+      <Control name="gpbCom">Serial connection</Control>
+      <Control name="label2">COM</Control>
+      <Control name="label3">Baud rate</Control>
+      <Control name="btnSportOpen">Open</Control>
+      <Control name="btnSportClose">Close</Control>
+      <Control name="groupBox7">Reader version</Control>
+      <Control name="label25">Hardware:</Control>
+      <Control name="label26">Firmware:</Control>
+      <Control name="label27">DeviceSN:</Control>
+      <Control name="groupBox6">Software setting</Control>
+      <Control name="label17">Language :</Control>
+      <Control name="btnOutputPara">Export </Control>
+      <Control name="btnInputPara">Import</Control>
+      <Control name="btnEnbableKC">CloseRelay1</Control> 
+      <Control name="btnDisableKC">ReleaseRelay1</Control>
+	  <Control name="btnEnbableKC2">CloseRelay2</Control>
+      <Control name="btnDisableKC2">ReleaseRelay2</Control>	  
+      <Control name="groupBox9">Reader parameters</Control>
+      <Control name="label1">RFPower:</Control>
+      <Control name="btnSetTxPower">Set power:</Control>	  
+      <Control name="label18">FreqBand:</Control>
+      <Control name="label4">BaudRate:</Control>
+      <Control name="label35">Minfrequ:</Control>
+      <Control name="label5"> Address(Hex):</Control>
+      <Control name="label31">Maxfrequ:</Control>
+      <Control name="rdbPointFreq">Singlefrequ</Control>
+      <Control name="groupBox8">Reading settings</Control>
+      <Control name="label10">Work Mode:</Control>
+      <Control name="label14">Interface:</Control>
+      <Control name="label19">Inquiry Area:</Control>
+      <Control name="label21">Start Address:</Control>
+      <Control name="label22">Length:</Control>
+      <Control name="label8">Filter time(s):</Control>
+      <Control name="label9">Triggertime(s):</Control>
+      <Control name="label23">QValue:</Control>
+      <Control name="label24">Session:</Control>
+      <Control name="label7">Wiegand Output:</Control>
+      <Control name="label15">Query interval(*10ms):</Control>
+      <Control name="cbxBuzzerEn">Buzzer</Control>
+      <Control name="ckbAnt1">Ant1</Control>	  
+      <Control name="ckbAnt2">Ant2</Control>	 
+      <Control name="ckbAnt3">Ant3</Control>	 
+      <Control name="ckbAnt4">Ant4</Control>
+      <Control name="ckbAnt5">Ant5</Control>	  
+      <Control name="ckbAnt6">Ant6</Control>	 
+      <Control name="ckbAnt7">Ant7</Control>	 
+      <Control name="ckbAnt8">Ant8</Control>		  
+      <Control name="btnCheckAnt">Search antenna</Control>	 
+      <Control name="btnGetAllPara">Read</Control>	 
+      <Control name="btnSetAllPara">Set</Control>	 
+      <Control name="btnSetDefaultPara">Default</Control>	 	
+      <Control name="RFlabel8">Note: All passwords and data are in HEX format, addresses and lengths are in DEC format</Control>	  
+	  <Control name="groupNet">Network</Control>	 
+	  <Control name="rflabel33">Ip Addr：</Control>	 	
+	  <Control name="rflabel32">Port：</Control>	  
+	  
+	  <Control name="btnConnect">Connected</Control>	 
+	  <Control name="btnDisConnect">Disconnect </Control>	
+	  <Control name="btnScannet">Scan Device</Control>		
+	  <Control name="RFgroupBox3">Duty Cycle Set</Control>	 
+	  <Control name="Rflabel34"> Cycle count interval</Control>	
+	  <Control name="RFlabel35">interval time(*1ms)</Control>		  
+	  <Control name="RFgroupBox5">Ant Set</Control>		  
+    </Controls>
+  </Form>
+    <Form>
+    <!--这是panelInventory界面的英文翻译-->
+    <Name>panelInventory</Name>
+    <Controls>
+      <Control name="lblinvsum">TagCnt：</Control>
+      <Control name="rdbScene0">Cyclic Query</Control>
+      <Control name="rdbScene1">By time</Control>
+	  <Control name="rdbScene2">By times</Control>
+      <Control name="rdbScene4">Customize</Control>
+      <Control name="btnISOSelect">Custom parameter settings</Control>
+	  <Control name="invlabel138">(0:Cycele query)</Control>
+      <Control name="labe20">Detection speed：</Control>
+      <Control name="labe25">Detection time</Control>
+      <Control name="labe26">Cumulative return:</Control>
+      <Control name="labe27">Cumulative running time:</Control>
+	  <Control name="label30">Inquiry area (ID):</Control>
+      <Control name="label31">Startaddress(Byte):</Control>
+      <Control name="label32">Length(Byte):</Control>
+      <Control name="label33">QValue:</Control>
+      <Control name="label34">Session:</Control>
+	  <Control name="label35">Query interval(*10ms):</Control>
+      <Control name="btnFirstPage">Front page</Control>
+      <Control name="btnPrevPage">Previous page</Control>
+      <Control name="btnNextPage">Next page</Control>
+      <Control name="btnLastPage">Last page</Control>
+      <Control name="label36">Each page:</Control>
+      <Control name="label37">times</Control>
+      <Control name="btnClear">Clear data</Control>
+      <Control name="btnSave">Save data</Control>
+      <Control name="colNum">Serial number</Control>
+      <Control name="colCode">Coding</Control>
+	  <Control name="colCodeLen">Data length</Control>
+      <Control name="colCount">Count(Antenna 1/ Antenna 2/ Antenna 3/ Antenna 4)</Control>
+      <Control name="colCw">Channel</Control>
+	  <Control name="groupBox2">Query method</Control>
+	  <Control name="groupBox3">Query parameters</Control>
+	  <Control name="btnInventory">Start</Control>
+	  <Control name="invlabel8">Note: All passwords and data are in hexadecimal format, addresses and lengths are in decimal format</Control>
+	  
+	  <Control name="invlabel20">Speed：</Control>
+	  <Control name="invlabel25">Time：</Control>
+	  <Control name="invlabel26">Total：</Control>
+	  <Control name="invlabel27">Total run time：</Control>
+
+    </Controls>
+  </Form>
+      <Form>
+    <!--这是activeInventory界面的英文翻译-->
+    <Name>activeInventory</Name>
+    <Controls>
+	  <Control name="activelblinvsum">Total count：</Control>
+      <Control name="activelabe1">Speed：</Control>
+      <Control name="activelabe2">Time：</Control>
+      <Control name="activelabe3">Total:</Control>
+      <Control name="activelabe4">Total run time:</Control>
+      <Control name="activebtnFirstPage">Front page</Control>
+      <Control name="activebtnPrevPage">Previous page</Control>
+      <Control name="activebtnNextPage">Next page</Control>
+      <Control name="activebtnLastPage">Last page</Control>
+      <Control name="activelabel5">Each page:</Control>
+      <Control name="activelabel6">times</Control>
+      <Control name="activebtnClear">Clear data</Control>
+      <Control name="activebtnSave">Save data</Control>
+      <Control name="activecolNum">Serial number</Control>
+      <Control name="activecolCode">Coding</Control><Control name="activecolCodeLen">length</Control>
+      <Control name="activecolCount">Count(Ant1/ Ant2/ Ant3/ Ant4)</Control>
+      <Control name="activecolCw">Channel</Control>
+      <Control name="btnInventoryActive">Get</Control>
+	  
+    </Controls>
+  </Form>
+        <Form>
+    <!--这是panelInventory界面的英文翻译-->
+    <Name>panelEpc</Name>
+    <Controls>
+      <Control name="EpcgroupBox1">Selected Tag Action</Control>
+      <Control name="epcckbSelTag">Tag selected：</Control>
+      <Control name="epclabel1">List of tags：</Control>
+      <Control name="epcbtnSelectTag">Selected Tag</Control>
+      <Control name="epcgroupBox2">Read/write Data</Control>
+      <Control name="epcrdbRWRsv">Reserve </Control>
+      <Control name="epcrdbRWUii">EPC </Control>
+      <Control name="epcrdbRWTid">TID </Control>
+      <Control name="epcrdbRWUser">USER </Control>
+	  <Control name="epclabel2">Password(HEX):</Control>
+      <Control name="epclabel3">Start Addr(WORD):</Control>
+      <Control name="epclabel4">Data len(WORD):</Control>
+      <Control name="epcbtnRead">Read tag</Control>
+      <Control name="epcbtnWrite">Write tag</Control>
+	  <Control name="epclabel5">Data input:</Control>
+      <Control name="epcgroupBox3">Set lock state</Control>
+
+	  <Control name="epcrdbLAccPwd">Access area</Control>
+	  <Control name="epcrdbLKillPwd">Kill area</Control>
+      <Control name="epcrdbLUii">EPC Area</Control>
+      <Control name="epcrdbLTid">TID Area</Control>
+      <Control name="epcrdbLUser">USER Area</Control>
+	  
+	  <Control name="epcrdbLOpen">Open</Control>
+      <Control name="epcrdbLLock">Lock</Control>
+      <Control name="epcrdbLPOpen">Permanently open</Control>
+      <Control name="epcrdbLPLock">Permanent lock</Control>
+	  <Control name="epclabel6">Access token(HEX):</Control>
+	  <Control name="epcbtnLock">Lock tag</Control>
+	  
+	  
+      <Control name="epcgroupBox4">Kill tag</Control>
+	  <Control name="epclabel7">Kill password(HEX):</Control>
+	  <Control name="epcbtnKillTag">Kill tag</Control>
+	  
+      <Control name="epclabel8">Note: All passwords and data are in hexadecimal format, addresses and lengths are in decimal format</Control>
+	  <Control name="epcbtnSave">Export data</Control>
+      <Control name="epcbtnClear">Clear data</Control>
+
+      <Control name="epccolNum">Serial number</Control>
+	  <Control name="epccolPC">PC</Control>
+	  <Control name="epccolCRC">CRC</Control>
+      <Control name="epccolCode">EPC</Control>
+	  <Control name="epccolDataLen">Data length</Control>
+	  <Control name="epccolData">Data</Control>
+      <Control name="epccolAnt">Antenna</Control>
+      <Control name="epccolCount">Count</Control>
+    </Controls>
+  </Form>
+  <Form>
+    <!--这是panelInventory界面的英文翻译-->
+    <Name>testPanel1</Name>
+    <Controls>
+      <Control name="testgroupBox1">Frequency test</Control>
+      <Control name="testlabel1">Test frequency:</Control>
+      <Control name="testlabel2">Test frequency is optional in the following tests</Control>
+      <Control name="testbtnFreqCfg">Set up</Control>
+      <Control name="testgroupBox2">Echo test</Control>
+      <Control name="testlabel3">Testing times:</Control>
+      <Control name="testlabel4">Return loss:</Control>
+      <Control name="testbtnBackWave">Echo test</Control>
+      <Control name="testgroupBox3">Turn on the carrier</Control>
+	  <Control name="testlabel5">Description: Turn on the carrier</Control>
+      <Control name="testbtnCw">Turn on</Control>
+      <Control name="testgroupBox4">Working temperature monitoring</Control>
+      <Control name="testlabel6">threshold:</Control>
+      <Control name="testlabel7">Current:</Control>
+	  <Control name="testlabel8">After the working temperature reaches the set value, it will automatically sleep and cool down and continue to work.</Control>
+      <Control name="testbtnSetTemp">Set temperature</Control>
+      <Control name="testbtnGetTemp">Get temperature</Control>
+    </Controls>
+  </Form>
+    <Form>
+    <!--这是FrmMain界面的英文翻译-->
+    <Name>FrmMain</Name>
+    <Controls>
+      <Control name="tabPage5">ParameterSet</Control>
+      <Control name="tabPage1">Answer Mode</Control>
+      <Control name="tabPage3">Active Mode</Control>
+      <Control name="tabPage2">Read/Write Tag</Control>
+      <Control name="test_tabPage">Test Function</Control>
+	  <Control name="NetInfo">Network settings</Control>
+	  <Control name="AdvanceSettingPage">AdvanceSetting</Control>
+    </Controls>
+  </Form>
+  
+      <Form>
+    <!--这是netSet界面的英文翻译-->
+    <Name>netSet</Name>
+    <Controls>
+      <Control name="netgroupBox1">Network parameters</Control>
+      <Control name="netlabel1">IP ：</Control>
+      <Control name="netlabel2">MAC ：</Control>
+      <Control name="netlabel3">Port ：</Control>
+      <Control name="netlabel9">Sub mask：</Control>
+      <Control name="netlabel10">Gateway：</Control>
+      <Control name="btnGetNetInfo">Get</Control>
+      <Control name="btnSetNetInfo">Set</Control>
+      <Control name="netgroupBox2">Remote parameters</Control>
+      <Control name="cbxRemoteNetEn">Send enable</Control>
+      <Control name="netlabel8">RemoteIP：</Control>
+      <Control name="netlabel7">RemotePort：</Control>
+      <Control name="netlabel5">Heart time：</Control>
+	  <Control name="netlabel6">(0~255)unit*5s</Control>
+	  <Control name="btnGetRemoteNetInfo">Get</Control>
+	  <Control name="btnSetRemoteNetInfo">Set</Control>
+	  
+	  <Control name="netlabel11">SSID：</Control>
+      <Control name="netlabel12">WiFi PWD：</Control>
+      <Control name="netlabel13">RemoteIP：</Control>
+	  <Control name="netlabel14">RemotePort：</Control>
+	  <Control name="btnGetWIFIInfo">Get</Control>
+	  <Control name="btnSetWIFIInfo">Set</Control>
+	  <Control name="cbxWIFItEn">WiFi Enable</Control>
+	  
+    </Controls>
+  </Form>
+  
+        <Form>
+    <!--这是advanceSetting界面的英文翻译-->
+    <Name>advanceSetting</Name>
+    <Controls>
+      <Control name="advgroupBox1">Reading permission</Control>
+      <Control name="advcbxCodeEn">Password</Control>
+      <Control name="advlabel2">Password(HEX)：</Control>
+      <Control name="advcbxMaskEn">Mask</Control>
+	  <Control name="advlabel9">Start address：</Control>
+      <Control name="advlabel6">Mask Length：</Control>
+      <Control name="advlabel10">Mask Data：</Control>
+	  <Control name="advlabel3">Condition(EPC)：</Control>
+	  
+	  <Control name="advgroupBox2">Output control</Control>
+      <Control name="advcbxKCEn">Relay1</Control>
+	  <Control name="advcbxKCEn2">Relay2</Control>
+      <Control name="advlabel4">ValidTime(S)：</Control>
+      <Control name="advcbxKCPowerEn">Relay Power</Control>
+      <Control name="advcbxbufferen">Cache</Control>
+	  <Control name="advcbxprotocolen">Protocol</Control>
+	  <Control name="advlabel5">Specific protocol format</Control>
+	  <Control name="advgroupBox3">Input control</Control>
+	  
+	  <Control name="advlabel7">Trigger valid：</Control>
+      <Control name="advrdbhighlevel">High level trigger</Control>
+	  <Control name="advrdbLowlevel">Low level trigger</Control>
+	  <Control name="btnGetPermissonInfo">Get</Control>
+	  <Control name="btnSetPermissonInfo">Set</Control>
+	  <Control name="btnGetGpioInfo">Get</Control>
+	  <Control name="btnSetGpioInfo">Set</Control>
+	  
+    </Controls>
+  </Form>
+  
+      <Form>
+    <!--这是系统数据的英文翻译-->
+    <Name>Systemdata</Name>
+    <Controls>
+      <Control name="strAnsmode">Answer mode</Control>
+      <Control name="strAutmode">Active mode</Control>
+      <Control name="strtrimode">Trigger mode</Control>
+      <Control name="strMSBmode">High byte first</Control>
+      <Control name="strLSBmode">Low byte first</Control>
+	  
+	  <Control name="strPasswordOrMaskMatched">Password or Mask</Control>
+      <Control name="strPasswordAndMaskMatched">Password and Mask</Control>
+	  
+	  
+	  
+	  
+	  <Control name="Text1">The reader is opened successfully, the serial port number：</Control>
+	  <Control name="Text2">Reader not connected</Control>
+	  <Control name="Text3">Start getting the reader to use the antenna</Control>
+	  <Control name="Text4">Detecting antenna, please wait...</Control>
+	  <Control name="Text5">The reader succeeds with the antenna</Control>
+	  <Control name="Text6">Antenna detection fails, please confirm the antenna connection, click the "Get" button in the antenna settings, and re-detect, operation without antenna may damage the device</Control>
+	  <Control name="Text7">Failed to connect antenna：</Control>
+	  <Control name="Text8">Please select at least one antenna</Control>
+	  <Control name="Text9">Tips</Control>
+	  <Control name="Text10">Start setting up the reader to use the antenna</Control>
+	  <Control name="Text11">The reader is successfully set up with the antenna</Control>
+	  <Control name="Text12">Failed to use antenna setup：</Control>
+	  <Control name="Text13">Antenna number successfully connected：</Control>
+	  <Control name="Text14">Antenna</Control>
+	  <Control name="Text15">All antennas are disconnected</Control>
+	  <Control name="Text16">Failed to open the serial port, please enter the serial port number</Control>
+	  <Control name="Text17">The reader is already open, please close the reader first</Control>
+	  <Control name="Text18">Reader failed to open：</Control>
+	  <Control name="Text19">Get device parameters</Control>
+	  <Control name="Text20">Failed to get protocol：</Control>
+	  <Control name="Text21">Update protocol failed：</Control>
+	  <Control name="Text22">Failed to get reader parameters：</Control>
+	  <Control name="Text23">Close the reader</Control>
+	  <Control name="Text24">The reader baud rate gets the value error as：</Control>
+	  <Control name="Text25">Read parameters successfully</Control>
+	  <Control name="Text26">Please enter the starting frequency</Control>
+	  <Control name="Text27">The entered \"frequency\" value must be a number between 840 and 960 (including 840 and 960) (can be a decimal)</Control>
+	  <Control name="Text28">The entered \"Channel Spacing Frequency\" value must be an integer between 0 and 500 (Include an integer between 1 and 500)</Control>
+	  <Control name="Text29">The entered \"Channel Spacing Frequency\" value must be an integer between 1 and 50 (Include an integer between 1 and 50)</Control>
+	  <Control name="Text30">Please select a starting frequency</Control>
+	  <Control name="Text31">Please select the number of channels</Control>
+	  <Control name="Text32">Set parameters successfully:</Control>
+	  <Control name="Text33">Failed to set parameters:</Control>
+	  <Control name="Text34">The reader is restored to default settings successfully</Control>
+	  <Control name="Text35">Failed to restore default parameters</Control>
+	  <Control name="Text36">Save parameters successfully</Control>
+	  <Control name="Text37">Import parameters succeeded</Control>
+	  <Control name="Text38">The configuration file does not exist, the parameters have not been fetched</Control>
+	  <Control name="Text39">The setting is successful, please restart the software</Control>
+	  <Control name="Text40">Please enter the correct inventory time, the inventory time must be greater than 0</Control>
+	  <Control name="Text41">Please enter the correct count, the count must be greater than 0</Control>
+	  <Control name="Text42">Please enter the correct count time, the count time must be less than 255</Control>
+	  <Control name="Text43">Start an inventory</Control>
+	  
+	  <Control name="Text44">Inventory label failed：</Control>
+	  <Control name="Text45">Start</Control>
+	  <Control name="Text46">Inventory completed</Control>
+	  <Control name="Text47">Please enter the number of lines to display per page</Control>
+	  <Control name="Text48">The number of displayed lines per page entered must be a number</Control>
+	  <Control name="Text49">The number of displayed lines per page must be a number between 1 and 65535</Control>
+	  <Control name="Text50">An error occurred while displaying the label：</Control>
+	  <Control name="Text51">Failed to get ISO select parameter：</Control>
+	  <Control name="Text52">Failed to get ISO query parameters：</Control>
+	  <Control name="Text53">Failed to set ISO select parameter：</Control>
+	  
+	  <Control name="Text54">Failed to set ISO query parameter：</Control>
+	  <Control name="Text55">Reading</Control>
+	  <Control name="Text56">Finished reading</Control>
+	  <Control name="Text57">Read tags</Control>
+	  <Control name="Text58">Please select a storage area first</Control>
+	  <Control name="Text59">Please enter the \"start address\" parameter first</Control>
+	  <Control name="Text60">The input \"start address\" value must be an integer between 0~65535 (including 0 and 65535)</Control>
+	  <Control name="Text61">Please enter the \"data length\" value first</Control>
+	  <Control name="Text62">The input \"Data length\" value must be an integer between 0~65535 (including 0 and 65535)</Control>
+	  <Control name="Text63">The entered \"Access Password\" must be a hexadecimal number with a length of 16 digits</Control>	  
+	  
+	  <Control name="Text64">Start reading tag</Control>
+	  <Control name="Text65">Stop reading</Control>
+	  <Control name="Text66">Failed to read tag：</Control>
+	  <Control name="Text67">Write Tag</Control>
+	  <Control name="Text68">Please enter \"Access Password\"</Control>
+	  <Control name="Text69">Please enter the data to be written first</Control>
+	  <Control name="Text70">Start writing tags</Control>
+	  <Control name="Text71">Stop writing</Control>
+	  <Control name="Text72">Failed to write Tag：</Control>
+	  <Control name="Text73">Lock tag</Control>	  
+	  
+	  <Control name="Text74">Kill Tag</Control>
+	  <Control name="Text75">Please enter \"kill password\" first</Control>
+	  <Control name="Text76">The entered \"Kill Password\" must be a hexadecimal number with a length of 16 digits</Control>
+	  <Control name="Text77">After the tag is killed, it will be completely destroyed, whether to continue to kill the tag？</Control>
+	  <Control name="Text78">Start kill tag</Control>
+	  <Control name="Text79">Stop kill</Control>
+	  <Control name="Text80">Kill tag failed：</Control>
+	  <Control name="Text81">Finished</Control>
+	  <Control name="Text82">Opertating tag failed：</Control>
+	  <Control name="Text83">An error occurred while displaying the tag data：</Control>	  
+	  
+	  
+	  <Control name="Text84">Tag returns error：0x</Control>
+	  <Control name="Text85">Please select a lock method first</Control>
+	  <Control name="Text86">Please enter \"access password\" first</Control>
+	  <Control name="Text87">The entered \"Kill Password\" must be a hexadecimal number with a length of 16 digits</Control>
+	  <Control name="Text88">Start executing lock tag</Control>
+	  <Control name="Text89">Stop locking</Control>
+	  <Control name="Text90">Failed to lock tag：</Control>
+	  <Control name="Text91">Stop</Control>
+	  
+	  <Control name="Text92">Please enter \"Pointer\" first</Control>
+	  <Control name="Text93">\The value of "Pointer\" must be an integer between 0 and 65535 (including 0 and 65535)</Control>
+	  <Control name="Text94">Information：</Control>
+	  <Control name="Text95">Warn：</Control>
+	  <Control name="Text96">Error：</Control>
+	  <Control name="Text97">Stop locking</Control>
+	  <Control name="Text98">Failed to lock tag：</Control>
+	  <Control name="Text99">Stop</Control>
+	  
+	  <Control name="Text100">Please enter 'Output Power'</Control>
+	  <Control name="Text101">The input 'output power' value must be an integer between 10 and 34 (inclusive)</Control>
+	  <Control name="Text102">Start setting the reader RF output power</Control>
+	  <Control name="Text103">The reader RF output power is set successfully</Control>
+	  <Control name="Text104">Failed to set output power：</Control>
+	  
+	  <Control name="Text105">Successfully get the local network parameters of the reader</Control>
+	  <Control name="Text106">Failed to get the local network parameters of the reader：</Control>
+	  
+	  <Control name="Text107">Please enter the read/write ip address</Control>
+	  <Control name="Text108">IP address format error</Control>
+	  <Control name="Text109">Wrong mac address format</Control>
+	  <Control name="Text110">Wrong port format</Control>
+	  <Control name="Text111">The reader's local network parameters are set successfully</Control>
+	  <Control name="Text112">Reader's local network parameter setting failed：</Control>
+	  
+	  <Control name="Text113">The local advanced parameters of the reader are successfully set</Control>
+	  <Control name="Text114">Reader local advanced parameter setting failed</Control>
+	  <Control name="Text115">Start to get the local advanced parameters of the reader</Control>
+	  <Control name="Text116">Get the local advanced parameters of the reader succeeded</Control>
+	  <Control name="Text117">Advanced Settings Access Password：</Control>
+	  
+	  <Control name="Text118">Reader Disconnected</Control>
+	  <Control name="Text119">Wating for Reader Ack Timeout</Control>
+	  
+	  <Control name="Text120">The reader connection failed. Please enter the IP address</Control>
+	  <Control name="Text121">The reader connection fails and the entered IP address format is incorrect. Please enter an IPv4 IP address</Control>
+	  <Control name="Text122">Reader connection failed. Please enter port number</Control>
+	  <Control name="Text123">The reader connection failed. The input port number must be an integer from 1 to 65535 (including 1 and 65535).</Control>
+	  <Control name="Text124">The reader is already open. Please close the reader first</Control>
+	  <Control name="Text125">Reader opened successfully, IP address:</Control>
+	  <Control name="Text126">，Port：</Control>
+	  <Control name="Text127">Reader opening failure：</Control>
+	  
+	  <Control name="Text128">ModBus RTU/TCP format, using 03 or 04 function code to read data</Control>
+	  <Control name="Text129">ASCII format, the output number is a string</Control>
+	  <Control name="Text130">HEX format, output without frame header or frame tail</Control>
+
+	  <Control name="Text131">starts to set the antenna power</Control>
+	  <Control name="Text132">set the antenna power successful</Control>
+	  <Control name="Text133">set the antenna power fail：</Control> 
+	  
+	  <Control name="Text134">starts to get the antenna power</Control>
+	  <Control name="Text135">get the antenna power successful</Control>
+	  <Control name="Text136">get the antenna power failed：</Control> 
+	  
+    </Controls>
+  </Form>
+  
+</SimplifiedChinese>

@@ -15,8 +15,7 @@ import struct
 
 from helpers import check
 
-import guard
-import rpdo
+from agv_core.drivers.canbus import guard, rpdo
 
 
 def test_payload():
@@ -216,7 +215,6 @@ def test_configure_runs_the_sequence():
 
     # The guard runs before the first frame, so a bad sequence sends nothing.
     nothing = []
-    bad = list(rpdo.configuration_steps(1))
     original = rpdo.configuration_steps
     rpdo.configuration_steps = lambda node, base=rpdo.RPDO1_COB_BASE: [
         (rpdo.RPDO1_MAP, 1, (0x403E << 16) | 0x0010, 4, "map FREE")]
@@ -229,36 +227,33 @@ def test_configure_runs_the_sequence():
     check("a forbidden mapping sends NOTHING at all", nothing == [], str(nothing))
 
 
-def test_canworker_wiring():
-    print("\nRPDO1: how canworker chooses between the two paths")
+def test_bus_owner_wiring():
+    print("\nRPDO1: how the bus owner (amr_base.canopen) wires the setpoint path")
 
     from helpers import ROOT
-    import config
-    cw = (ROOT / "canworker.py").read_text(encoding="utf-8")
 
-    check("the profile carries the flag and it ships OFF",
+    from agv_core import config
+    co = (ROOT / "amr_ws/src/amr_base/amr_base/canopen.py").read_text(encoding="utf-8")
+
+    check("the profile still carries the legacy flag and it ships OFF",
           hasattr(config, "CAN_USE_RPDO") and config.CAN_USE_RPDO is False,
           repr(getattr(config, "CAN_USE_RPDO", "missing")))
-    check("_write_target branches on it",
-          "if config.CAN_USE_RPDO:" in cw)
-    check("the SDO path survives as the else branch",
-          'self._write(nid, 0x60FF, 0, int(rpm), 4, "target velocity")' in cw)
-    check("the RPDO path sends Operation-enabled, never a raw controlword",
-          "rpdo.CW_OPERATION_ENABLED" in cw)
+    check("the setpoint goes out as an RPDO with Operation-enabled, never a raw controlword",
+          "rpdo.send(self.router, nid, CW_OPERATION_ENABLED, rpm)" in co)
 
     # *** PDO mapping belongs in Pre-operational. *** Configuring after the NMT
     # start would remap a live PDO, which CiA 301 leaves undefined - drives
     # differ, and the ones that tolerate it do so undocumented.
-    setup = cw.index("rpdo.configure(")
-    nmt_start = cw.index("self._nmt(0x01, nid)")
+    setup = co.index("rpdo.configure(")
+    nmt_start = co.index("self.nmt(0x01, nid)")
     check("RPDO1 is configured BEFORE the NMT start, in Pre-operational",
           setup < nmt_start, f"configure at {setup}, NMT start at {nmt_start}")
 
-    # The setup writes go through _write, which is guarded. A bench script may
-    # bypass the guard; the vehicle controller may not.
-    check("the setup writer goes through the guarded _write, not raw sdo_write",
-          "_sdo_write_for_rpdo" in cw
-          and 'self._write(node, index, sub, value, size, "RPDO1 setup")' in cw)
+    # The setup writes go through write(), which is guarded. A bench script may
+    # bypass the guard; the vehicle's bus owner may not.
+    check("the setup writer goes through the guarded write(), not a raw SDO",
+          "_sdo_write_tuple" in co
+          and 'self.write(node, index, sub, value, size, "RPDO1 setup")' in co)
 
 
 def test_pp_write_surface():
@@ -277,4 +272,4 @@ def test_pp_write_surface():
 
 TESTS = [test_payload, test_cob_ids, test_mapping_values, test_setup_ordering,
          test_guard_interaction, test_configure_runs_the_sequence,
-         test_canworker_wiring, test_pp_write_surface]
+         test_bus_owner_wiring, test_pp_write_surface]

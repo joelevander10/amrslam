@@ -7,7 +7,7 @@ import tempfile
 
 from helpers import check
 
-import config
+from agv_core import config
 
 
 def _doc(name):

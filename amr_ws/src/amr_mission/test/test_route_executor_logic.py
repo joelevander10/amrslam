@@ -9,7 +9,7 @@ import pytest
 from amr_navigation.compiler import ROTATE, STRAIGHT, CompiledStep
 from test_goal_attempts import Client, Handle, Result
 
-from amr_interfaces.msg import LocalizationState, MotionPermit, PanelState, WheelStates
+from amr_interfaces.msg import DriveStatus, LocalizationState, MotionPermit, PanelState, WheelStates
 from amr_mission import goal_attempts as ga
 from amr_mission import route_executor_node as ren
 from amr_mission import run_fsm as fsm
@@ -39,16 +39,16 @@ def make_node(steps, passes=1):
         ),
     )
     n._speed_pub = SimpleNamespace(publish=lambda _m: None)
-    n.horizon, n.stopping_time_s = 1.5, 3.0
     n.taper_decel, n.taper_lead_s = 0.4, 0.3
-    n.obstacle_points, n.obstacle_persist, n._hit_scans, n._hit_scan_t, n._map_near = 5, 2, 0, None, None
     n.goals = ga.GoalAttempts(n._lock, n._now, n._on_goal_error)
     n.start_gate_m, n.start_gate_rad = 0.1, math.radians(5)
     n.w_eps, n.wheels_age, n.panel_age, n.loc_age = 0.02, 0.1, 0.2, 1.5
     n.scan_age, n._scan_t = float("inf"), 100.0  # freshness is exercised where a test sets scan_age
-    n.obstruction_min_range = 0.0
     n.centre_drift_m, n.turn_tol, n.wrong_way = 0.05, math.radians(2), math.radians(5)
-    n.entry_corr_max, n.clear_stable_s = math.radians(10), 1.0
+    n.entry_corr_max = math.radians(10)
+    # 0 = the grace period off, so the classic tests still read "this condition is a FAULT";
+    # the debounce itself has its own tests (test_prereq_*).
+    n.prereq_grace_s = 0.0
     n.goal_accept_timeout, n.goal_cancel_timeout = 5.0, 5.0
     n.converge_m = 1.0
     n.fp = SimpleNamespace(margin_m=0.20)
@@ -62,12 +62,13 @@ def make_node(steps, passes=1):
     n._panel, n._panel_t = panel, n.clock[0]
     n._scan = object()
     n._pose = lambda: (0.0, 0.0, 0.0)
-    n._obstruction = lambda st, pose: None
     n.auto_resume_enabled, n.auto_clear_s, n.auto_resume_estop = True, 2.0, False
     n.safety_window, n.drives_age, n.field_index, n.abort_retries = 1.0, 0.5, 0, 3
+    # No warning by default (2026-10-08): these tests are about what follows it. The
+    # pre-move phase still needs a fresh drive report with torque - see drives().
+    n.premove_s, n.premove_timeout_s, n._premove_since = 0.0, 8.0, None
     n._init_hold_state()
     n._reset_step_state()
-    n.clear_since = n.clock[0] - 10.0
     n.wheels(0.0, valid=True)
     return n
 
@@ -80,6 +81,16 @@ def _wheels(self, vel, valid=True):
 
 
 ren.RouteExecutor.wheels = _wheels
+
+
+def _drives(self, torque=True):
+    m = DriveStatus()
+    m.operational = torque
+    m.left_state = m.right_state = "Operation enabled" if torque else "Ready to switch on"
+    self._on_drives(m)
+
+
+ren.RouteExecutor.drives = _drives
 
 
 def rotate(angle, sid="t1"):
@@ -168,7 +179,9 @@ def test_r08_resume_waits_for_the_interrupted_goal_then_faults_after_the_bound()
     n._interrupt("paused")
     n.fsm.prepare_resume(True, "")
     n._start_edge()
-    assert n.fsm.state == fsm.EXECUTING
+    assert n.fsm.state == fsm.EXECUTING and n.phase == ren.PHASE_PREMOVE
+    n.drives(True)
+    n._execute(n.clock[0])  # the warning ends: the drives have torque
     n._execute(n.clock[0])
     assert n.phase == ren.PHASE_INIT and len(c.sent) == 1  # no replacement goal yet
     h = Handle()
@@ -263,6 +276,8 @@ def test_q06_acknowledged_fault_keeps_the_unresolved_goal_barrier_across_a_new_r
     n._start_edge()
     n.clock[0] += 6.0  # the cancellation bound passes with the goal's acceptance still pending
     n._loc_t = n._panel_t = n.clock[0]
+    n.drives(True)
+    n._execute(n.clock[0])  # the pre-move warning ends
     n._execute(n.clock[0])
     assert n.fsm.state == fsm.FAULT and "not terminated" in n.fsm.reason
     assert n.fsm.ack() if hasattr(n.fsm, "ack") else n.fsm.acknowledge()
@@ -372,10 +387,6 @@ def test_permit_carries_the_step_speed_and_the_route_turn_cap():
     assert published[-1].v_max == pytest.approx(0.40) and speeds[-1].speed_limit == pytest.approx(0.40)
     n._pose = lambda: (0.0, 0.0, 0.0)
     n._publish_permit()
-    # the obstruction horizon grows with the step speed: 3 s of travel, never under 1.5 m
-    assert n._horizon(st) == pytest.approx(2.1)
-    st.v_mps = 0.40
-    assert n._horizon(st) == pytest.approx(1.5)
     # a rotation: the route's turn cap, the base linear cap (no straight is running)
     n.fsm.step_done()
     n.phase = ren.PHASE_GOAL
@@ -417,7 +428,7 @@ def test_reverse_step_progress_path_and_permit():
     assert published[-1].source == MotionPermit.FOLLOW and published[-1].v_max == pytest.approx(0.25)
 
 
-def test_arc_step_progress_cross_track_path_and_envelope():
+def test_arc_step_progress_cross_track_and_path():
     from amr_navigation.compiler import arc_pose
 
     # ccw 90 deg, R 1 from the origin heading +x: centre (0, 1), end (1, 1) heading +y
@@ -536,91 +547,10 @@ def test_chained_straight_and_arc_run_as_one_goal_with_a_speed_taper():
     n._execute(n.clock[0])
     assert n.fsm.state == fsm.EXECUTING and n.fsm.step_index == 1 and n.phase == ren.PHASE_GOAL
     assert n.goals.current is not None  # the FollowPath goal was not revoked
-    # the envelope ahead spans the boundary: near the end of the straight it includes arc cells
-    import numpy as np
-    from amr_maps.grid import Grid, GridMeta
-
-    from amr_navigation import footprint as fpmod
-
-    n.grid = Grid(np.zeros((160, 160), dtype=np.int8), GridMeta(0.05, -2.0, -2.0))
-    n.fp = fpmod.Footprint(polygon=[[-0.3, -0.2], [0.5, -0.2], [0.5, 0.2], [-0.3, 0.2]], margin_m=0.0)
-    n.fsm.step_index = 0
-    mask = n._envelope(s1, 2.8)
-    r_, c_ = n.grid.world_to_cell(*arc_samples[15][:2])  # the middle of the arc, ~0.8 m past the boundary
-    assert mask[r_, c_]
 
 
-# ---- dynamic-mapping plan §1.2/§1.3: a mapped trolley in a dynamic area is checked live ------
-
-
-def _trolley_world():
-    import numpy as np  # noqa: PLC0415
-    from amr_maps.grid import Grid, GridMeta  # noqa: PLC0415
-
-    # 10 m x 4 m at 0.05 m, origin (-1, -2); a trolley in the map at x 3.0..3.25, |y| <= 0.3
-    data = np.zeros((80, 200), dtype=np.int8)
-    g = Grid(data, GridMeta(0.05, -1.0, -2.0))
-    r0, c0 = g.world_to_cell(3.0, -0.3)
-    r1, c1 = g.world_to_cell(3.24, 0.3)
-    data[r0 : r1 + 1, c0 : c1 + 1] = 100
-    dyn = np.zeros(data.shape, dtype=bool)
-    ra, ca = g.world_to_cell(2.5, -1.0)
-    rb, cb = g.world_to_cell(4.0, 1.0)
-    dyn[ra:rb, ca:cb] = True
-    return g, dyn
-
-
-def test_explained_by_map_excludes_dynamic_areas():
-    g, dyn = _trolley_world()
-    plain = ren.explained_by_map(g, None, 0.15)
-    marked = ren.explained_by_map(g, dyn, 0.15)
-    face = g.world_to_cell(3.0, 0.0)
-    assert plain[face] and not marked[face]  # the trolley face explains a return only without the mark
-    assert plain[g.world_to_cell(2.9, 0.0)]  # the tolerance grows the explanation by 0.15 m
-    assert (marked == (plain & ~dyn)).all()
-
-
-def test_obstruction_blocks_on_a_mapped_trolley_only_inside_a_dynamic_area():
-    import numpy as np  # noqa: PLC0415
-
-    from amr_navigation import footprint as fpmod  # noqa: PLC0415
-
-    g, dyn = _trolley_world()
-    st = CompiledStep(
-        "s1", STRAIGHT, (0.0, 0.0, 0.0), (6.0, 0.0, 0.0), length_m=6.0, samples=[(0.0, 0.0, 0.0)], v_mps=0.5
-    )
-    n = make_node([st])
-    n.grid, n.fp = g, fpmod.Footprint(((-0.5, -0.35), (1.1, -0.35), (1.1, 0.35), (-0.5, 0.35)), 0.05)
-    del n._obstruction  # the real method, not make_node's stub
-    # the laser at (2, 0) facing +x sees the trolley face 1 m ahead on every beam
-    ang = np.linspace(-0.25, 0.25, 51)
-    n._scan = SimpleNamespace(
-        header=SimpleNamespace(frame_id="laser", stamp=None),
-        ranges=list(1.0 / np.cos(ang)),
-        angle_min=float(ang[0]),
-        angle_increment=float(ang[1] - ang[0]),
-        range_min=0.05,
-        range_max=30.0,
-    )
-    tf = SimpleNamespace(
-        transform=SimpleNamespace(
-            translation=SimpleNamespace(x=2.0, y=0.0), rotation=SimpleNamespace(x=0.0, y=0.0, z=0.0, w=1.0)
-        )
-    )
-    n.tf_buffer = SimpleNamespace(lookup_transform=lambda *_a: tf)
-    pose = (2.0, 0.0, 0.0)
-    n._map_near = ren.explained_by_map(g, None, 0.15)
-    assert n._obstruction(st, pose) is None  # the map explains the trolley: driven into (old behaviour)
-    n._map_near = ren.explained_by_map(g, dyn, 0.15)
-    n.clear_since = None
-    assert n._obstruction(st, pose) is None  # one scan: waits for obstacle_persist_scans
-    n._scan_t += 0.1  # the next scan
-    reason = n._obstruction(st, pose)
-    assert reason is not None and "inside the straight envelope" in reason and n.clear_since is None
-
-
-def test_speed_boost_2_taper_horizon_and_arc_turn_cap_on_the_lead_in_straight():
-    """2026-09-19: 0.85 boost / 0.55 base / 0.40 arcs; 2 s look-ahead; an arc's chain turns at 0.45."""
+def test_speed_boost_2_taper_and_arc_turn_cap_on_the_lead_in_straight():
+    """2026-09-19: 0.85 boost / 0.55 base / 0.40 arcs; an arc's chain turns at 0.45."""
     from amr_navigation.compiler import arc_pose
 
     assert ren.VEHICLE_ARC_W_MAX == 0.45
@@ -651,15 +581,11 @@ def test_speed_boost_2_taper_horizon_and_arc_turn_cap_on_the_lead_in_straight():
     n = make_node([s1, s2, s3])
     _clock_stub(n)
     n.route.limits.linear_mps, n.route.limits.w_mps = 0.55, 0.37
-    n.stopping_time_s = 2.0  # the node default since 2026-09-19
     n.fsm.start(True, True)
     # the ramp-down into the arc starts (0.85^2 - 0.40^2) / 0.8 + 0.85 x 0.3 = 0.96 m before it
     assert n._taper_dist(0.85, 0.40) == pytest.approx(0.958, abs=1e-3)
     assert n._taper_dist(0.55, 0.40) == pytest.approx(0.343, abs=1e-3)
     assert n._step_speed(s1, (4.9, 0.0, 0.0)) == 0.85 and n._step_speed(s1, (5.1, 0.0, 0.0)) == 0.40
-    # look-ahead: 2 s of travel at 0.85 = 1.7 m; the 1.5 m floor at 0.55
-    assert n._horizon(s1) == pytest.approx(1.7)
-    assert n._horizon(CompiledStep("x", STRAIGHT, (0, 0, 0), (1, 0, 0), length_m=1.0, v_mps=0.55)) == 1.5
     # the straight leading into the arc already carries the arc's turn ceiling (RPP curves early)
     assert n._step_w_max(s1) == pytest.approx(0.45)
     n.fsm.step_done()

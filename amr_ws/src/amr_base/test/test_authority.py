@@ -156,3 +156,19 @@ def test_nav_topics_are_private_per_generation():
     assert nav_topic("/cmd_vel", 7) == "/amr/layers/g7/cmd_vel"  # a token may not start with a digit
     assert nav_topic("/cmd_vel_rotate", 7) == "/amr/layers/g7/cmd_vel_rotate"
     assert gating.NAMES[MANUAL] == "manual"
+
+
+def test_hand_driven_source_changes_are_not_operator_events():
+    """A jog is a hundred edges: press and release flip manual <-> none. At 300 entries
+    the event ring would hold nothing but somebody's thumb (vehicle, 2026-09-22)."""
+    from amr_base.cmd_mux_kinematics_node import HAND_SOURCES
+
+    def is_history(new, old, inhibited=False):
+        return bool(inhibited or {new, old} - HAND_SOURCES)
+
+    assert not is_history("manual", "none")  # jog press
+    assert not is_history("none", "manual")  # jog release
+    assert not is_history("none", "pendant")
+    assert is_history("none", "follow")  # the executor losing the wheels IS history
+    assert is_history("line", "none")
+    assert is_history("none", "manual", inhibited=True)  # so is an inhibit

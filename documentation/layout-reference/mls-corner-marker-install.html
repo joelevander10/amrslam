@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Corner Marker Install</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700&family=IBM+Plex+Mono:wght@600&family=IBM+Plex+Sans:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  /* Installer sheet: where the two marker groups go at a 90 deg corner, nothing about how the
+     vehicle uses them (engineering version: mls-corner-marker-placement.html). Same language as
+     the installer sheet mls-marker-codes-1-3.html: Indonesian text, mm, track N up, strips S up.
+     Corner view NOT to scale; groups A and B to scale (1 mm = 1.6 px) except the broken 1500.
+     Group 1500 mm from each tangent point to the corner-side end of KODE 2 (operator, 2026-10-23). */
+  :root {
+    --paper: #e9edf2;
+    --surface: #ffffff;
+    --ink: #14171d;
+    --ink-2: #3d4553;
+    --ink-3: #636b7c;
+    --rule: #cbd2de;
+    --route: #1f3f7a; --route-dark: #152c57;
+    --tag: #c8176b;
+    --agv: #23272f;
+    color-scheme: light;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding-block: 0 40px;
+    background: var(--paper);
+    color: var(--ink);
+    font: 16px/1.45 "IBM Plex Sans", Arial, Helvetica, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------------- toolbar (never captured) ---------------- */
+  .toolbar {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+    padding: 10px 16px;
+    background: var(--surface);
+    border-bottom: 2px solid var(--ink);
+  }
+  .toolbar strong { margin-right: 8px; font: 700 15px "Archivo", Arial, sans-serif; }
+  .seg { display: flex; border: 1.5px solid var(--ink); }
+  .seg button, .toolbar .go {
+    border: 0; border-left: 1px solid var(--rule);
+    background: var(--surface); color: var(--ink-2);
+    padding: 7px 12px; cursor: pointer;
+    font: 600 11px "IBM Plex Mono", ui-monospace, monospace;
+    letter-spacing: .07em; text-transform: uppercase;
+  }
+  .seg button:first-child { border-left: 0; }
+  .seg button[aria-pressed="true"] { background: var(--agv); color: #fff; }
+  .toolbar .go { border: 1.5px solid var(--route-dark); background: var(--route); color: #fff; }
+  .toolbar .go:disabled { opacity: .6; cursor: progress; }
+  .toolbar button:focus-visible { outline: 2px solid var(--tag); outline-offset: 2px; }
+  .toolbar .status {
+    margin-left: auto; color: var(--ink-3);
+    font: 600 11px "IBM Plex Mono", ui-monospace, monospace; letter-spacing: .05em; text-transform: uppercase;
+  }
+
+  .stage-wrap { padding: 20px 16px 0; }
+  .stage { position: relative; margin: 0 auto; box-shadow: 0 1px 0 var(--rule), 0 10px 30px rgba(20,30,50,.12); }
+
+  /* ---------------- canvas 1920 x 1080 ---------------- */
+  .slide {
+    position: absolute; top: 0; left: 0;
+    width: 1920px; height: 1080px;
+    transform-origin: top left;
+    overflow: hidden;
+    background: var(--surface);
+  }
+
+  .dwg { position: absolute; inset: 0; width: 1920px; height: 1080px; }
+  .dwg text { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+  .title { font: 700 44px "Archivo", Arial, sans-serif !important; text-transform: uppercase; }
+  .hdr { font: 700 30px "Archivo", Arial, sans-serif !important; text-transform: uppercase; fill: #fff; }
+  .num { font: 700 30px "Archivo", Arial, sans-serif !important; fill: #14171d; }
+  .num-s { font: 700 24px "Archivo", Arial, sans-serif !important; fill: #14171d; }
+  .side { font-size: 19px; font-weight: 600; letter-spacing: .1em; fill: #636b7c; }
+  .mono { font-size: 21px; font-weight: 600; fill: #3d4553; }
+  .t { font: 700 26px "Archivo", Arial, sans-serif !important; fill: #14171d; }
+  .kode { font: 700 22px "Archivo", Arial, sans-serif !important; fill: #14171d; }
+  .kode-in { font: 700 18px "Archivo", Arial, sans-serif !important; fill: #fff; letter-spacing: .04em; }
+  .step { font: 500 22px "IBM Plex Sans", Arial, sans-serif !important; fill: #3d4553; }
+  .step tspan.k { font-weight: 700; fill: #14171d; }
+  .tile { fill: #f5f6f8; stroke: #cbd2de; stroke-width: 2; }
+  .tape-l { fill: none; stroke: #23272f; stroke-width: 16; stroke-linejoin: round; }
+  .tape { fill: #23272f; }
+  .strip { fill: var(--route); }
+  .dim { stroke: #14171d; stroke-width: 2.5; fill: none; }
+  .ext { stroke: #636b7c; stroke-width: 1.5; stroke-dasharray: 5 4; fill: none; }
+  .tick { stroke: var(--tag); stroke-width: 5; }
+  .tlbl { font: 700 26px "Archivo", Arial, sans-serif !important; fill: #c8176b; }
+  .brk { stroke: #fff; stroke-width: 8; fill: none; stroke-linejoin: miter; }
+  .lead { stroke: #3d4553; stroke-width: 1.5; fill: none; }
+</style>
+</head>
+<body>
+
+<nav class="toolbar" aria-label="Export">
+  <strong>Corner Marker Install</strong>
+  <div class="seg" role="group" aria-label="Resolution">
+    <button type="button" data-res="2" aria-pressed="true">2× · 3840</button>
+    <button type="button" data-res="3" aria-pressed="false">3× · 5760</button>
+  </div>
+  <div class="seg" role="group" aria-label="Background">
+    <button type="button" data-bg="white" aria-pressed="true">White</button>
+    <button type="button" data-bg="none" aria-pressed="false">Transparent</button>
+  </div>
+  <button type="button" class="go" id="download">Download PNG</button>
+  <span class="status" id="status">16:9 · 1920 × 1080 base</span>
+</nav>
+
+<div class="stage-wrap">
+<div class="stage" id="stage">
+<section class="slide" id="slide" aria-label="Installer sheet: MLS marker groups at a 90 degree corner, 1500 mm from each end of the curve">
+
+  <svg class="dwg" viewBox="0 0 1920 1080" role="img" aria-label="A 90 degree corner of radius 2000 mm between two straights. On each straight, on the inside of the corner, a marker group: KODE 2 nearer the corner, its corner-side end 1500 mm from the end of the curve (T1, T2), then a 100 mm gap and KODE 1, ending 1800 mm from T. Strips are 15 by 100 mm, KODE 1 centred 30 mm and KODE 2 60 mm from the track centre.">
+    <defs>
+      <marker id="arr" markerUnits="userSpaceOnUse" markerWidth="16" markerHeight="14" refX="15" refY="7" orient="auto-start-reverse"><path d="M0,0 L16,7 L0,14 Z" fill="#14171d"/></marker>
+    </defs>
+
+    <!-- title -->
+    <text class="title" x="60" y="82" fill="#14171d">Marker MLS di tikungan 90° — pemasangan</text>
+    <text class="mono" x="60" y="116">Semua jarak dalam mm · satu grup marker di setiap sisi tikungan</text>
+
+    <!-- ===== corner view (not to scale) ===== -->
+    <rect class="tile" x="60" y="140" width="1000" height="675"/>
+    <rect x="60" y="140" width="1000" height="60" fill="#23272f"/>
+    <text class="hdr" x="84" y="181">Tampak atas · tikungan R 2000</text>
+
+    <path class="tape-l" d="M80 330 H600 A200 200 0 0 1 800 530 V800"/>
+    <text class="side" x="84" y="306">BAGIAN LURUS</text>
+
+    <!-- T1, T2: where the straight ends and the curve starts -->
+    <path class="tick" d="M600 302 V358"/>
+    <text class="tlbl" x="600" y="292" text-anchor="middle">T1</text>
+    <path class="tick" d="M772 530 H828"/>
+    <text class="tlbl" x="762" y="540" text-anchor="end">T2</text>
+
+    <!-- radius -->
+    <path class="dim" d="M600 530 L734 396" marker-end="url(#arr)"/>
+    <circle cx="600" cy="530" r="5" fill="#14171d"/>
+    <text class="num-s" x="612" y="572">R 2000</text>
+
+    <!-- group A (before T1), inside of the corner: KODE 1 then KODE 2 -->
+    <rect class="strip" x="355" y="344" width="30" height="9"/>
+    <rect class="strip" x="400" y="358" width="30" height="9"/>
+    <path class="lead" d="M370 344 V258 M415 358 V258"/>
+    <text class="kode" x="370" y="250" text-anchor="middle">KODE 1</text>
+    <text class="kode" x="452" y="226" text-anchor="middle">KODE 2</text>
+    <path class="lead" d="M415 258 L440 232"/>
+    <text class="t" x="245" y="252" text-anchor="end" fill="#14171d">GRUP A</text>
+
+    <!-- group A dimensions, measured from T1 along the tape -->
+    <path class="ext" d="M430 367 V425 M355 353 V495 M600 358 V495"/>
+    <path class="dim" d="M430 410 H600" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <path class="dim" d="M355 480 H600" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <text class="num" x="515" y="400" text-anchor="middle">1500</text>
+    <text class="num" x="477" y="470" text-anchor="middle">1800</text>
+
+    <!-- group B (after T2), inside of the corner: KODE 2 then KODE 1 -->
+    <rect class="strip" x="771" y="700" width="9" height="30"/>
+    <rect class="strip" x="785" y="745" width="9" height="30"/>
+    <path class="lead" d="M771 715 H700 M785 760 H700"/>
+    <text class="kode" x="692" y="723" text-anchor="end">KODE 2</text>
+    <text class="kode" x="692" y="768" text-anchor="end">KODE 1</text>
+    <text class="t" x="692" y="672" text-anchor="end" fill="#14171d">GRUP B</text>
+
+    <!-- group B dimensions, measured from T2 along the tape -->
+    <path class="ext" d="M828 530 H960 M794 700 H870 M794 775 H960"/>
+    <path class="dim" d="M855 530 V700" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <path class="dim" d="M945 530 V775" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <text class="num" x="866" y="626">1500</text>
+    <text class="num" x="956" y="664">1800</text>
+
+    <!-- what T is, and the side -->
+    <text class="step" x="84" y="590"><tspan class="k">T1, T2</tspan> = ujung bagian lurus,</text>
+    <text class="step" x="84" y="620">tempat pita mulai melengkung</text>
+    <text class="step" x="84" y="672"><tspan class="k">Ukur</tspan> sepanjang pita, mulai dari T</text>
+    <text class="step" x="84" y="724"><tspan class="k">Strip</tspan> di sisi dalam tikungan</text>
+    <text class="mono" x="84" y="790" fill="#636b7c">tidak berskala</text>
+
+    <!-- ===== group A, to scale 1 mm = 1.6 px ===== -->
+    <rect class="tile" x="1090" y="140" width="770" height="330"/>
+    <rect x="1090" y="140" width="770" height="56" fill="#23272f"/>
+    <text class="hdr" x="1112" y="179">Grup A · sebelum T1</text>
+    <text class="side" x="1200" y="240">← BAGIAN LURUS</text>
+    <text class="side" x="1755" y="240" text-anchor="end">TIKUNGAN →</text>
+    <!-- tape 30 mm, centre y 281 -->
+    <rect class="tape" x="1110" y="257" width="730" height="48"/>
+    <path d="M1110 281 H1840" stroke="#fff" stroke-width="1.5" stroke-dasharray="10 8"/>
+    <text class="kode-in" x="1828" y="288" text-anchor="end">N</text>
+    <path class="brk" d="M1727 250 l-9 14 l18 14 l-18 14 l18 14 l-9 7"/>
+    <path class="tick" d="M1790 248 V314"/>
+    <text class="tlbl" x="1790" y="240" text-anchor="middle">T1</text>
+    <!-- KODE 1 30 mm, KODE 2 60 mm off the track centre (centre to centre) -->
+    <rect class="strip" x="1200" y="317" width="160" height="24"/>
+    <text class="kode-in" x="1280" y="336" text-anchor="middle">KODE 1 · S</text>
+    <rect class="strip" x="1520" y="365" width="160" height="24"/>
+    <text class="kode-in" x="1600" y="384" text-anchor="middle">KODE 2 · S</text>
+    <path class="ext" d="M1200 329 H1160 M1520 377 H1130"/>
+    <path class="dim" d="M1168 281 V329" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <path class="dim" d="M1138 281 V377" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <text class="num-s" x="1168" y="362" text-anchor="middle">30</text>
+    <text class="num-s" x="1138" y="410" text-anchor="middle">60</text>
+    <!-- along the tape -->
+    <path class="ext" d="M1200 341 V430 M1360 341 V430 M1520 389 V430 M1680 389 V430 M1790 314 V430"/>
+    <path class="dim" d="M1200 418 H1360" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <path class="dim" d="M1360 418 H1520" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <path class="dim" d="M1520 418 H1680" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <path class="dim" d="M1680 418 H1790" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <path class="dim" d="M1726 427 l10 -18 M1736 427 l10 -18"/>
+    <text class="num-s" x="1280" y="452" text-anchor="middle">100</text>
+    <text class="num-s" x="1440" y="452" text-anchor="middle">jarak 100</text>
+    <text class="num-s" x="1600" y="452" text-anchor="middle">100</text>
+    <text class="num" x="1735" y="456" text-anchor="middle" style="fill:#c8176b">1500</text>
+
+    <!-- ===== group B, to scale 1 mm = 1.6 px (mirror of A) ===== -->
+    <rect class="tile" x="1090" y="485" width="770" height="330"/>
+    <rect x="1090" y="485" width="770" height="56" fill="#23272f"/>
+    <text class="hdr" x="1112" y="524">Grup B · sesudah T2</text>
+    <text class="side" x="1195" y="585">← TIKUNGAN</text>
+    <text class="side" x="1730" y="585" text-anchor="end">BAGIAN LURUS →</text>
+    <!-- tape 30 mm, centre y 626 -->
+    <rect class="tape" x="1110" y="602" width="730" height="48"/>
+    <path d="M1110 626 H1840" stroke="#fff" stroke-width="1.5" stroke-dasharray="10 8"/>
+    <text class="kode-in" x="1826" y="633" text-anchor="end">N</text>
+    <path class="brk" d="M1203 595 l-9 14 l18 14 l-18 14 l18 14 l-9 7"/>
+    <path class="tick" d="M1140 593 V659"/>
+    <text class="tlbl" x="1140" y="585" text-anchor="middle">T2</text>
+    <rect class="strip" x="1250" y="710" width="160" height="24"/>
+    <text class="kode-in" x="1330" y="729" text-anchor="middle">KODE 2 · S</text>
+    <rect class="strip" x="1570" y="662" width="160" height="24"/>
+    <text class="kode-in" x="1650" y="681" text-anchor="middle">KODE 1 · S</text>
+    <path class="ext" d="M1730 674 H1770 M1410 722 H1800"/>
+    <path class="dim" d="M1762 626 V674" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <path class="dim" d="M1792 626 V722" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <text class="num-s" x="1762" y="707" text-anchor="middle">30</text>
+    <text class="num-s" x="1792" y="755" text-anchor="middle">60</text>
+    <!-- along the tape -->
+    <path class="ext" d="M1140 659 V775 M1250 734 V775 M1410 734 V775 M1570 686 V775 M1730 686 V775"/>
+    <path class="dim" d="M1140 763 H1250" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <path class="dim" d="M1250 763 H1410" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <path class="dim" d="M1410 763 H1570" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <path class="dim" d="M1570 763 H1730" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <path class="dim" d="M1186 772 l10 -18 M1196 772 l10 -18"/>
+    <text class="num" x="1195" y="801" text-anchor="middle" style="fill:#c8176b">1500</text>
+    <text class="num-s" x="1330" y="797" text-anchor="middle">100</text>
+    <text class="num-s" x="1490" y="797" text-anchor="middle">jarak 100</text>
+    <text class="num-s" x="1650" y="797" text-anchor="middle">100</text>
+
+    <!-- ===== legend + steps ===== -->
+    <rect x="60" y="840" width="1800" height="215" fill="#f5f6f8" stroke="#2a2f3a" stroke-width="3"/>
+    <rect x="90" y="866" width="30" height="66" fill="#23272f"/>
+    <text class="step" x="140" y="890"><tspan class="k">Pita track</tspan></text>
+    <text class="step" x="140" y="920">lebar 30 mm · kutub N di atas</text>
+    <rect x="97" y="960" width="16" height="66" fill="#1f3f7a"/>
+    <text class="step" x="140" y="984"><tspan class="k">Strip marker</tspan></text>
+    <text class="step" x="140" y="1014">15 × 100 mm · kutub S di atas</text>
+
+    <text class="step" x="620" y="880"><tspan class="k">1.</tspan> Tandai T1 dan T2: titik di mana pita lurus mulai melengkung.</text>
+    <text class="step" x="620" y="913"><tspan class="k">2.</tspan> Dari T, ukur <tspan class="k">1500</tspan> sepanjang pita ke arah lurus: di situ ujung KODE 2.</text>
+    <text class="step" x="620" y="946"><tspan class="k">3.</tspan> <tspan class="k">KODE 2 selalu yang dekat tikungan</tspan>, lalu jarak 100, lalu KODE 1 (ujung di 1800).</text>
+    <text class="step" x="620" y="979"><tspan class="k">4.</tspan> Samping, TENGAH track ke TENGAH strip: KODE 1 = 30 (celah 7.5), KODE 2 = 60 (celah 37.5).</text>
+    <text class="step" x="620" y="1012"><tspan class="k">5.</tspan> Kedua grup di sisi dalam tikungan, strip sejajar pita.</text>
+    <text class="step" x="620" y="1045"><tspan class="k">6.</tspan> Kode strip: lihat lembar "Kode marker MLS 1 · 2 · 3".</text>
+  </svg>
+</section>
+</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/dist/html-to-image.js"></script>
+<script>
+  const FILE_NAME = 'mls-corner-marker-install';
+
+  /* ---- fit the 1920x1080 canvas to the window ---- */
+  const stage = document.getElementById('stage');
+  const slide = document.getElementById('slide');
+  function fit() {
+    const avail = Math.min(document.documentElement.clientWidth - 32, 1920);
+    const s = avail / 1920;
+    stage.style.width = 1920 * s + 'px';
+    stage.style.height = 1080 * s + 'px';
+    slide.style.transform = `scale(${s})`;
+  }
+  addEventListener('resize', fit);
+  fit();
+
+  /* ---- export ---- */
+  let res = 2, bg = 'white';
+  document.querySelectorAll('[data-res]').forEach(b => b.addEventListener('click', () => {
+    res = +b.dataset.res;
+    document.querySelectorAll('[data-res]').forEach(x => x.setAttribute('aria-pressed', x === b));
+  }));
+  document.querySelectorAll('[data-bg]').forEach(b => b.addEventListener('click', () => {
+    bg = b.dataset.bg;
+    document.querySelectorAll('[data-bg]').forEach(x => x.setAttribute('aria-pressed', x === b));
+  }));
+
+  const status = document.getElementById('status');
+  const btn = document.getElementById('download');
+  btn.addEventListener('click', async () => {
+    if (!window.htmlToImage) { status.textContent = 'Export library did not load — check internet connection'; return; }
+    btn.disabled = true;
+    status.textContent = 'Rendering…';
+    try {
+      await document.fonts.ready;
+      const transparent = bg === 'none';
+      const url = await htmlToImage.toPng(slide, {
+        width: 1920, height: 1080, pixelRatio: res,
+        backgroundColor: transparent ? undefined : '#ffffff',
+        style: { transform: 'none', background: transparent ? 'transparent' : '#ffffff' },
+      });
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${FILE_NAME}@${res}x${transparent ? '-transparent' : ''}.png`;
+      document.body.appendChild(a); a.click(); a.remove();
+      status.textContent = `Saved ${1920 * res} × ${1080 * res} PNG`;
+    } catch (e) {
+      console.error(e);
+      status.textContent = 'Export failed — see console';
+    } finally {
+      btn.disabled = false;
+    }
+  });
+</script>
+</body>
+</html>

@@ -218,3 +218,31 @@ def test_reversal_during_a_coast_still_goes_through_the_interlock():
     out = wl.step(0.04, -1.0, 0.8, False)
     assert (out.fwd, out.rev, out.volts) == (False, False, 0.0)  # both coils low first
     assert out.phase == qm.DWELL
+
+
+def test_standby_without_power_holds_with_brakes_and_is_not_operational():
+    d = _logic()
+    d.tick(_inp(0.0))
+    i = qm.Inputs(0.1, (2.0, 2.0), 0.0, 0.0, True, True, True, False, power=False)
+    o = d.tick(i)
+    assert o.state == qm.ARMED and o.link == "standby" and not o.operational
+    assert (o.left.volts, o.right.volts) == (0.0, 0.0) and o.left.brake and o.right.brake
+    o = d.tick(qm.Inputs(0.2, (2.0, 2.0), 0.0, 0.0, True, True, True, False, power=True))
+    assert o.link == "armed" and o.operational and o.left.volts > 0.0
+
+
+def test_power_dropped_while_moving_coasts_then_brakes():
+    d = _logic()
+    d.tick(_inp(0.0))
+    d.tick(qm.Inputs(0.1, (1.0, 1.0), 1.0, 1.0, True, True, True, False, power=True))
+    o = d.tick(qm.Inputs(0.12, (1.0, 1.0), 0.9, 0.9, None, None, True, False, power=False))
+    assert o.link == "standby" and not o.operational
+    assert o.left.phase == qm.COAST and not o.left.brake and o.left.volts == 0.0
+
+
+def test_push_mode_link_is_disarmed_with_brakes_released():
+    d = _logic()
+    d.tick(_inp(0.0))
+    d.disarm()
+    o = d.tick(_inp(0.1))
+    assert o.link == "disarmed" and not o.left.brake and not o.right.brake

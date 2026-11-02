@@ -3,49 +3,68 @@
 {% block main_class %}wide{% endblock %}
 {% block body %}
 <section class="editor">
-  <aside class="tools">
-    <h2>Vehicle map <small>navigation layer</small></h2>
-    <div id="active-map" class="tel-grid"></div>
-    <label class="field">View / activate <select id="run-map"></select></label>
-    <div class="bar">
-      <button id="btn-activate" class="big run">Use this map on the vehicle</button>
-      <button id="btn-idle" class="big">Return to idle</button>
+  <aside class="tools tabbed">
+    {# Two panes so the column fits a 7" panel: the map + pose work, then the mission. The
+       hold controls sit in a footer under both panes - Abort is never behind a tab. #}
+    <div class="tabs" id="run-tabs">
+      <button class="tab on" type="button" data-tab="loc">Map &amp; pose</button>
+      <button class="tab" type="button" data-tab="mission">Mission</button>
     </div>
-    <p class="note">Selecting only changes the picture. <b>Use this map</b> replaces the navigation software on that exact revision (vehicle stopped, selector MANUAL) and does not move anything.</p>
-    <div class="sep"></div>
-    <h2>Localisation <small>AMCL · monitor</small></h2>
-    <div id="loc-state" class="tel-grid"></div>
-    <div id="loc-detail" class="tel-grid" style="margin-top:8px"></div>
-    <p id="loc-reason" class="note"></p>
-    <div class="bar">
-      <button id="tool-initialpose" class="tool">Set initial pose on map</button>
-      <button id="btn-pose-survey" class="tool" title="Seed the initial pose at the map's survey start mark (position and heading)">Initial pose = survey mark</button>
+    <div class="tabpane" data-tab="loc">
+      <h2>Vehicle map <small>navigation layer</small></h2>
+      <div id="active-map" class="tel-grid"></div>
+      <label class="field">View / activate <select id="run-map"></select></label>
+      <div class="bar">
+        <button id="btn-activate" class="big run">Use this map on the vehicle</button>
+        <button id="btn-idle" class="big">Return to idle</button>
+      </div>
+      <p class="note">Selecting only changes the picture. <b>Use this map</b> replaces the navigation software on that exact revision (vehicle stopped, nothing running, no emergency) and does not move anything.</p>
+      <div class="sep"></div>
+      <h2>Localisation <small>AMCL · monitor</small></h2>
+      {# The three steps in order, so nobody has to know which button comes first.
+         A done step greys out; the current one is boxed. Buttons stay below. #}
+      <div class="steps" id="loc-steps">
+        <div class="step" data-step="map"><b>1 Map</b><span>pick and use a map</span></div>
+        <div class="step" data-step="pose"><b>2 Position</b><span>set the initial pose</span></div>
+        <div class="step" data-step="confirm"><b>3 Check</b><span>confirm the scans line up</span></div>
+      </div>
+      <div id="loc-state" class="tel-grid"></div>
+      <div id="loc-detail" class="tel-grid" style="margin-top:.6rem"></div>
+      <p id="loc-reason" class="note"></p>
+      <div class="bar">
+        <button id="tool-initialpose" class="tool">Set initial pose on map</button>
+        <button id="btn-pose-survey" class="tool" title="Seed the initial pose at the map's survey start mark (position and heading)">Initial pose = survey mark</button>
+      </div>
+      <div class="bar">
+        <button id="btn-loc-confirm" class="big run">Confirm: scans align</button>
+        <button id="btn-loc-reset" class="big">Reset</button>
+      </div>
+      <div class="sep"></div>
+      <h3>Jog <small>selector MANUAL</small></h3>
+      <div id="jog-run"></div>
     </div>
-    <div class="bar">
-      <button id="btn-loc-confirm" class="big run">Confirm: scans align</button>
-      <button id="btn-loc-reset" class="big">Reset</button>
+    <div class="tabpane" data-tab="mission" hidden>
+      <h2>Mission <small>route executor</small></h2>
+      <label class="field">Mission <select id="run-mission"></select></label>
+      <div class="bar"><button id="btn-run-load" class="big run">Load (READY)</button></div>
+      <div id="run-state" class="tel-grid" style="margin-top:1rem"></div>
+      <p id="run-reason" class="note"></p>
+      <div class="warn-box" style="margin-top:1rem"><b>Motion starts only from the physical panel</b>: selector AUTO, then Start. Pause / abort / prepare-resume below; Start confirms a prepared resume.</div>
+      <div class="bar"><button id="btn-run-resume" class="big">Prepare resume</button></div>
     </div>
-    <div class="sep"></div>
-    <h3>Jog <small>selector MANUAL</small></h3>
-    <div id="jog-run"></div>
-    <div class="sep"></div>
-    <h2>Mission <small>route executor</small></h2>
-    <label class="field">Mission <select id="run-mission"></select></label>
-    <div class="bar"><button id="btn-run-load" class="big run">Load (READY)</button></div>
-    <div id="run-state" class="tel-grid" style="margin-top:12px"></div>
-    <p id="run-reason" class="note"></p>
-    <div class="warn-box" style="margin-top:12px"><b>Motion starts only from the physical panel</b>: selector AUTO, then Start. Pause / abort / prepare-resume below; Start confirms a prepared resume.</div>
-    <div class="bar">
-      <button id="btn-run-pause" class="big">Pause</button>
-      <button id="btn-run-resume" class="big">Prepare resume</button>
-      <button id="btn-run-abort" class="danger">Abort</button>
-      <button id="btn-run-ack" class="big">Acknowledge fault</button>
+    <div class="tools-foot">
+      <div class="bar three">
+        <button id="btn-run-pause" class="big">Pause</button>
+        <button id="btn-run-abort" class="danger">Abort</button>
+        <button id="btn-run-ack" class="big" title="Acknowledge an executor FAULT">Ack fault</button>
+      </div>
     </div>
   </aside>
   <div class="canvas-wrap">
     <canvas id="run-canvas" width="900" height="600"></canvas>
-    <div id="run-hint" class="hint">Wheel = zoom, drag = pan, double-click = fit. Initial pose: click the position, drag towards the heading, release.</div>
+    <div id="run-hint" class="hint">Drag = pan, +/− or wheel = zoom, fit = whole map. Initial pose: press the position, drag towards the heading, release.</div>
   </div>
 </section>
 {% endblock %}
-{% block scripts %}<script src="/static/mapview.js"></script><script src="/static/liveview.js"></script><script src="/static/jogpad.js"></script><script src="/static/run.js"></script>{% endblock %}
+{% block scripts %}<script src="/static/mapview.js"></script><script src="/static/liveview.js"></script><script src="/static/jogpad.js"></script><script src="/static/run.js"></script>
+<script>tabs('run-tabs');</script>{% endblock %}

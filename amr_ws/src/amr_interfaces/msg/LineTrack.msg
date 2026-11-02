@@ -15,3 +15,11 @@ uint8 marker                    # marker code (byte 6 bits 4-7)
 bool marker_intro               # byte 6 bit 3
 bool event_flag                 # status bit 7
 string source                   # "tpdo" (control-rate) | "sdo" (polled, monitor only)
+
+# Appended for the LINE layer. `stamp` is set at PUBLISH time and TrackSample's
+# decode time was dropped, so in SDO mode a fresh-looking message could carry
+# ~0.5 s of sensor latency invisibly. sample_age_s is the real quantity, and
+# seq is the only way a consumer of this best-effort topic can see a dropped
+# sample - the message has no Header, so the sequence number is explicit.
+float32 sample_age_s            # monotonic seconds from decode to publish
+uint32 seq                      # monotonically increasing per publisher

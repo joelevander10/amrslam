@@ -1,0 +1,6 @@
+﻿<?xml version="1.0" encoding="utf-8" ?>
+<OtherLanguage>
+  <Text name="Determine" ch-z="确定" ch-t="" en="Determine" />
+  <Text name="Cancel" ch-z="取消" ch-t="" en="Cancel" />
+  <Text name="Message" ch-z="当前语言种类为: " ch-t="" en="The current language types are: " />
+</OtherLanguage>

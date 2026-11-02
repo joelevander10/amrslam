@@ -18,3 +18,4 @@ float64 closure_dy_m
 float64 closure_dyaw_rad
 string saved_path            # directory of the published revision, when SAVED
 string message               # last result / block reason
+uint32 continued_from        # revision of map_id this survey continues; 0 for a new map

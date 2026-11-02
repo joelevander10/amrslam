@@ -1,6 +1,47 @@
 {
   "profile_name": "amr-qr-01",
+  "tracked": false,
   "platform": "qr_analog",
+  "autopilot": {
+    "dry_run": false,
+    "invert_error": true,
+    "k_ratio": 11.3,
+    "kd": 0.95,
+    "ki": 0.0,
+    "tau_d_s": 0.05,
+    "ti_deadband_mm": 20.0,
+    "i_clamp": 2.0,
+    "sr_pos_frac": 0.0075,
+    "sr_rate_frac": 0.001875,
+    "sr_cap": 0.45,
+    "sr_tau_s": 0.12,
+    "auto_rpm": 500,
+    "auto_u_turn_rpm": 200.0,
+    "u_turn_center_tol_mm": 20.0,
+    "u_turn_resume_delay_s": 1.0,
+    "u_turn_min_deg": 150.0,
+    "u_turn_max_deg": 225.0,
+    "u_turn_center_kp_rpm_per_mm": 1.5,
+    "u_turn_level_tolerance": 1,
+    "auto_high_ratio": 1.7,
+    "high_k_ratio": 11.3,
+    "high_kd": 0.94,
+    "high_ramp_s": 2.0,
+    "high_margin_m": 1.0,
+    "curve_guard_kappa": 0.25,
+    "curve_guard_e_mm": 40.0,
+    "ramp_accel_rpm_s": 950.0,
+    "ramp_jerk_rpm_s2": 4000.0,
+    "sensor_max_mm": 100.0,
+    "sensor_max_step_mm": 40.0,
+    "line_loss_grace_m": 0.075,
+    "sensor_timeout_s": 0.1,
+    "auto_resume_hold_s": 2.0,
+    "dt_nominal_s": 0.02,
+    "inner_wheel_min_rpm": 0.0,
+    "branch_positive_is_left": true,
+    "line_min_track_hz": 40.0
+  },
   "vehicle": {
     "track_m": 0.37652,
     "wheel_dia_m": 0.18,
@@ -10,42 +51,36 @@
     "invert_left": false,
     "invert_right": true
   },
-  "manual": {
-    "full_rpm": 600,
-    "half_ratio": 0.6
-  },
   "drivers": {
     "ramp": {
-      "manual": {
-        "accel": 800,
-        "decel": 1600
-      },
       "auto": {
         "accel": 1600,
         "decel": 1600
       }
-    },
-    "target_deadband_rpm": 5
+    }
   },
   "rfid": {
     "enabled": false,
     "ip": "192.168.1.200",
     "port": 2022,
     "interface": "enp2s0",
-    "init_hex": "CFFF0070002415",
-    "frame_len": 17,
-    "tag_offset": 13,
     "tag_len": 2,
-    "ignore_tags": [
-      "3130"
-    ],
+    "ignore_tags": [],
     "recv_timeout_s": 1.0,
-    "banner_wait_s": 0.6,
     "silent_warn_s": 60.0,
     "reconnect_period_s": 2.0,
-    "tag_hold_s": 2.0
+    "tag_hold_s": 2.0,
+    "tag_clear_s": 0.5,
+    "heartbeat_s": 0.0,
+    "heartbeat_timeout_s": 3.0,
+    "expect_work_mode": 1,
+    "expect_region": 1,
+    "expect_power_dbm": 30
   },
   "dio": {
+    "motion_on": [],
+    "alarm_on": [],
+    "movement_horn": [],
     "enabled": true,
     "ip": "192.168.1.40",
     "port": 502,
@@ -64,7 +99,7 @@
       "PB START AUTO",
       "PB STOP AUTO",
       "[SPARE] (no selector fitted)",
-      "[SPARE]",
+      "[SPARE] (panel.di_manual_arm placeholder: no Manual Arm input)",
       "[SPARE]",
       "[SPARE]",
       "[SPARE]",
@@ -98,8 +133,8 @@
   },
   "lidar": {
     "enabled": false,
-    "host_ip": "192.168.3.2",
-    "sensor_ip": "192.168.3.10",
+    "host_ip": "192.168.1.10",
+    "sensor_ip": "192.168.1.2",
     "port": 6060,
     "reassembly_timeout_s": 0.06,
     "zone_block": 0,
@@ -116,9 +151,10 @@
     "di_reset": 2,
     "di_start": 1,
     "di_auto": 3,
+    "auto_when_on": false,
     "debounce_scans": 2,
     "coincidence_hold_s": 0.0,
-    "manual_auto_arm": true
+    "di_manual_arm": 4
   },
   "horn": {
     "enabled": false,
@@ -126,10 +162,10 @@
   },
   "pendant": {
     "enabled": false,
-    "di_fwd": 4,
-    "di_rvs": 5,
-    "di_left": 6,
-    "di_right": 7
+    "di_fwd": 5,
+    "di_rvs": 6,
+    "di_left": 7,
+    "di_right": 8
   },
   "can": {
     "bitrate": 125000,
@@ -151,9 +187,38 @@
     "bus_v_warn_low": 42.0,
     "bus_v_warn_high": 56.0
   },
+  "mls": {
+    "variant": 3,
+    "marker_codes": [
+      1,
+      2,
+      3
+    ],
+    "polarity_lock": false,
+    "teach_lock": true,
+    "event_clear": -1
+  },
+  "tape_loc": {
+    "enabled": false,
+    "k_odo": 0.01,
+    "amcl_sigma_floor_m": 0.03,
+    "max_lateral_m": 0.1,
+    "innov_min_m": 0.1,
+    "pose_max_age_s": 0.5,
+    "sigma_station_m": 0.025,
+    "sigma_junction_m": 0.2,
+    "junction_lead_m": 1.0,
+    "lost_rejects": 5,
+    "sigma_lost_m": 0.5,
+    "healthy_window_m": 2.0,
+    "lost_fault_s": 30.0,
+    "amcl_params": "default",
+    "site_mission": "test-mru-straight",
+    "shadow_circuit": "C-STRAIGHT"
+  },
   "imu": {
     "enabled": true,
-    "poll_period_s": 0.02,
+    "poll_period_s": 0.04,
     "retry_period_s": 2.0
   },
   "blind_run": {
@@ -185,7 +250,8 @@
     "telemetry_period_s": 0.2,
     "manual_watchdog_s": 0.6,
     "driver_timeout_s": 0.6,
-    "auto_start_delay_s": 0.6
+    "auto_start_delay_s": 2.0,
+    "premove_timeout_s": 8.0
   },
   "qr_base": {
     "ao_ip": "192.168.1.30",

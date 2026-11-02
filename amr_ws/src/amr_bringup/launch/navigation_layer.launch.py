@@ -40,33 +40,25 @@ def spin_plugin(distro: str | None = None) -> str:
     return "nav2_behaviors/Spin" if distro in ("humble", "iron") else "nav2_behaviors::Spin"
 
 
+QR_OBSTACLE_MIN_RANGE_M = 0.5
+
+
 def executor_overrides() -> dict:
-    """Per-vehicle route executor parameters.
+    """Per-vehicle route executor parameters ({} = the executor's defaults).
 
-    Start gate - how close the vehicle must stand to a route's start pose for START.
-
-    The AMR QR is placed by hand-jog / pushing, where 0.10 m / 5 deg was hard to hit
-    (operator request 2026-09-24): 0.20 m / 10 deg. 0.20 m is the most the executor
-    tolerates anyway - within the first converge_m of a step the cross-track limit is
-    2 x cross_track_limit_m (0.10 by default), so a wider gate would only fault a moment
-    after START. Other vehicles keep the executor's default."""
-    from amr_base.agv_repo import config  # noqa: PLC0415 - the vehicle profile (AGV_PROFILE)
+    The AMR QR (2026-09-24):
+      * start gate 0.20 m / 10 deg (was 0.10 / 5): it is placed by hand-jog or pushing, where
+        the default was hard to hit. 0.20 m is the most the executor tolerates anyway - within
+        the first converge_m of a step the cross-track limit is 2 x cross_track_limit_m (0.10
+        by default), so a wider gate would only fault a moment after START;
+      * use_protective_field false: its nanoScan3 reported the protective field violated with
+        the area empty (runs held on "lidar stop"); the old QR controller never used the
+        scanner outputs either."""
+    from agv_core import config  # noqa: PLC0415 - the vehicle profile (AGV_PROFILE)
 
     if config.PLATFORM == config.PLATFORM_QR:
-        # use_protective_field false: the QR's nanoScan3 reported its protective field violated
-        # with the area empty (2026-09-24, run held on "lidar stop"). The old QR controller never
-        # used the scanner outputs either; the executor's own scan check still stops the run.
-        return {
-            "start_gate_m": 0.20,
-            "start_gate_deg": 10.0,
-            "use_protective_field": False,
-            # the scratched window's phantoms (see _costmap_footprint_file)
-            "obstruction_min_range_m": QR_OBSTACLE_MIN_RANGE_M,
-        }
+        return {"start_gate_m": 0.20, "start_gate_deg": 10.0, "use_protective_field": False}
     return {}
-
-
-QR_OBSTACLE_MIN_RANGE_M = 0.5
 
 
 def _costmap_footprint_file(footprint: str, generation: int) -> str:
@@ -75,7 +67,7 @@ def _costmap_footprint_file(footprint: str, generation: int) -> str:
     os.makedirs(state_dir, exist_ok=True)
     path = os.path.join(state_dir, f"costmap_footprint_gen{generation}.yaml")
     params = {"footprint": footprint}
-    from amr_base.agv_repo import config  # noqa: PLC0415 - the vehicle profile (AGV_PROFILE)
+    from agv_core import config  # noqa: PLC0415 - the vehicle profile (AGV_PROFILE)
 
     if config.PLATFORM == config.PLATFORM_QR:
         # The QR scanner's scratched window returns phantoms 0.1-0.45 m out that move with the
@@ -139,7 +131,7 @@ def _compose(context):
         revision = revs[-1]
     revision = int(revision)
     rev_dir = mb.revision_dir(maps_dir, map_id, revision)
-    manifest = mb.verify(rev_dir)  # raises BundleError on any mismatch
+    manifest = mb.load_manifest(rev_dir, map_id, revision)  # raises BundleError on any mismatch
     map_yaml = os.path.join(rev_dir, "map.yaml")
     autostart = cfg("autostart").perform(context).lower() == "true"
     generation = int(cfg("generation").perform(context))

@@ -45,8 +45,12 @@ def surfaces_only(grid: gridio.Grid) -> gridio.Grid:
 def write_world_as_bundle(maps_dir: str, map_id: str = "sim_factory", world_yaml: str | None = None) -> str:
     """Create the next revision of `map_id` from the world. Returns the revision dir."""
     world = surfaces_only(gridio.read(world_yaml or default_world_yaml()))
+    with mb.map_lock(maps_dir, map_id):
+        return _write_locked(maps_dir, map_id, world)
+
+
+def _write_locked(maps_dir: str, map_id: str, world: gridio.Grid) -> str:
     revision = mb.next_revision(maps_dir, map_id)
-    os.makedirs(os.path.join(maps_dir, map_id), exist_ok=True)
     stage = mb.staging_dir(maps_dir, map_id, revision)
     manifest = mb.Manifest(
         map_id=map_id,

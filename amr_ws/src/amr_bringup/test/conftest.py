@@ -11,6 +11,7 @@ import os
 SIM_TESTS = [
     "test_unified_sim.py",
     "test_sim_tf.py",
+    "test_fault_injection_sim.py",
 ]
 
 collect_ignore = [] if os.environ.get("AMR_SIM_TESTS") == "1" else list(SIM_TESTS)

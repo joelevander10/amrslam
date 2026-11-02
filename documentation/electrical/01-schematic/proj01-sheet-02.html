@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PROJ01 Sheet 2</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../kit/jis-sheet.css">
+</head>
+<body>
+
+<nav class="toolbar" aria-label="Export">
+  <strong>PROJ01 · Sheet 2 / «XX» · Motor power installation</strong>
+  <button type="button" class="primary" id="png">Download PNG</button>
+  <button type="button" id="pdf">Print / PDF</button>
+  <span class="status" id="status">A4 portrait · vector</span>
+</nav>
+
+<main class="wrap"><div class="sheet" id="sheet"></div></main>
+
+<script src="https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/dist/html-to-image.js"></script>
+<script src="../kit/jis-sheet.js"></script>
+<script>
+  // source: input-sketch/proj01/page02.jpg (photographed rotated 90° CCW)
+  const META = {
+    customer: '«CUSTOMER»', designer: '«DESIGNER»',
+    content: 'MOTOR POWER INSTALLATION',
+    approval: '«NAME»', checked: '«NAME»', designed: '«NAME»', drawn: '«NAME»',
+    date: '«DD/MM/YY»', scale: '',
+    title: 'ELECTRIC DIAGRAM',
+    model: '«MODEL»', dwg: '«-00-00-»', sheet: 2, of: '«XX»',
+    note: '',
+    refs: [],
+  };
+
+  // buses from sheet 01; origin = sheet + line where they leave sheet 01
+  const BUS = [
+    { x: 23.8, name: '2P48', from: '0105' },   // after MCB-02
+    { x: 29.8, name: '3P48', from: '0107' },   // after MCB-03
+    { x: 35.8, name: '1N48', from: '0103' },   // after MCB-01
+  ];
+
+  // motor drivers: + from bus p, - from 1N48; PE ends on its own terminal
+  const DRIVERS = [
+    { row: 2, name: 'DRIVER 01', model: 'BLVD-KRD', p: 0, tb: ['TB01', 'TB02', 'TB05'] },
+    { row: 7, name: 'DRIVER 02', model: 'BLVD-KRD', p: 1, tb: ['TB03', 'TB04', 'TB06'] },
+  ];
+
+  JIS.render(document.getElementById('sheet'), {
+    meta: META,
+    file: 'PROJ01-02',
+    textScale: 1.25,          // drawing text +25% (frame and title block unchanged)
+    label: 'Motor power installation: 2P48, 3P48 and 1N48 from sheet 01 through terminals TB01–TB06 to two BLVD-KRD motor drivers.',
+    draw(s) {
+      const TBX = 72, PEX = 86, DX = 140, DW = 36;
+
+      // terminal block terminal: circle with slash (no kit symbol)
+      const tb = (x, y, name) => {
+        s.ring(x, y, 0.8);
+        s.line(x - 1.2, y + 1.2, x + 1.2, y - 1.2, 0.2);
+        s.text(x, y - 1.6, name, { size: 1.7, anchor: 'middle' });
+      };
+
+      s.bus(BUS.map(b => b.x), 23, JIS.G.gridY, BUS.map(b => b.name), 'tee');
+      BUS.forEach(b => {
+        s.line(b.x - 0.9, 23, b.x + 0.9, 23, 0.3);
+        s.text(b.x, 19.4, b.from, { size: 1.5, anchor: 'middle' });
+      });
+
+      DRIVERS.forEach(d => {
+        const ys = s.phases(s.row(d.row), 5);          // +, 1N48, PE
+        const src = [BUS[d.p].x, BUS[2].x];
+        const lbl = [BUS[d.p].name, '1N48', 'PE'];
+
+        // + and 1N48 from the buses (crossings without dots are not connected)
+        src.forEach((x, i) => { s.line(x, ys[i], DX, ys[i]); s.dot(x, ys[i]); });
+        s.line(PEX, ys[2], DX, ys[2]);
+
+        // driver box with terminals on its left edge
+        s.rect(DX, ys[0] - 5, DW, 20, 0.3);
+        ys.forEach(y => s.dot(DX, y));
+
+        // wire labels (cable markers): bus → TB, TB → driver, driver end
+        ys.forEach((y, i) => {
+          if (i < 2) s.text(56, y - 0.6, lbl[i], { size: 1.9 });
+          s.text(i < 2 ? TBX + 4 : PEX + 4, y - 0.6, lbl[i], { size: 1.9 });
+          s.text(DX - 1.5, y - 0.6, lbl[i], { size: 1.9, anchor: 'end' });
+        });
+        s.text(DX + DW / 2, ys[0] + 3.5, d.name, { size: 2.4, weight: 600, anchor: 'middle' });
+        s.text(DX + DW / 2, ys[0] + 8, d.model, { size: 2.2, anchor: 'middle' });
+
+        // cable marks, then terminals over the conductors
+        s.wire(46, ys.slice(0, 2), 'NYAF 2.5mm²', 'RED');
+        s.wire(104, ys, 'LC03D06A', 'ORIENTAL MOTOR');
+        tb(TBX, ys[0], d.tb[0]);
+        tb(TBX, ys[1], d.tb[1]);
+        tb(PEX, ys[2], d.tb[2]);
+      });
+    },
+  });
+</script>
+</body>
+</html>

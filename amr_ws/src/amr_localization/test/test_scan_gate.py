@@ -67,3 +67,16 @@ def test_q13_queue_is_bounded_and_parameters_validated():
     for bad in ({"min_period_s": -1.0}, {"hold_max_s": float("nan")}, {"max_pending": 0}):
         with pytest.raises(ValueError):
             ScanGate(**bad)
+
+
+def test_a_scan_that_can_only_be_thinned_is_dropped_at_push():
+    """CPU (2026-10-02): inside min_period_s of the last release it never reaches the queue."""
+    from amr_localization.scan_gate import ScanGate
+
+    g = ScanGate(min_period_s=0.1, settle_s=0.0)
+    g.push(1.00, "a", 1.00)
+    assert g.poll(1.01, lambda t: True) == ["a"]
+    g.push(1.05, "b", 1.05)
+    assert g.pending == 0 and g.stats.thinned == 1
+    g.push(1.10, "c", 1.10)
+    assert g.poll(1.11, lambda t: True) == ["c"]

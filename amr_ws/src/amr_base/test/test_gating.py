@@ -81,3 +81,25 @@ def test_autonomous_caps_040_024_and_a_slower_route_wins():
     s = select(10.0, None, fast, fast, Permit(10.0, FOLLOW, True, v_max=0.15, w_max=0.10), AUTO)
     assert (s.v, s.w) == (0.15, 0.10)  # a route authored slower than the vehicle cap stays slower
     assert capped(0.9, 0.24) == 0.24 and capped(-0.9, 0.24) == -0.24
+
+
+def test_names_cover_every_source_and_the_lease_bits_are_distinct():
+    """gating.NAMES is subscripted in the 50 Hz mux tick and MuxState.msg mirrors these
+    numbers, so a source added without a name is a KeyError on the control path."""
+    import amr_base.gating as g
+
+    # Discovered, not listed: a source added later must fail this without anyone
+    # remembering to extend the test. Every uppercase int global that is not a lease
+    # bit IS a source constant (gating.py has no other integer constants).
+    sources = {
+        v
+        for k, v in vars(g).items()
+        if k.isupper() and not k.startswith("LEASE_") and isinstance(v, int) and not isinstance(v, bool)
+    }
+    assert sources == set(g.NAMES), f"sources without a NAMES entry: {sorted(sources - set(g.NAMES))}"
+    assert g.LINE == 7 and g.PENDANT == 6  # MuxState.msg pins these numbers
+    assert len(set(g.NAMES.values())) == len(g.NAMES)  # no two sources share a name
+    # the lease classes are single, distinct bits of ControlLease.allowed
+    bits = [g.LEASE_MANUAL, g.LEASE_AUTONOMOUS, g.LEASE_COMMISSIONING, g.LEASE_LINE]
+    assert bits == [1, 2, 4, 8]
+    assert all(b and not (b & (b - 1)) for b in bits)  # each is one bit

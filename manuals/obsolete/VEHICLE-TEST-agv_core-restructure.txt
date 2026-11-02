@@ -1,0 +1,287 @@
+================================================================================
+VEHICLE ACCEPTANCE PROMPT — agv_core restructure (2026-09-20)
+Paste this whole file to an agent, or work it by hand, ON THE AGV PC.
+Nothing in it may be run from the Windows dev box.
+================================================================================
+
+ROLE
+You are verifying a completed code restructure on a live 150 kg differential-
+drive AGV. The refactor moved library code into a Python package and changed how
+every process finds it. It was verified on a Windows dev box as far as that box
+allows: 898 offline checks run there with a fake `fcntl`, and the failure set is
+byte-identical to the pre-refactor baseline. What could NOT be verified off the
+vehicle is exactly what you are here to check: the owner lock (needs real
+fcntl/flock), /proc reads, the colcon install space, PYTHONPATH reaching ROS
+nodes, systemd, and any motion at all.
+
+HARD RULES
+  * The vehicle moves. Blocks under the wheels before ANY armed step. No
+    exceptions, including "just a quick jog".
+  * Stop at the first failure. Report what failed with the exact output. Do not
+    "fix forward" past a failed step.
+  * You may fix an environment problem (a missing pip package, a stale colcon
+    overlay, a wrong PYTHONPATH). You may NOT edit production code in agv_core/,
+    amr_ws/src/, canworker.py, app/ or profiles/ without asking first.
+  * The legacy controller (main.py + app/ + canworker.py) and the ROS stack both
+    open can0. NEVER run both at once. Section 6 depends on this.
+  * If something is ambiguous, say so and stop. Do not guess on a vehicle.
+
+WHAT CHANGED (so you know what a failure is pointing at)
+  config.py            -> agv_core/config.py
+  core/<name>.py       -> agv_core/<name>.py
+  drivers/<name>.py    -> agv_core/drivers/<name>.py
+  drivers/canbus/*.py  -> agv_core/drivers/canbus/*.py
+  Bare imports (`import config`) are now package imports (`from agv_core import
+  config`). The sys.path layer-directory loops in main.py, canworker.py,
+  app/server.py and tests/helpers.py are gone.
+  amr_ws/src/amr_base/amr_base/agv_repo.py is DELETED. ROS nodes import agv_core
+  directly; the repo root reaches PYTHONPATH via amr_ws/deploy/amr-launch.sh and
+  amr_ws/env/vehicle.sh.
+  UNCHANGED and still shipping: main.py, app/, canworker.py, profiles/.
+
+--------------------------------------------------------------------------------
+0. BEFORE YOU START
+--------------------------------------------------------------------------------
+0.1  Record the rollback point. The refactor is ONE commit, titled
+     "Restructure: the vehicle library becomes the agv_core package".
+     Print and keep:
+         cd ~/agv_can && git log --oneline -3 && git status --porcelain
+     Rollback for the whole refactor is a single revert of the restructure
+     commit. Write its hash down before touching anything.
+
+0.2  Confirm nothing is running:
+         systemctl is-active amr.service agv_controller.service amr_nav.service
+     Expect inactive/failed for all. If any is active, stop it and say so:
+         sudo systemctl stop amr.service agv_controller.service
+
+0.3  Confirm no stale owner lock is held:
+         ls -l /run/amr/ 2>/dev/null || ls -l /tmp/amr-locks/ 2>/dev/null
+     A leftover lock file is fine; a lock HELD by a live PID is not. Check with
+     `fuser` if unsure.
+
+--------------------------------------------------------------------------------
+1. THE LIBRARY IMPORTS AT ALL  (no hardware touched)
+--------------------------------------------------------------------------------
+1.1  From the repo root:
+         cd ~/agv_can
+         python3 -c "from agv_core import config; print(config.PROFILE_NAME)"
+     PASS: prints the vehicle's profile name (agv-01 unless AGV_PROFILE is set).
+     FAIL modes to report verbatim:
+       ModuleNotFoundError: No module named 'agv_core'  -> you are not in the
+         repo root, or the editable install did not happen (step 1.3).
+       FileNotFoundError on a profile -> PROFILE_DIR re-anchoring is wrong; this
+         is the single highest-risk item in the whole refactor. Report and STOP.
+
+1.2  The profile directory resolves to the REPO ROOT, not into the package:
+         python3 -c "from agv_core import config; print(config.PROFILE_DIR)"
+     PASS: /home/<user>/agv_can/profiles
+     FAIL: anything containing /agv_can/agv_core/profiles  -> STOP, report.
+
+1.3  Install the library into the interpreter the ROS nodes use:
+         cd ~/agv_can && pip3 install -e .
+     Then prove it resolves from a DIFFERENT directory (this is what the ROS
+     install space will be doing):
+         cd /tmp && python3 -c "from agv_core import config; print(config.PROFILE_DIR)"
+     PASS: same repo-root path as 1.2, from /tmp.
+     If pip is unavailable or refuses (externally-managed-environment), that is
+     acceptable — amr-launch.sh sets PYTHONPATH instead. Say which one you used.
+
+1.4  Every library module imports on real Linux (this is where fcntl is real):
+         cd ~/agv_can && python3 - <<'EOF'
+         import importlib, pkgutil, agv_core
+         bad = []
+         for m in pkgutil.walk_packages(agv_core.__path__, "agv_core."):
+             try: importlib.import_module(m.name)
+             except Exception as e: bad.append(f"{m.name}: {type(e).__name__}: {e}")
+         print("FAILED:", bad or "none")
+         EOF
+     PASS: `FAILED: none`. 28 modules exist; none may fail.
+
+--------------------------------------------------------------------------------
+2. THE OFFLINE SUITE, ON LINUX  (no hardware touched)
+--------------------------------------------------------------------------------
+2.1      cd ~/agv_can && python3 tests/run_all.py
+     PASS: `93 test function(s), 898 check(s)` and `all checks passed`.
+     The 10 checks that FAIL on Windows MUST pass here — they are the owner-lock
+     and bench-tool refusal checks that need real fcntl. If any of these fail,
+     the refactor broke the lock and you must STOP:
+         drive_forward / bus_health / verify_drivers / verify_bus / read_imu
+         show / read_imu tpdo --go / lss scan / lss verify / lss set --go
+         ("refused while the controller owns can0, naming it, bus never opened")
+     A check count other than 898 means a test module silently stopped being
+     imported. Report the number.
+
+2.2  The layout checks specifically (they pin the new package boundary):
+         python3 -c "
+         import sys; sys.path.insert(0,'tests')
+         import test_layout, helpers
+         [f() for f in test_layout.TESTS]
+         print('layout failures:', helpers.FAIL or 'none')"
+     PASS: `layout failures: none`.
+
+--------------------------------------------------------------------------------
+3. THE BENCH TOOLS  (CAN bus read-only; nothing is armed, nothing moves)
+--------------------------------------------------------------------------------
+NOTE: the invocation CHANGED. A bare file path no longer works, by design:
+    python3 agv_core/drivers/canbus/lss.py     -> ModuleNotFoundError (expected)
+    python3 -m agv_core.drivers.canbus.lss     -> correct
+
+3.1  Each tool still starts and prints help, from the repo root:
+         cd ~/agv_can
+         for t in verify_bus verify_drivers lss read_imu read_mls drive_forward; do
+           echo "--- $t"; python3 -m agv_core.drivers.canbus.$t --help 2>&1 | head -3
+         done
+     PASS: each prints its own usage. No ModuleNotFoundError anywhere.
+
+3.2  Bus discovery against the real can0 (read-only):
+         python3 -m agv_core.drivers.canbus.verify_bus
+     PASS: finds node 1 (left driver), node 2 (right driver), node 10 (SICK MLS).
+     Compare against the last known-good run. Same nodes, same bitrate.
+
+3.3  Driver identity and state (read-only SDO):
+         python3 -m agv_core.drivers.canbus.verify_drivers
+     PASS: both BLV-R drivers answer; states as expected for a disarmed vehicle.
+
+3.4  The IMU inside the MLS still reads:
+         python3 -m agv_core.drivers.canbus.read_imu show
+     PASS: plausible stationary values. This exercises agv_core.drivers.canbus
+     decoders end to end.
+
+3.5  The owner lock actually refuses a second owner — the thing Windows cannot
+     test. In terminal A start the legacy controller (section 4), then in B:
+         python3 -m agv_core.drivers.canbus.verify_bus
+     PASS: refuses, NAMES the holder ("agv_controller"), and never opens the bus.
+     FAIL: if it opens the bus, two owners can now write to can0. STOP. This is
+     the most dangerous possible outcome of this refactor.
+
+--------------------------------------------------------------------------------
+4. THE LEGACY CONTROLLER  (ships today — must be untouched in behaviour)
+--------------------------------------------------------------------------------
+*** BLOCKS UNDER THE WHEELS FROM HERE ON. ***
+
+4.1  It starts from the documented entry point, unchanged:
+         cd ~/agv_can && python3 main.py
+     PASS: "AGV web UI on http://0.0.0.0:5000/". No traceback, no ImportError.
+     This is the step that proves `from app.server import main` works and that
+     the removed sys.path loops were genuinely unnecessary.
+
+4.2  Under systemd, exactly as it ships:
+         sudo systemctl start agv_controller.service
+         systemctl status agv_controller.service --no-pager
+         journalctl -u agv_controller.service -n 40 --no-pager
+     PASS: active (running), no ImportError, no "No module named" anywhere.
+     The unit's ExecStart still names ~/agv_can/main.py — that path deliberately
+     did not move. If the unit file names config.py, core/ or drivers/ anywhere,
+     report it; it should not.
+
+4.3  Pages load: /, /manual, /monitor, /io, /alarms, /params, /blind.
+     PASS: all render; /params lists profile values; /monitor shows the health
+     table and the CAN write deny-list.
+
+4.4  Profile values are the REAL ones (proves config resolved the right file):
+     On /params, confirm against profiles/agv-01.json: jog r/min, 6083h accel,
+     can bitrate, use_rpdo. A page of defaults instead of profile values means
+     config loaded nothing. Report and STOP.
+
+4.5  ARMED JOG — wheels off the ground, blocks in place, hand on the E-stop.
+     Selector to MANUAL (the panel arms, not the browser). Jog each direction
+     from /manual.
+     PASS: each direction turns the correct way; releasing the key stops the
+     wheels within the manual watchdog (~0.6 s); the horn/lights coil follows
+     the commanded setpoint.
+     This is the acceptance gate for kinematics + motion + dio + canworker
+     through the new import path.
+
+4.6  Stop it again before section 5:
+         sudo systemctl stop agv_controller.service
+
+--------------------------------------------------------------------------------
+5. THE ROS STACK  (the half that cannot be tested off the vehicle at all)
+--------------------------------------------------------------------------------
+5.1  Rebuild the workspace clean — agv_repo.py was deleted and a stale install
+     space will keep serving it and hide a real failure:
+         cd ~/agv_can/amr_ws
+         rm -rf build install log
+         colcon build --symlink-install
+     PASS: all packages build. Report any package that fails.
+
+5.2  Deployment validation now checks the library is where the launcher expects:
+         ~/agv_can/amr_ws/deploy/validate.sh
+     PASS: "deployment validation passed".
+     A new failure mode here reads "vehicle library incomplete: <path> is
+     missing" — that means agv_core/ is not beside amr_ws/, which would have
+     been a silent restart loop before this check existed.
+
+5.3  PYTHONPATH reaches a node from the install space — the single most likely
+     ROS-side failure of this refactor:
+         source /opt/ros/humble/setup.bash
+         source ~/agv_can/amr_ws/install/setup.bash
+         source ~/agv_can/amr_ws/env/vehicle.sh
+         python3 -c "from agv_core import config; print(config.PROFILE_DIR)"
+     PASS: the repo-root profiles path.
+     FAIL: ModuleNotFoundError -> vehicle.sh did not export PYTHONPATH, or the
+     shell was sourced in a different order. Report the value of $PYTHONPATH.
+
+5.4  Nodes that import agv_core start (no motion; base nodes only):
+         ros2 run amr_base drive_node --ros-args -p sim:=false
+     then in another shell the same for panel_node, diff_drive_odom_node,
+     cmd_mux_kinematics_node.
+     PASS: each starts and stays up. An ImportError naming agv_core, config,
+     kinematics, guard, ownerlock, panel, canmon or dio is a refactor failure —
+     capture the whole traceback.
+
+5.5  Full service bring-up:
+         sudo systemctl start amr.service
+         systemctl status amr.service --no-pager
+         journalctl -u amr.service -n 60 --no-pager
+     PASS: active (running); the supervisor reaches IDLE; no import errors.
+     Check the launch wrapper actually exported the path:
+         systemctl show amr.service -p Environment
+         journalctl -u amr.service | grep -i "pythonpath\|agv_core" | head
+
+5.6  The ROS web UI answers and shows real profile-derived values:
+     open the amr_web page, confirm /api/state and /api/config return the
+     vehicle's actual parameters, not defaults.
+
+5.7  ARMED CHECK under ROS — blocks still under the wheels. Selector to MANUAL,
+     jog from the ROS manual page.
+     PASS: correct directions, watchdog releases, E-stop cuts drive.
+
+--------------------------------------------------------------------------------
+6. THE TWO STACKS STILL EXCLUDE EACH OTHER
+--------------------------------------------------------------------------------
+6.1  With amr.service running, try to start the legacy controller:
+         cd ~/agv_can && python3 main.py
+     PASS: it refuses cleanly, names the ROS owner, and exits. It must NOT open
+     can0.
+6.2  And the reverse: legacy running, then `ros2 run amr_base drive_node`.
+     PASS: refuses, names the holder.
+     Either direction failing means ownerlock lost its mutual exclusion in the
+     move. STOP and report immediately — this is a two-owners-on-one-bus hazard.
+
+--------------------------------------------------------------------------------
+7. WHAT TO REPORT BACK
+--------------------------------------------------------------------------------
+For each numbered step: PASS / FAIL / SKIPPED, with the exact command output for
+anything that is not a clean PASS. Then:
+  * the check count printed by tests/run_all.py
+  * which of `pip install -e .` or PYTHONPATH you ended up relying on (1.3)
+  * the git hash you recorded in 0.1
+  * anything you changed on the vehicle, file by file
+  * any step you skipped and why
+
+ROLLBACK, if the vehicle must ship before a failure is understood:
+    cd ~/agv_can
+    git revert --no-edit <restructure commit hash from 0.1>
+    cd amr_ws && rm -rf build install log && colcon build --symlink-install
+    sudo systemctl restart agv_controller.service   # or amr.service
+The revert restores config.py, core/ and drivers/ to the repo root and brings
+back amr_base/agv_repo.py. Nothing in the refactor deletes functionality, so a
+revert is complete and loses nothing but the new layout.
+
+KNOWN-GOOD REFERENCE (from the Windows dev box, for comparison only)
+  93 test function(s), 898 check(s)
+  10 failures there, all of them the owner-lock/bench-refusal checks that need
+  real fcntl — the identical set the pre-refactor code produced on that box.
+  On the vehicle those 10 must PASS, giving "all checks passed".
+================================================================================

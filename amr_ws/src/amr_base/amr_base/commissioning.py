@@ -48,10 +48,12 @@ import math
 import re
 from dataclasses import dataclass, field
 
-from amr_base import pp
-from amr_base.agv_repo import config
+from agv_core import (
+    blindrun,  # repo module: core/blindrun.py
+    config,
+)
 
-import blindrun  # repo module: core/blindrun.py
+from amr_base import pp
 
 IDLE, PREPARED, RUNNING, SETTLING, DONE, ABORTED = range(6)
 PHASE_NAMES = {

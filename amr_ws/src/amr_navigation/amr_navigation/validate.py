@@ -155,7 +155,7 @@ def _provisional(what: str, c: fpmod.Clearance, step_id: str | None) -> Issue:
     return Issue(
         "provisional",
         f"{what} crosses {c.provisional} mapped cells in a dynamic area: "
-        "passable only if the live scan agrees (a return there stops the run)",
+        "cleared on the assumption those cells are empty; check them before running",
         step_id,
         INFO,
     )

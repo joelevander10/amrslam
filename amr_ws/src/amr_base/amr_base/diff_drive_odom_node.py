@@ -17,6 +17,7 @@ covariance is informational.
 import math
 
 import rclpy
+from agv_core import config
 from geometry_msgs.msg import TransformStamped
 from nav_msgs.msg import Odometry
 from rclpy.executors import ExternalShutdownException
@@ -24,7 +25,6 @@ from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
 from tf2_ros import TransformBroadcaster
 
-from amr_base.agv_repo import config
 from amr_base.diff_drive import Geometry, OdomState, forward, integrate
 from amr_interfaces.msg import WheelStates
 

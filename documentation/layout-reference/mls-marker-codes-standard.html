@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MLS Marker Codes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700&family=IBM+Plex+Mono:wght@600&family=IBM+Plex+Sans:wght@500&display=swap" rel="stylesheet">
+<style>
+  /* Drawing-only layout image, same language as corner-tag-placement.html. Canvas 1920x1080.
+     Drawn for THIS vehicle (2026-10-09): MLSE-0200 sensor (200 mm, reads +/-100 mm), 30 mm
+     track tape, 15 mm marker tape (operator decision 2026-10-09, cut from the opposite-pole tape). Everything lateral is to scale (1 mm = 0.75 px): tape and
+     marker widths, positions, the sensor window; the 100 mm marker length too.
+     Verdicts assume the whole marker must lie inside the sensor window, and that a 15 mm strip
+     clears the 30 % detection level (202Dh:01) - both unconfirmed: bench.
+     Source: SICK MLS operating instructions 8021642.1OC7/2024-10-25, section 8.5, pp. 51-53
+     (manuals/obsolete/operating_instructions_mls_en_im0076568.pdf). Standard mode = 2028h:02 = 1. */
+  :root {
+    --paper: #e9edf2;
+    --surface: #ffffff;
+    --ink: #14171d;
+    --ink-2: #3d4553;
+    --ink-3: #636b7c;
+    --rule: #cbd2de;
+    --route: #1f3f7a; --route-dark: #152c57; --route-wash: #dde6f5;
+    --slow: #e09a00;  --slow-wash: #fde9b8;  --slow-ink: #8a5e00;
+    --fast: #2f8a57;  --fast-wash: #d3eedd;  --fast-ink: #1e5c39;
+    --bad: #b3261e;
+    --tag: #c8176b;
+    --agv: #23272f;
+    color-scheme: light;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding-block: 0 40px;
+    background: var(--paper);
+    color: var(--ink);
+    font: 16px/1.45 "IBM Plex Sans", Arial, Helvetica, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------------- toolbar (never captured) ---------------- */
+  .toolbar {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+    padding: 10px 16px;
+    background: var(--surface);
+    border-bottom: 2px solid var(--ink);
+  }
+  .toolbar strong { margin-right: 8px; font: 700 15px "Archivo", Arial, sans-serif; }
+  .seg { display: flex; border: 1.5px solid var(--ink); }
+  .seg button, .toolbar .go {
+    border: 0; border-left: 1px solid var(--rule);
+    background: var(--surface); color: var(--ink-2);
+    padding: 7px 12px; cursor: pointer;
+    font: 600 11px "IBM Plex Mono", ui-monospace, monospace;
+    letter-spacing: .07em; text-transform: uppercase;
+  }
+  .seg button:first-child { border-left: 0; }
+  .seg button[aria-pressed="true"] { background: var(--agv); color: #fff; }
+  .toolbar .go { border: 1.5px solid var(--route-dark); background: var(--route); color: #fff; }
+  .toolbar .go:disabled { opacity: .6; cursor: progress; }
+  .toolbar button:focus-visible { outline: 2px solid var(--tag); outline-offset: 2px; }
+  .toolbar .status {
+    margin-left: auto; color: var(--ink-3);
+    font: 600 11px "IBM Plex Mono", ui-monospace, monospace; letter-spacing: .05em; text-transform: uppercase;
+  }
+
+  .stage-wrap { padding: 20px 16px 0; }
+  .stage { position: relative; margin: 0 auto; box-shadow: 0 1px 0 var(--rule), 0 10px 30px rgba(20,30,50,.12); }
+
+  /* ---------------- canvas 1920 x 1080 ---------------- */
+  .slide {
+    position: absolute; top: 0; left: 0;
+    width: 1920px; height: 1080px;
+    transform-origin: top left;
+    overflow: hidden;
+    background: var(--surface);
+  }
+
+  .dwg { position: absolute; inset: 0; width: 1920px; height: 1080px; }
+  .dwg text { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+  .head { font: 700 36px "Archivo", Arial, sans-serif !important; text-transform: uppercase; }
+  .sub  { font-size: 19px; font-weight: 600; fill: var(--ink-3); }
+  .code { font: 700 40px "Archivo", Arial, sans-serif !important; }
+  .sum  { font-size: 18px; font-weight: 600; fill: var(--ink-2); }
+  .meas { font-size: 18px; font-weight: 600; fill: var(--ink); }
+  .meas.none { fill: var(--ink-3); }
+  .pole { font-size: 13px; font-weight: 600; fill: #fff; }
+  .rowlbl { font: 700 22px "Archivo", Arial, sans-serif !important; text-transform: uppercase; }
+  .rowsub { font-size: 15px; font-weight: 600; fill: var(--ink-3); }
+  .dir    { font-size: 13px; font-weight: 600; fill: var(--ink-2); letter-spacing: .06em; }
+  .empty  { font-size: 17px; font-weight: 600; fill: var(--ink-3); }
+  .lg     { font: 500 18px "IBM Plex Sans", Arial, sans-serif !important; fill: var(--ink-2); }
+  .lgh    { font: 700 19px "Archivo", Arial, sans-serif !important; fill: var(--ink); }
+
+  .tile      { fill: #f5f6f8; stroke: var(--rule); stroke-width: 2; }
+  .tile.ok   { fill: #f1faf4; stroke: var(--fast); stroke-width: 4; }
+  .tile.marg { fill: #fffaf0; stroke: var(--slow); stroke-width: 4; }
+  .tile.out  { fill: #f7f3f4; stroke: var(--bad); stroke-width: 3; stroke-dasharray: 10 6; }
+  .tile.none { fill: none; stroke: var(--rule); stroke-width: 2; stroke-dasharray: 8 8; }
+  .blind { fill: url(#hatch); }
+  .edge  { stroke: var(--bad); stroke-width: 2; stroke-dasharray: 6 4; }
+  .edget { font-size: 12px; font-weight: 600; fill: var(--bad); }
+  .mark.lost { fill: #9aa3b5; }
+  .verdict { font: 700 17px "IBM Plex Sans", Arial, sans-serif !important; }
+  .verdict.ok { fill: var(--fast-ink); } .verdict.marg { fill: var(--slow-ink); } .verdict.out { fill: var(--bad); }
+  .grid  { stroke: var(--rule); stroke-width: 1.5; stroke-dasharray: 3 5; }
+  .track { fill: var(--agv); }
+  .mark  { fill: var(--route); }
+  .dim   { stroke: var(--ink-2); stroke-width: 2; fill: none; }
+  .chev  { fill: none; stroke: #fff; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+</style>
+</head>
+<body>
+
+<nav class="toolbar" aria-label="Export">
+  <strong>MLS Marker Codes · Standard · MLSE-0200</strong>
+  <div class="seg" role="group" aria-label="Resolution">
+    <button type="button" data-res="2" aria-pressed="false">2× · 3840</button>
+    <button type="button" data-res="3" aria-pressed="true">3× · 5760</button>
+  </div>
+  <div class="seg" role="group" aria-label="Background">
+    <button type="button" data-bg="white" aria-pressed="true">White</button>
+    <button type="button" data-bg="none" aria-pressed="false">Transparent</button>
+  </div>
+  <button type="button" class="go" id="download">Download PNG</button>
+  <span class="status" id="status">16:9 · 1920 × 1080 base</span>
+</nav>
+
+<div class="stage-wrap">
+<div class="stage" id="stage">
+<section class="slide" id="slide" aria-label="SICK MLS marker codes, standard mode">
+
+  <svg class="dwg" id="dwg" viewBox="0 0 1920 1080" role="img" aria-label="SICK MLS standard-mode marker codes for a 200 mm sensor reading plus or minus 100 mm, 30 mm track tape and 15 mm marker tape. Codes 1, 2 and 3 (30, 60, and 60 plus 30 mm) are usable with at least 32 mm to spare. Codes 4 and 5 need a 90 mm marker that ends 2.5 mm inside the sensor edge, so only when centred. Codes 6 and 7 need a 120 mm marker, outside the sensor. The second row shows each layout mirrored: the same code read in the negative travel direction, which doubles the usable codes to six cues once the bench confirms how direction is reported.">
+    <defs>
+      <pattern id="hatch" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(45)"><rect width="8" height="8" fill="#f6e3e1"/><line x1="0" y1="0" x2="0" y2="8" stroke="#d9a39e" stroke-width="3"/></pattern>
+      <marker id="arr" markerUnits="userSpaceOnUse" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 Z" fill="#3d4553"/></marker>
+    </defs>
+
+    <text class="head" x="60" y="60">MLS marker codes · standard mode</text>
+    <text class="sub" x="60" y="94" style="fill:#3d4553">MLSE-0200 reads ±100 mm · track tape 30 mm · marker tape 15 mm × 100 mm</text>
+    <text class="sub" x="1860" y="56" text-anchor="end">SICK MLS 8021642 §8.5 · 2028h:01 = 1, 2028h:02 = 1 · code = (A1 + A2) ÷ 30</text>
+    <text class="sub" x="1860" y="88" text-anchor="end" style="fill:#14171d">3 usable (1, 2, 3) × 2 directions = 6 cues · 4, 5 centred only · 6, 7 impossible</text>
+
+    <g id="cols"></g>
+    <g id="rows"></g>
+    <g id="legend"></g>
+  </svg>
+
+</section>
+</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/dist/html-to-image.js"></script>
+<script>
+  const FILE_NAME = 'mls-marker-codes-standard';
+  const NS = 'http://www.w3.org/2000/svg';
+  function el(name, attrs, parent, text) {
+    const n = document.createElementNS(NS, name);
+    for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+    if (text !== undefined) n.textContent = text;
+    parent.appendChild(n);
+    return n;
+  }
+
+  /* ---- data: manual p. 52-53, standard mode. a1 = Marker 1 (the FAR marker: template M1-M4,
+     left of the track in the manual's figure), a2 = Marker 2 (nearer, M5-M7, right), a2 < a1.
+     For each code the layout drawn is the best one for this vehicle; the others are worse:
+     code 3 as 90 alone and code 4 as 120 (see `others`). */
+  const TEMPLATE_1 = { 30: 'M4', 60: 'M3', 90: 'M2', 120: 'M1' };
+  const TEMPLATE_2 = { 30: 'M5', 60: 'M6', 90: 'M7', 120: 'M8' };
+  const CODES = [
+    { code: 1, layout: [30, 0] },
+    { code: 2, layout: [60, 0] },
+    { code: 3, layout: [60, 30],  others: '90 alone: centred only' },
+    { code: 4, layout: [90, 30],  others: '120 alone: outside' },
+    { code: 5, layout: [90, 60],  others: '120 + 30: outside' },
+    { code: 6, layout: [120, 60] },
+    { code: 7, layout: [120, 90] },
+  ];
+
+  /* ---- this vehicle ---- */
+  const RANGE = 100;     // MLSE-0200: +/-100 mm
+  const TRACK_W = 30;    // track tape
+  const MARK_W = 15;     // marker tape (2026-10-09)
+  const MARK_LEN = 100;  // recommended marker length
+  const MIN_GAP = 5;     // marker edge to track edge, below this the two fields merge
+  const MIN_SPARE = 25;  // marker outer edge to the window edge = off-centre it tolerates
+
+  // A layout's verdict and the off-centre it tolerates (the least spare of its markers).
+  function verdict([a1, a2]) {
+    const ds = [a1, a2].filter(Boolean);
+    const spare = Math.min(...ds.map(d => RANGE - (d + MARK_W / 2)));
+    const gap = Math.min(...ds.map(d => d - MARK_W / 2 - TRACK_W / 2));
+    if (ds.some(d => d - MARK_W / 2 >= RANGE)) return { cls: 'out', text: '✕ outside the sensor' };
+    if (spare < 0) return { cls: 'out', text: `✕ edge ${-spare} mm past` };
+    if (gap < MIN_GAP) return { cls: 'marg', text: '! touches the track' };
+    if (spare < MIN_SPARE) return { cls: 'marg', text: `! centred only · ${spare} spare` };
+    return { cls: 'ok', text: `✓ usable · off-centre ≤ ${Math.floor(spare)}` };
+  }
+  const HEAD_FILL = { ok: '#2f8a57', marg: '#b57d00', out: '#8b93a3' };
+  const HEAD_NOTE = { ok: 'USABLE', marg: 'CENTRED ONLY', out: 'IMPOSSIBLE' };
+
+  /* ---- geometry ---- */
+  const MM = 0.75;               // px per mm, everywhere
+  const X0 = 170, CW = 1690 / 7; // column grid
+  const ROW_Y = [222, 556], ROW_H = 322;
+  const TILE_W = 226;
+
+  const cols = document.getElementById('cols');
+  const rows = document.getElementById('rows');
+  const legend = document.getElementById('legend');
+
+  // row labels in the left gutter
+  [
+    ['As in the manual', 'far marker left', 'positive direction'],
+    ['Mirrored', 'far marker right: same code,', 'negative direction (bench)'],
+  ].forEach(([h, s1, s2], r) => {
+    const cy = ROW_Y[r] + ROW_H / 2;
+    const g = el('g', { transform: `translate(110 ${cy}) rotate(-90)` }, rows);
+    el('text', { class: 'rowlbl', x: 0, y: -16, 'text-anchor': 'middle' }, g, h);
+    el('text', { class: 'rowsub', x: 0, y: 8, 'text-anchor': 'middle' }, g, s1);
+    el('text', { class: 'rowsub', x: 0, y: 28, 'text-anchor': 'middle' }, g, s2);
+  });
+
+  // mirrored = false: Marker 1 left (manual figure); true: the same layout reflected.
+  function tile(cx, top, layout, mirrored) {
+    const g = el('g', {}, cols);
+    const x = cx - TILE_W / 2;
+    if (!layout) {
+      el('rect', { class: 'tile none', x, y: top, width: TILE_W, height: ROW_H }, g);
+      el('text', { class: 'empty', x: cx, y: top + ROW_H / 2 - 4, 'text-anchor': 'middle' }, g, 'nothing to');
+      el('text', { class: 'empty', x: cx, y: top + ROW_H / 2 + 20, 'text-anchor': 'middle' }, g, 'mirror');
+      return null;
+    }
+    const [a1, a2] = layout;
+    const v = verdict(layout);
+    const side = mirrored ? 1 : -1; // where Marker 1 lies
+    el('rect', { class: `tile ${v.cls}`, x, y: top, width: TILE_W, height: ROW_H }, g);
+
+    const t0 = top + 30, t1 = top + ROW_H - 96; // track span
+    // the sensor window: hatched where the MLSE-0200 cannot see
+    el('rect', { class: 'blind', x: x + 2, y: t0, width: TILE_W / 2 - RANGE * MM - 2, height: t1 - t0 }, g);
+    el('rect', { class: 'blind', x: cx + RANGE * MM, y: t0, width: TILE_W / 2 - RANGE * MM - 2, height: t1 - t0 }, g);
+    for (const sgn of [-1, 1]) {
+      const ex = cx + sgn * RANGE * MM;
+      el('line', { class: 'edge', x1: ex, y1: t0 - 4, x2: ex, y2: t1 }, g);
+      el('text', { class: 'edget', x: ex, y: t0 - 8, 'text-anchor': 'middle' }, g, sgn < 0 ? '−100' : '+100');
+    }
+    el('text', { class: 'dir', x: cx, y: t0 - 8, 'text-anchor': 'middle' }, g, mirrored ? '− DIR' : '+ DIR');
+    // the 30 mm grid
+    for (const d of [-120, -90, -60, -30, 30, 60, 90, 120]) {
+      el('line', { class: 'grid', x1: cx + d * MM, y1: t0, x2: cx + d * MM, y2: t1 }, g);
+    }
+    // track tape (N up), travel direction up
+    el('rect', { class: 'track', x: cx - TRACK_W * MM / 2, y: t0, width: TRACK_W * MM, height: t1 - t0 }, g);
+    for (const y of [t0 + 22, t1 - 20]) {
+      el('path', { class: 'chev', d: `M${cx - 5} ${y + 3} L${cx} ${y - 3} L${cx + 5} ${y + 3}` }, g);
+    }
+    el('text', { class: 'pole', x: cx, y: t1 - 40, 'text-anchor': 'middle' }, g, 'N');
+
+    // markers (S up), MARK_W wide, 100 mm long
+    const my = top + 76, mmid = my + MARK_LEN * MM / 2, dimY = my - 14;
+    const marks = [side * a1, ...(a2 ? [-side * a2] : [])];
+    for (const d of marks) {
+      const lost = Math.abs(d) - MARK_W / 2 >= RANGE;
+      el('rect', {
+        class: lost ? 'mark lost' : 'mark',
+        x: cx + (d - MARK_W / 2) * MM, y: my, width: MARK_W * MM, height: MARK_LEN * MM,
+      }, g);
+      el('text', { class: 'pole', x: cx + d * MM, y: mmid + 5, 'text-anchor': 'middle' }, g, 'S');
+      el('line', {
+        class: 'dim', x1: cx, y1: dimY, x2: cx + d * MM, y2: dimY,
+        'marker-start': 'url(#arr)', 'marker-end': 'url(#arr)',
+      }, g);
+      el('line', { class: 'dim', x1: cx + d * MM, y1: dimY - 6, x2: cx + d * MM, y2: my }, g);
+    }
+    el('line', { class: 'dim', x1: cx, y1: dimY - 6, x2: cx, y2: t0 + 4 }, g);
+
+    // measurements (template slot by the side the marker is on) and the verdict
+    const T1 = mirrored ? TEMPLATE_2 : TEMPLATE_1, T2 = mirrored ? TEMPLATE_1 : TEMPLATE_2;
+    el('text', { class: 'meas', x: x + 12, y: top + ROW_H - 64 }, g, `A1 ${String(a1).padStart(3)} · ${T1[a1]}`);
+    el('text', { class: a2 ? 'meas' : 'meas none', x: x + 12, y: top + ROW_H - 40 },
+      g, a2 ? `A2 ${String(a2).padStart(3)} · ${T2[a2]}` : 'A2   — none');
+    el('text', { class: `verdict ${v.cls}`, x: x + 12, y: top + ROW_H - 12 }, g, v.text);
+    return v.cls;
+  }
+
+  CODES.forEach((c, i) => {
+    const cx = X0 + CW * (i + 0.5);
+    const best = tile(cx, ROW_Y[0], c.layout, false);
+    tile(cx, ROW_Y[1], best === 'out' ? null : c.layout, true);
+    // column header: the code, the sum that produces it, and its verdict
+    el('rect', { x: cx - TILE_W / 2, y: 116, width: TILE_W, height: 94, fill: HEAD_FILL[best] }, cols);
+    el('text', { class: 'code', x: cx, y: 158, 'text-anchor': 'middle', fill: '#fff' }, cols, `CODE ${c.code}`);
+    el('text', { class: 'sum', x: cx, y: 182, 'text-anchor': 'middle', style: 'fill:#ffffff' },
+      cols, `A1 + A2 = ${c.code * 30} mm`);
+    el('text', { class: 'sum', x: cx, y: 202, 'text-anchor': 'middle', style: 'fill:#ffffff;letter-spacing:.12em' },
+      cols, HEAD_NOTE[best]);
+  });
+
+  /* ---- legend / rules ---- */
+  const LY = 888;
+  el('rect', { x: 60, y: LY, width: 1800, height: 182, fill: '#f5f6f8', stroke: '#2a2f3a', 'stroke-width': 3 }, legend);
+  const items = [
+    {
+      x: 84, glyph: (g, x, y) => {
+        el('rect', { x, y: y - 4, width: 46, height: 60, fill: 'url(#hatch)' }, g);
+        el('rect', { class: 'track', x: x + 6, y: y - 4, width: 14, height: 60 }, g);
+        el('rect', { class: 'mark', x: x + 28, y: y + 8, width: 8, height: 38 }, g);
+      },
+      h: 'To scale · hatched = sensor blind',
+      t: ['MLSE-0200 sees ±100 mm only', 'track 30 mm N up · marker 15 mm S up'],
+    },
+    {
+      x: 520, glyph: (g, x, y) => el('rect', { class: 'tile ok', x, y: y + 4, width: 46, height: 46 }, g),
+      h: 'Usable',
+      t: [`≥ ${MIN_GAP} mm gap to the track (here 7.5)`, `≥ ${MIN_SPARE} mm spare to the window edge`],
+    },
+    {
+      x: 960, glyph: (g, x, y) => el('rect', { class: 'tile marg', x, y: y + 4, width: 46, height: 46 }, g),
+      h: 'Centred only',
+      t: ['a 90 mm marker ends at 97.5 mm:', '2.5 mm spare, any off-centre loses it'],
+    },
+    {
+      x: 1420, glyph: (g, x, y) => el('rect', { class: 'tile out', x, y: y + 4, width: 46, height: 46 }, g),
+      h: 'Impossible',
+      t: ['a 120 mm marker starts at 112.5 mm,', 'outside the sensor: codes 6 and 7'],
+    },
+  ];
+  items.forEach(({ x, glyph, h, t }) => {
+    const g = el('g', {}, legend);
+    glyph(g, x, LY + 22);
+    el('text', { class: 'lgh', x: x + 64, y: LY + 34 }, g, h);
+    t.forEach((line, k) => el('text', { class: 'lg', x: x + 64, y: LY + 62 + k * 24 }, g, line));
+  });
+  el('line', { x1: 84, y1: LY + 112, x2: 1836, y2: LY + 112, stroke: '#cbd2de', 'stroke-width': 2 }, legend);
+  el('text', { class: 'lgh', x: 84, y: LY + 140 }, legend,
+    'For 4 codes: lay codes 1, 2, 3 both ways round (row 2) = 6 cues, once the bench confirms how the MLS reports direction.');
+  el('text', { class: 'lg', x: 84, y: LY + 166 }, legend,
+    'Without a direction bit: 3 codes, and code 4 (90 + 30) only where the vehicle runs centred. ' +
+    'Bench first: 15 mm strip reaches the 30 % level · FailSafe on (2028h:03 = 1) · markers on straights.');
+
+  /* ---- fit the 1920x1080 canvas to the window ---- */
+  const stage = document.getElementById('stage');
+  const slide = document.getElementById('slide');
+  function fit() {
+    const avail = Math.min(document.documentElement.clientWidth - 32, 1920);
+    const s = avail / 1920;
+    stage.style.width = 1920 * s + 'px';
+    stage.style.height = 1080 * s + 'px';
+    slide.style.transform = `scale(${s})`;
+  }
+  addEventListener('resize', fit);
+  fit();
+
+  /* ---- export ---- */
+  let res = 3, bg = 'white';
+  document.querySelectorAll('[data-res]').forEach(b => b.addEventListener('click', () => {
+    res = +b.dataset.res;
+    document.querySelectorAll('[data-res]').forEach(x => x.setAttribute('aria-pressed', x === b));
+  }));
+  document.querySelectorAll('[data-bg]').forEach(b => b.addEventListener('click', () => {
+    bg = b.dataset.bg;
+    document.querySelectorAll('[data-bg]').forEach(x => x.setAttribute('aria-pressed', x === b));
+  }));
+
+  const status = document.getElementById('status');
+  const btn = document.getElementById('download');
+  btn.addEventListener('click', async () => {
+    if (!window.htmlToImage) { status.textContent = 'Export library did not load — check internet connection'; return; }
+    btn.disabled = true;
+    status.textContent = 'Rendering…';
+    try {
+      await document.fonts.ready;
+      const transparent = bg === 'none';
+      const url = await htmlToImage.toPng(slide, {
+        width: 1920, height: 1080, pixelRatio: res,
+        backgroundColor: transparent ? undefined : '#ffffff',
+        style: { transform: 'none', background: transparent ? 'transparent' : '#ffffff' },
+      });
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${FILE_NAME}@${res}x${transparent ? '-transparent' : ''}.png`;
+      document.body.appendChild(a); a.click(); a.remove();
+      status.textContent = `Saved ${1920 * res} × ${1080 * res} PNG`;
+    } catch (e) {
+      console.error(e);
+      status.textContent = 'Export failed — see console';
+    } finally {
+      btn.disabled = false;
+    }
+  });
+</script>
+</body>
+</html>

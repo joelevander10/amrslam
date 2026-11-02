@@ -11,8 +11,8 @@
 #
 # The controller's passive listener (drivers/lidar.py) used to bind the same
 # host port; it was removed on 2026-09-16 and ROS owns the port outright. The
-# standalone bench tool drivers/lidar_scan.py still binds it when hand-run, so
-# stop this driver before using that.
+# standalone bench tool agv_core/drivers/lidar_scan.py still binds it when hand-run,
+# so stop this driver before using that.
 sick_safetyscanners2_node:
   ros__parameters:
     frame_id: "laser_frame"          # spec §2.3, exact string
@@ -22,7 +22,10 @@ sick_safetyscanners2_node:
     host_udp_port: 6060
     channel: 0
     channel_enabled: true
-    skip: 0                          # publish every scan (~34 Hz); raise to 1 for ~17 Hz if the N97 needs it
+    # 1 = every 2nd scan, ~17 Hz (CPU, 2026-10-02: the N97 ran >80 C). /scan_gated was
+    # already ~8.5 Hz, so localisation sees the same rate; /output_paths (the mux's field
+    # backstop) follows at ~17 Hz - the OSSD stop path is hardware and unaffected.
+    skip: 1
     # The mount has a wall behind the scanner: only about +/-95 deg is usable
     # (operator, 2026-09-16). Beams outside that hit the vehicle itself and
     # must not reach AMCL or the costmap. Radians, 0 = scanner forward.

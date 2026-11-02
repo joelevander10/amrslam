@@ -5,7 +5,7 @@ No rclpy here. Everything that touches the bus goes through an injected
 `bus` (python-can) so the sequences can be asserted without hardware, and every
 write goes through drivers/canbus/guard.py, the same deny-list canworker used.
 The SDO helpers, RPDO1 packing and the CiA-402 constants are the repo's own
-(drivers/canbus), imported bare via amr_base.agv_repo.
+(agv_core.drivers.canbus).
 
 Units (spec §3.2, reconciliation D-1/D-2): 60FFh and 606Ch are signed MOTOR
 r/min; 6064h is motor-side encoder counts (608Fh counts per 6091h-geared
@@ -39,15 +39,13 @@ import time
 from dataclasses import dataclass, field
 
 import can
-
-import amr_base.agv_repo  # noqa: F401  (puts the repo layer dirs on sys.path)
-from amr_base import pp
-
-import guard  # repo module
-import rpdo  # noqa: E402
-from alarms import decode_emcy, decode_nmt  # noqa: E402
-from bus_health import decode_state  # noqa: E402
-from drive_forward import (  # noqa: E402
+from agv_core.drivers.canbus import (
+    guard,  # repo module
+    rpdo,  # noqa: E402
+)
+from agv_core.drivers.canbus.alarms import decode_emcy, decode_nmt  # noqa: E402
+from agv_core.drivers.canbus.bus_health import decode_state  # noqa: E402
+from agv_core.drivers.canbus.drive_forward import (  # noqa: E402
     CW_DISABLE_VOLTAGE,
     CW_ENABLE,
     CW_SHUTDOWN,
@@ -57,7 +55,9 @@ from drive_forward import (  # noqa: E402
     SW_SPEED_IS_ZERO,
     sdo_write,
 )
-from verify_drivers import sdo_read, u32  # noqa: E402
+from agv_core.drivers.canbus.verify_drivers import sdo_read, u32  # noqa: E402
+
+from amr_base import pp
 
 # ---------------------------------------------------------------- PDO layout
 
@@ -283,7 +283,7 @@ class Router:
 
 # ---------------------------------------------------------------- drive link
 
-DISARMED, ARMED, FAULT = "disarmed", "armed", "fault"
+DISARMED, STANDBY, ARMED, FAULT = "disarmed", "standby", "armed", "fault"
 
 
 @dataclass
@@ -317,10 +317,22 @@ class DriveTelemetry:
 class DriveLink:
     """Owns the two BLV-R drives over one Router. Blocking, bus-thread only.
 
-    State: DISARMED (drives de-energised, or not yet touched), ARMED (both in
-    Operation enabled, RPDO1 live), FAULT (a drive faulted or fell silent while
-    armed; cleared only by disarm()). Every transition that can fail part-way
-    rolls back to a known state: arm() de-energises BOTH drives on any error.
+    State: DISARMED (drives de-energised and pre-operational, or not yet touched),
+    STANDBY (NMT operational, PDOs mapped, 1016h set, power stage OFF: the TPDOs
+    keep flowing so wheel counts stay measured, and no RPDO is sent - it carries
+    controlword 0x0F, which would enable a drive), ARMED (both in Operation
+    enabled, RPDO1 live), FAULT (a drive faulted or fell silent while linked;
+    cleared only by disarm()).
+
+        prepare()  DISARMED -> STANDBY   NMT, PDO mapping, 1016h, pv, scale
+        engage()   STANDBY  -> ARMED     Shutdown / Switch on / Enable operation
+        release()  ARMED    -> STANDBY   zero, wait for standstill, Shutdown
+        disarm()   any      -> DISARMED  the full teardown, as before
+        arm()      prepare() + engage(), for the bench and the tests
+
+    Every transition that can fail part-way rolls back to a known state:
+    prepare() de-energises BOTH drives on any error, engage() puts both back in
+    Shutdown, and a release() that cannot finish latches FAULT.
     """
 
     router: Router
@@ -338,9 +350,18 @@ class DriveLink:
     pc_node: int | None = None
     pc_heartbeat_s: float = 0.1
     heartbeat_withheld: bool = False  # R04 fallback: let the drives' 1016h trip
+    # Bus-thread work kept running between the SDOs of a blocking sequence, like the PC
+    # heartbeat (2026-10-09: the MLS IMU poll; a 0.35 s engage starved it and localisation
+    # went LOST at Start). Runs from read()/write() only - never from _raw_write, so it
+    # never sits in front of a stop or teardown write - and not in FAULT. Must not block long.
+    idle_hook: callable = None
+    _in_idle: bool = False
     cleanup_owed: bool = False  # arm touched the drives; a disarm has not fully undone it
     cleanup_failures: list = field(default_factory=list)
-    arm_epoch: int = 0  # bumped by every arm; WheelPosition rebaselines on it
+    arm_epoch: int = 0  # bumped by every prepare; WheelPosition rebaselines on it
+    # A power stage may be on: set before the first enable write, cleared once Shutdown is
+    # acknowledged. A zero RPDO carries 0x0F, so it is sent only while this is set.
+    energised: bool = False
     t_armed: float | None = None
     # R04: nodes a fault-stop zero has not reached yet, and the retry/confirm budget.
     stop_pending: set = field(default_factory=set)
@@ -439,8 +460,21 @@ class DriveLink:
             except Exception:  # noqa: BLE001 - the caller's own write will report the bus
                 pass
 
+    def idle(self) -> None:
+        """Run idle_hook unless already inside it (its own SDOs come back through here)."""
+        if self.idle_hook is None or self._in_idle or self.state == FAULT:
+            return
+        self._in_idle = True
+        try:
+            self.idle_hook()
+        except Exception:  # noqa: BLE001 - a sensor poll must not break a drive sequence
+            pass
+        finally:
+            self._in_idle = False
+
     def read(self, node, index, sub=0, timeout=0.4):
         self.keepalive()
+        self.idle()
         st, val, _, _ = sdo_read(self.router, node, index, sub, timeout=timeout, collision_window=0.0)
         if st:
             self._alive(node)
@@ -455,10 +489,23 @@ class DriveLink:
     def write(self, node, index, sub, value, size, what):
         guard.check(index, value, sub)
         self.keepalive()
+        self.idle()
         ok, detail = sdo_write(self.router, node, index, sub, value, size)
         if not ok:
             raise RuntimeError(f"node {node}: {what} ({index:04X}h) failed: {detail}")
         self._alive(node)
+
+    def write_sensor(self, node, index, sub, value, size, timeout=0.05):
+        """A line-sensor (MLS) write: guard.check_sensor's list, never the drives'.
+        Short timeout, because it runs on the bus thread between drive cycles.
+        Returns (ok, detail); a refused object raises ForbiddenWrite before the bus."""
+        guard.check_sensor(index, sub)
+        self.keepalive()
+        self.idle()
+        ok, detail = sdo_write(self.router, node, index, sub, value, size, timeout=timeout)
+        if ok:
+            self._alive(node)
+        return ok, detail
 
     def nmt(self, command, node=0):
         self.router.send(can.Message(arbitration_id=0x000, data=[command, node], is_extended_id=False))
@@ -566,12 +613,35 @@ class DriveLink:
         invert_left: bool,
         invert_right: bool,
     ) -> list[str]:
-        """Energise both drives with zero targets. Raises, and rolls back, on any failure.
+        """prepare() then engage(): energise both drives with zero targets. Raises, and rolls back."""
+        report = self.prepare(feedback_period_ms, pc_node, pc_loss_ms, gear_ratio, invert_left, invert_right)
+        try:
+            self.engage()
+        except BaseException:
+            self.disarm(force=True)
+            raise
+        return report
+
+    def prepare(
+        self,
+        feedback_period_ms: int,
+        pc_node: int | None,
+        pc_loss_ms: int,
+        gear_ratio: float,
+        invert_left: bool,
+        invert_right: bool,
+    ) -> list[str]:
+        """DISARMED -> STANDBY: the link without power. Raises, and rolls back, on any failure.
 
         Everything after preflight (the first write to a drive) is inside the
-        rollback: NMT, PDO mapping, each node's 1016h, the enable sequence and
-        the post-enable scale reads (R05). A failure anywhere de-energises both
-        drives and retires whichever guards were already written.
+        rollback: NMT, PDO mapping, each node's 1016h, the pv setup and the scale
+        reads (R05). A failure anywhere de-energises both drives and retires
+        whichever guards were already written.
+
+        Ends with Shutdown (0x06) on both drives: Ready to switch on, power stage
+        off. A drive held by STO stays in Switch on disabled, which is what the
+        operator's screen should then say (SAFETY_RESET_NEEDED); it is not an error
+        here, because standby needs no power.
         """
         ok, report = self.preflight()
         if not ok:
@@ -580,12 +650,22 @@ class DriveLink:
         self.cleanup_owed = True
         self._reset_stop()
         try:
-            # PDO mapping and NMT error control belong in PRE-OPERATIONAL.
-            self.nmt(0x80)
+            # PDO mapping and NMT error control belong in PRE-OPERATIONAL. Per
+            # drive, not broadcast: a broadcast (node 0) also silenced the MLS
+            # on node 10, whose TPDO1 only flows in Operational (2026-09-21).
+            for nid in self.nodes:
+                self.nmt(0x80, nid)
             self.configure_pdos(feedback_period_ms)
             if pc_node is not None and pc_loss_ms:
                 self.set_pc_loss_guard(pc_node, pc_loss_ms)
-            self._enable_sequence()
+            for nid in self.nodes:
+                self.nmt(0x01, nid)
+            for nid in self.nodes:
+                self.write(nid, 0x6060, 0, 3, 1, "modes of operation = pv")
+                self.write(nid, 0x6083, 0, int(self.ramp["accel"]), 4, "profile acceleration")
+                self.write(nid, 0x6084, 0, int(self.ramp["decel"]), 4, "profile deceleration")
+                self.write(nid, 0x60FF, 0, 0, 4, "target velocity = 0")
+                self.write(nid, 0x6040, 0, CW_SHUTDOWN, 2, "Shutdown (standby)")
             cprev = counts_per_wheel_rev(lambda n, i, s: self.read(n, i, s), tuple(self.nodes), gear_ratio)
         except BaseException:
             self.disarm(force=True)
@@ -596,18 +676,67 @@ class DriveLink:
         else:
             self.log(f"encoder scale {cprev:.0f} counts per wheel turn")
         self.applied = None
-        self.in_pp = False  # _enable_sequence wrote 6060h = pv on both drives
-        self.t_armed = time.monotonic()
-        self.state, self.fault_reason = ARMED, None
+        self.in_pp = False  # 6060h = pv on both drives
+        self.t_armed = time.monotonic()  # feedback is expected from here on (missing_feedback)
+        self.state, self.fault_reason = STANDBY, None
         return report
+
+    def engage(self) -> None:
+        """STANDBY -> ARMED: power both drives at a zero target. Raises on failure, with
+        both drives put back in Shutdown (still STANDBY): the caller retries on a backoff."""
+        if self.state != STANDBY:
+            raise RuntimeError(f"engage from {self.state}, not standby")
+        self.energised = True
+        try:
+            self._enable_sequence()
+        except BaseException:
+            if not self._controlwords_raw((CW_SHUTDOWN,)):
+                self.energised = False
+            raise
+        self.applied = None
+        self.in_pp = False
+        self.state = ARMED
+
+    def release(self) -> bool:
+        """ARMED -> STANDBY: zero, wait for standstill, Shutdown. Never raises.
+
+        Returns True when both drives took Shutdown. Anything short of that latches
+        FAULT with the reason: a drive that may still be enabled is not standby, and
+        the ack that clears it runs the full disarm, which retries the teardown.
+        """
+        if self.state != ARMED:
+            return self.state == STANDBY
+        failed = []
+        if self.in_pp:
+            try:
+                self.pp_exit()
+            except Exception as e:  # noqa: BLE001
+                failed.append(f"return to pv ({e})")
+        failed += [f"node {n}: zero RPDO" for n in self._send_zero_each()]
+        failed += self._zero_target_raw()
+        self._wait_standstill(4.0)
+        failed += self._controlwords_raw((CW_SHUTDOWN,))
+        self.applied = None
+        if failed:
+            self.state, self.fault_reason = FAULT, "power-off incomplete: " + "; ".join(failed)
+            self.log(self.fault_reason)
+            return False
+        self.state, self.energised = STANDBY, False
+        return True
+
+    def _wait_standstill(self, seconds: float) -> None:
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            try:
+                if all(self._standstill_sdo(n) for n in self.nodes):
+                    return
+            except Exception:  # noqa: BLE001
+                return
+            self.router.pump(0.05)
 
     def _enable_sequence(self) -> None:
         for nid in self.nodes:
-            self.nmt(0x01, nid)
-        for nid in self.nodes:
-            self.write(nid, 0x6060, 0, 3, 1, "modes of operation = pv")
-            self.write(nid, 0x6083, 0, int(self.ramp["accel"]), 4, "profile acceleration")
-            self.write(nid, 0x6084, 0, int(self.ramp["decel"]), 4, "profile deceleration")
+            # 60FFh may hold whatever the last RPDO carried before the release.
             self.write(nid, 0x60FF, 0, 0, 4, "target velocity = 0")
             for cw, name in (
                 (CW_SHUTDOWN, "Shutdown"),
@@ -638,8 +767,9 @@ class DriveLink:
         # A zero RPDO before anything blocking, so a teardown interrupted during
         # the SDO writes below still leaves the drives commanding zero. Only
         # when they were ours and enabled: the RPDO carries controlword 0x0F,
-        # which must not ENABLE a drive a rollback caught half-switched-on.
-        if was in (ARMED, FAULT):
+        # which must not ENABLE a drive a rollback caught half-switched-on, nor
+        # one that faulted in STANDBY (Ready to switch on + 0x0F is an enable).
+        if self.energised and was in (ARMED, FAULT):
             failed += [f"node {n}: zero RPDO" for n in self._send_zero_each()]
         # Retire 1016h next, BEFORE the speed-zero wait. The review (R05) asks for
         # stop/de-energise first; the measured order is the other way round
@@ -648,33 +778,45 @@ class DriveLink:
         # keep-alive inside write()/read() now covers the wait too, but that is
         # not yet bench-proven, so the proven order stays.
         failed += [f"node {n}: 1016h" for n in self.clear_pc_loss_guard()]
-        for nid in self.nodes:
-            ok, detail = self._raw_write(nid, 0x60FF, 0, 0, 4)
-            if not ok:
-                failed.append(f"node {nid}: 60FFh=0 ({detail})")
-        end = time.monotonic() + 4.0
-        while time.monotonic() < end:
-            try:
-                if all(self._standstill_sdo(n) for n in self.nodes):
-                    break
-            except Exception:  # noqa: BLE001
-                break
-            self.router.pump(0.05)
-        for nid in self.nodes:
-            for cw in (CW_SHUTDOWN, CW_DISABLE_VOLTAGE):
-                ok, detail = self._raw_write(nid, 0x6040, 0, cw, 2)
-                if not ok:
-                    failed.append(f"node {nid}: 6040h=0x{cw:04X} ({detail})")
+        failed += self._zero_target_raw()
+        self._wait_standstill(4.0)
+        failed += self._controlwords_raw((CW_SHUTDOWN, CW_DISABLE_VOLTAGE))
         try:
-            self.nmt(0x80)
+            for nid in self.nodes:
+                self.nmt(0x80, nid)
         except Exception as e:  # noqa: BLE001
             failed.append(f"NMT pre-operational ({e})")
         self.fault_reason = None if was != FAULT else self.fault_reason
         self.cleanup_owed, self.cleanup_failures = bool(failed), failed
+        if not failed:
+            self.energised = False
         self._reset_stop()
         if failed:
             self.log(f"disarm incomplete, will retry on the next disarm: {'; '.join(failed)}")
         return not failed
+
+    # The power-off path (disarm, release, a failed engage): raising there would leave a
+    # drive energised, so these two write around write()'s exception - 60FFh and 6040h
+    # only, nothing on guard.FORBIDDEN (tests/test_canmon.py pins the two call sites).
+
+    def _zero_target_raw(self) -> list[str]:
+        """60FFh = 0 on every drive; returns the failures."""
+        failed = []
+        for nid in self.nodes:
+            ok, detail = self._raw_write(nid, 0x60FF, 0, 0, 4)
+            if not ok:
+                failed.append(f"node {nid}: 60FFh=0 ({detail})")
+        return failed
+
+    def _controlwords_raw(self, cws) -> list[str]:
+        """Each controlword in turn on every drive (per drive, in order); returns the failures."""
+        failed = []
+        for nid in self.nodes:
+            for cw in cws:
+                ok, detail = self._raw_write(nid, 0x6040, 0, cw, 2)
+                if not ok:
+                    failed.append(f"node {nid}: 6040h=0x{cw:04X} ({detail})")
+        return failed
 
     def _raw_write(self, nid, index, sub, value, size) -> tuple[bool, str]:
         self.keepalive()
@@ -899,7 +1041,8 @@ def wheel_feedback(
     `wheels` is ((node, left), ...); `is_new[node]` says both TPDO1 and TPDO2
     arrived since the last publish; `positions[node]` is that wheel's
     WheelPosition. Valid needs a fresh statusword AND a fresh position, each on
-    its own clock, a new sample of both, a known scale, no fault, and ARMED.
+    its own clock, a new sample of both, a known scale, no fault, and the link up
+    (ARMED, or STANDBY: the counts are measured with the power stage off too).
     """
     out = {}
     scale = link.scale
@@ -914,7 +1057,7 @@ def wheel_feedback(
             and scale is not None
             and scale.counts_per_wheel_rev
             and not t.faulted
-            and link.state == ARMED
+            and link.state in (ARMED, STANDBY)
         )
         pos = positions[n].update(t.position, valid, scale, left, link.arm_epoch)
         vel = scale.wheel_rad_s(t.rpm, left) if (scale and status_ok and t.rpm is not None) else 0.0
@@ -947,13 +1090,14 @@ def target_rpm(cmd, now: float, timeout_s: float, scale: WheelScale, max_rpm: fl
 
 @dataclass(frozen=True)
 class ArmDecision:
-    action: str  # "none" | "arm" | "fault" | "disarm"
+    action: str  # "none" | "prepare" | "engage" | "release" | "fault" | "disarm" | "cleanup"
     reason: str = ""
 
 
 def decide(
     state: str,
-    want_armed: bool,
+    want_link: bool,
+    want_power: bool,
     now: float,
     retry_at: float,
     silent: list,
@@ -961,37 +1105,51 @@ def decide(
     faulted: list,
     cleanup_owed: bool = False,
 ) -> ArmDecision:
-    """The arm/fault policy as a pure function, so it can be tabled in a test.
+    """The link/power/fault policy as a pure function, so it can be tabled in a test.
 
-    - not wanted: disarm if anything is energised.
-    - DISARMED and wanted: arm, subject to the retry backoff.
-    - ARMED: a silent or alarmed drive is a FAULT (latched; the setpoint goes
-      to zero at once). FAULT is left only by an explicit ack/disarm - a
-      vehicle that stopped itself is not restarted by the thing that stopped it.
-    - ARMED but a drive left Operation enabled (the safety chain took it to
-      ETO): DISARM and let the backoff re-arm with a ZERO target, the same
-      level-held behaviour canworker._hold_arm_state has. Re-arming moves
-      nothing: motion needs a MotionPermit and a Start edge upstream (T8).
-    - FAULT: stay there.
+    `want_link` is the node's own (the /drives/arm and /drives/disarm services);
+    `want_power` is amr_base.arm_policy's answer for this tick.
+
     - DISARMED with cleanup owed (a disarm left a drive energised, guarded or
       in the wrong NMT state): retry the teardown on the backoff, wanted or not,
-      and never arm over it (review Q02) - the software state is not proof.
+      and never link over it (review Q02) - the software state is not proof.
+    - link not wanted: disarm if anything is up.
+    - DISARMED and wanted: prepare (-> STANDBY), subject to the retry backoff.
+    - STANDBY / ARMED: a silent or alarmed drive is a FAULT (latched; the setpoint
+      goes to zero at once when armed). FAULT is left only by an explicit
+      ack/disarm - a vehicle that stopped itself is not restarted by the thing
+      that stopped it.
+    - ARMED and power no longer wanted: release (-> STANDBY).
+    - ARMED but a drive left Operation enabled (the safety chain took it to
+      ETO): release, and let the backoff engage again with a ZERO target while
+      power is still wanted. Engaging moves nothing: motion needs the panel, the
+      lease, the permit and a fresh command upstream.
+    - STANDBY and power wanted: engage, subject to the retry backoff.
+    - FAULT: stay there.
     """
     if state == DISARMED and cleanup_owed:
         return ArmDecision("cleanup" if now >= retry_at else "none", "cleanup owed")
-    if not want_armed:
+    if not want_link:
         return ArmDecision("disarm" if state != DISARMED else "none", "not wanted")
     if state == DISARMED:
-        return ArmDecision("arm" if now >= retry_at else "none", "backoff" if now < retry_at else "wanted")
+        why = "backoff" if now < retry_at else "wanted"
+        return ArmDecision("prepare" if now >= retry_at else "none", why)
+    if state == FAULT:
+        return ArmDecision("none", "fault latched")
+    if silent:
+        return ArmDecision("fault", f"drive silent: {silent}")
+    if faulted:
+        return ArmDecision("fault", f"drive fault: {faulted}")
     if state == ARMED:
-        if silent:
-            return ArmDecision("fault", f"drive silent: {silent}")
-        if faulted:
-            return ArmDecision("fault", f"drive fault: {faulted}")
+        if not want_power:
+            return ArmDecision("release", "power not wanted")
         if dropped:
-            return ArmDecision("disarm", f"drive left Operation enabled (ETO?): {dropped}")
+            return ArmDecision("release", f"drive left Operation enabled (ETO?): {dropped}")
         return ArmDecision("none", "armed")
-    return ArmDecision("none", "fault latched")
+    if want_power:
+        why = "backoff" if now < retry_at else "power wanted"
+        return ArmDecision("engage" if now >= retry_at else "none", why)
+    return ArmDecision("none", "standby")
 
 
 # ---------------------------------------------------------------- monitoring slot

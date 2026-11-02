@@ -7,10 +7,8 @@ supervisor. Software integration through commissioning parity is implemented;
 the compact vehicle acceptance and witnessed service cutover remain. Operator
 and rollback procedure: [RUNBOOK.md](RUNBOOK.md).
 
-**Second vehicle: the AMR QR** (`AGV_PROFILE=amr-qr-01`, platform `qr_analog`: analog
-drives, axle CANopen encoders, WitMotion IMU, one `qr_base_node`, ROS 2 Jazzy). Setup,
-commissioning order and known limits: [AMR_QR.md](AMR_QR.md); install from zero:
-[INSTALL_AMR_QR.md](INSTALL_AMR_QR.md); daily operation: [OPERATE_AMR_QR.md](OPERATE_AMR_QR.md).
+**AMR QR (profile `amr-qr-01`, ROS 2 Jazzy):** [AMR_QR.md](AMR_QR.md) ·
+[INSTALL_AMR_QR.md](INSTALL_AMR_QR.md) · [OPERATE_AMR_QR.md](OPERATE_AMR_QR.md).
 
 ## Build, test, run
 
@@ -101,9 +99,13 @@ lateral offset verified 2026-09-16 (see "Lidar commissioning"). Still `MEASURE`:
 chassis box. Still `VERIFY`: IMU lateral/vertical position inside the MLS.
 
 **Repo modules.** ROS nodes reuse `config`, `kinematics` etc. from the repo
-root via `amr_base.agv_repo` (bare imports, layer dirs on `sys.path`, same as
-`app/server.py`). `AGV_CAN_ROOT` overrides the search. Profile selection is the
-controller's `AGV_PROFILE`.
+root as ordinary package imports — `from agv_core import config`,
+`from agv_core.drivers.canbus import guard` — the same way `app/server.py` does.
+What they need is the repo root on `PYTHONPATH`; `amr_ws/deploy/amr-launch.sh`
+(and `amr_ws/env/vehicle.sh`) put it there, or `pip install -e .` at the repo
+root does it permanently. `AGV_CAN_ROOT` overrides which root the launcher
+exports. There is no `amr_base.agv_repo` shim any more and no bare imports off
+layer directories. Profile selection is still the controller's `AGV_PROFILE`.
 
 **IMU chain.** `/imu/data_raw` (raw, biased; the MLS node in T10, `fake_imu`
 in sim) → `imu_bias_node` → `/imu/data` → EKF, yaw rate only. The bias node
@@ -178,7 +180,7 @@ is the one owner of `can0`: both BLV-R drives and the MLS IMU in one bus thread,
 `amr_base/canopen.py` (PDO layout, scaling, CiA-402 arm/disarm, PC-loss guard) and
 `amr_base/mls_imu.py` (gyro by TPDO if the sensor has one enabled, else SDO polling)
 underneath, both unit-tested against a scripted bus. Every write goes through
-`drivers/canbus/guard.py`; `1016h` (consumer heartbeat) was added to its allow-list.
+`agv_core/drivers/canbus/guard.py`; `1016h` (consumer heartbeat) was added to its allow-list.
 
 | Wire | Frame | Rate |
 |---|---|---|
@@ -199,10 +201,16 @@ Measured with the vehicle parked, drives armed at zero (`ros2 run amr_base drive
 | bus load | ~440 f/s total ≈ 45 % of 125 kbps. **Inhibit time must equal the event timer**: with inhibit 0 the servo-locked position counter dithering one count fired TPDO2 on every drive cycle, ~1200 f/s, and the MLS SDO replies missed their 50 ms window |
 | exit (SIGINT) | zero setpoint → speed-zero wait → Shutdown/Disable voltage → NMT Pre-op; drives read `0x1A50` Switch on disabled afterwards |
 
-Policy (`canopen.decide`, tabled in `test_canopen.py`): armed automatically with zero
-targets (`auto_arm`), retry every 2 s if the enable fails (usually ETO); a drive that
-leaves Operation enabled while armed → disarm and re-arm with zero (the safety chain
-took it, exactly canworker's level-held MANUAL); a drive that goes **silent** (0.6 s
+Policy (`canopen.decide`, tabled in `test_canopen.py`): linked automatically
+(`auto_arm`) into **STANDBY** — NMT operational, PDOs mapped, `1016h` set, Shutdown
+(power stage off), TPDOs flowing so `/wheel_states` stays valid — and **powered**
+(Operation enabled, zero target) only while `amr_base.arm_policy` wants it (2026-10-08):
+under MANUAL while the Manual Arm input (DI08, `panel.di_manual_arm`) is high, under AUTO
+while `LineState`/`RunState.drive_power` asks; a stale panel or request is no power.
+Engage retries every 2 s if the enable fails (usually ETO); power no longer wanted →
+release (zero, standstill wait, Shutdown) back to STANDBY, a release that cannot finish
+latches FAULT. A drive that leaves Operation enabled while powered → release and engage
+again with zero (the safety chain took it); a drive that goes **silent** (0.6 s
 without frames, *or* without TPDO1 or TPDO2 on its own even while heartbeats/SDO replies
 still arrive) or raises an **alarm** → FAULT, setpoint zero at once (sent to each drive
 independently, a failed send retried 5 ticks), latched until
@@ -269,6 +277,22 @@ margin 0.20 m = cross-track limit 0.10 + localisation allowance 0.10.
 canvas editor (map metres persisted, pixel↔world identical to `amr_maps.grid`)
 and the run page. No endpoint publishes a velocity.
 
+**One catalogue, two audiences (2026-09-22).** Every stop, hold and fault in the
+stack carries a CODE; `agv_core/alarms.py` maps it to what the operator reads and
+the one thing they do about it, while the node's own `reason` stays the
+engineer's detail. Codes travel in `RunState.fault_code`, `LocalizationState.code`,
+`LineState.code` and `MuxState.code`, and every owner emits an `/amr/events` edge
+with its code. `/api/alarms` turns the state snapshot into that list ONCE,
+server-side (`amr_web/alarms.py`): the rail, Home, Status and Alarms pages render
+it and derive nothing. Events are appended to `~/.amr/logs/events.jsonl` and
+reloaded at start, so the history survives a restart, and RUNBOOK section 4 is
+generated from the same rows (`python3 -m agv_core.alarms --md`).
+
+The pages open in an **operator** view (Home · Run · Manual · Alarms); the
+engineering pages are behind a PIN from `~/.amr/web.json` — a mistake guard, not
+security. Home shows one state line, one action sentence and one button, chosen
+from the top standing alarm's `clears_by`.
+
 **Execution (T7).** `route_executor_node` runs one Nav2 action at a time:
 `FollowPath` (RPP, `desired_linear_vel 0.30`, no rotate-to-heading, no
 reversing, goal checker **0.025 m** — at 0.05 the checker fires the instant it
@@ -299,7 +323,7 @@ line, the full disc on a turn). Sim panel: `fake_panel_node`; the real adapter
 (T12) publishes the same `PanelState`.
 
 **Panel and horn (T12, 2026-09-16).** `amr_base/panel_node` wraps the repo's
-`drivers/dio.py` scan thread and `core/panel.py` debounce unchanged and publishes
+`agv_core/drivers/dio.py` scan thread and `agv_core/panel.py` debounce unchanged and publishes
 `/amr/panel_state` at 50 Hz: `valid` only while DIO comms are good and a
 debounced baseline exists (anti-tie-down: a button held at start produces no
 edge; a comms gap re-baselines instead of inventing a press). The horn coil

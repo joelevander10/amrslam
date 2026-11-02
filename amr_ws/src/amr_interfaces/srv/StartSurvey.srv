@@ -2,6 +2,10 @@
 # a calibrated IMU and a live scan; the current map pose becomes the start reference.
 string map_id          # e.g. "line_section"; becomes the bundle directory name
 string description     # where the physical start mark is
+# Continue a saved survey (2026-10-23): 0 = a new map. N = load <map_id> revN's pose graph
+# and keep mapping in its frame; the save becomes the next revision of <map_id>.
+uint32 continue_revision
+geometry_msgs/Pose2D hint   # continue only: where the vehicle stands, in revN's map frame
 ---
 bool accepted
 string message

@@ -1,6 +1,6 @@
 // Run page: localisation state + initial pose tool, mission load and the coordinator
 // controls. Motion itself is authorised only by the physical panel.
-const HOLD_NAMES = { field: 'lidar stop', estop: 'E-stop', obstacle: 'obstacle', controller: 'controller stop', pending: 'stopping' };
+const HOLD_NAMES = { field: 'lidar stop', estop: 'E-stop', controller: 'controller stop', pending: 'stopping' };
 const view = new MapView(document.getElementById('run-canvas'));
 const $ = id => document.getElementById(id);
 let mapId = null, mapRev = null, footprint = null, preview = null;
@@ -54,6 +54,28 @@ $('btn-run-abort').onclick = () => api('/api/mission/abort').then(r => log(r.dat
 $('btn-run-ack').onclick = () => api('/api/mission/ack').then(r => log(r.data.message));
 
 const age = (v) => [num(v, 2), 's', v > 1.0 ? 'warn' : ''];
+
+// Guided localisation (plan phase 1.3): map -> pose -> confirm, in that order. The
+// buttons underneath are unchanged; this only says which one is the operator's next.
+function steps(st, l) {
+  const bar = $('loc-steps');
+  if (!bar || !bar.querySelector) return;  // the JS harness's fake DOM has no query support
+  const m = st.mode;
+  const done = {
+    map: !!(m && m.mode_name === 'NAVIGATION' && m.active_map_id),
+    pose: !!(l && l.state_name !== 'UNLOCALIZED' && l.state_name !== 'LOST'),
+    confirm: !!(l && l.state_name === 'READY'),
+  };
+  const order = ['map', 'pose', 'confirm'];
+  // LOST is not "waiting for step 3": it is back to step 2, which `done` above already says.
+  const now = order.find(k => !done[k]) || null;
+  order.forEach(k => {
+    const el = bar.querySelector(`.step[data-step="${k}"]`);
+    if (!el) return;
+    el.classList.toggle('done', done[k]);
+    el.classList.toggle('now', k === now);
+  });
+}
 let activeMap = null;  // {id, rev} the vehicle is actually running, from the supervisor
 let runMission = '';  // the mission the executor holds (READY/running), '' if none
 onState(st => {
@@ -76,6 +98,7 @@ onState(st => {
       : ['Active', 'NO MAP', `mode ${m.mode_name}${m.phase ? ' · ' + m.phase : ''}`, 'warn', 'key'])
     : ['Active', '–', 'no supervisor', 'bad', 'key']]);
   const l = st.localization;
+  steps(st, l);
   if (l) {
     tiles('loc-state', [
       ['State', l.state_name, l.operator_confirmed ? 'operator confirmed' : '—', LOC_LEVEL[l.state_name], 'key'],

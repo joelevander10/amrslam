@@ -1,19 +1,28 @@
 """The real panel adapter (T12): edges, validity, and the horn rule, without ROS."""
 
+import pytest
+from agv_core import config
+
 from amr_base import panel_io
-from amr_base.agv_repo import config
 
 R, S, A = config.PANEL_DI_RESET, config.PANEL_DI_START, config.PANEL_DI_AUTO
 
 
 def _di(reset=False, start=False, auto=False):
+    """`auto` is the selector POSITION; the wire level follows panel.auto_when_on."""
     bits = [False] * 16
-    bits[R], bits[S], bits[A] = reset, start, auto
+    bits[R], bits[S], bits[A] = reset, start, auto == config.PANEL_AUTO_WHEN_ON
     return bits
 
 
-def _snap(di, comms=True, detail="ok"):
-    return {"comms_ok": comms, "di": di, "detail": detail}
+_ACQ = [0]
+
+
+def _snap(di, comms=True, detail="ok", age=0.01, connected=True, new=True):
+    """One DIO snapshot. Each call is a NEW acquisition unless new=False (audit R01)."""
+    if new:
+        _ACQ[0] += 1
+    return {"comms_ok": comms, "di": di, "detail": detail, "rx_age_s": age, "connected": connected, "scans": _ACQ[0]}
 
 
 def _adapter():
@@ -144,6 +153,29 @@ def test_pendant_is_held_at_power_on_and_dropped_on_comms_loss():
     assert f.pendant.fwd
 
 
+def test_manual_arm_is_a_debounced_level_and_dies_with_the_image():
+    """DI08 (panel.di_manual_arm): under MANUAL the drives are powered only while it is HIGH."""
+    ad = _adapter()
+
+    def di(arm):
+        bits = _di()
+        bits[config.PANEL_DI_MANUAL_ARM] = arm
+        return bits
+
+    f = _settle(ad, di(False))
+    assert f.valid and not f.manual_arm and "Manual Arm" not in (f.changed or "")
+    f = ad.tick(_snap(di(True)))
+    assert not f.manual_arm  # one scan: not yet believed
+    f = ad.tick(_snap(di(True)))
+    assert f.manual_arm and "Manual Arm on" in f.changed
+    f = ad.tick(_snap(di(True), new=False))
+    assert f.manual_arm  # a repeated image keeps the level
+    f = ad.tick(_snap(di(True), comms=False))
+    assert not f.valid and not f.manual_arm and "Manual Arm off" in f.changed
+    f = _settle(ad, di(False))
+    assert not f.manual_arm
+
+
 def test_pendant_disabled_in_profile_publishes_nothing():
     ad = panel_io.PanelAdapter(debounce_scans=2, pendant=False)
     f = _settle(ad, _pdi(fwd=True))
@@ -197,3 +229,48 @@ def test_separate_selector_and_pendant_changes_are_immediate():
     # and back to AUTO with the pendant released together (a normal end of jogging) is immediate too
     f = _settle(ad, _cdi(auto=True))
     assert f.mode_auto and not any(f.pendant)
+
+
+# ---- audit R01 (2026-10-02): freshness and debounce follow DIO ACQUISITIONS ----------------
+
+
+def test_a_repeated_image_does_not_advance_debounce_or_repeat_an_edge():
+    ad = _adapter()
+    _settle(ad, _di(auto=True))
+    ad.tick(_snap(_di(start=True, auto=True)))  # pressed: debounce 1 of 2
+    for _ in range(5):  # the 50 Hz node re-ticking the SAME acquisition
+        f = ad.tick(_snap(_di(start=True, auto=True), new=False))
+        assert not f.start_edge, "a duplicate image is not a second debounce scan"
+    f = ad.tick(_snap(_di(start=True, auto=True)))  # second real scan: accepted
+    assert f.start_edge
+    f = ad.tick(_snap(_di(start=True, auto=True), new=False))
+    assert f.valid and f.mode_auto and not f.start_edge, "the edge is spent, the levels stand"
+
+
+def test_an_old_image_is_not_panel_input_even_inside_the_warning_age():
+    ad = _adapter()
+    f = _settle(ad, _di(auto=True))
+    assert f.valid
+    f = ad.tick(_snap(_di(auto=True), age=config.PANEL_SOURCE_MAX_AGE_S + 0.05, new=False))
+    assert config.PANEL_SOURCE_MAX_AGE_S < config.DIO_SILENT_WARN_S
+    assert not f.valid and not f.comms_ok, "a stalled scan thread expires the panel"
+
+
+def test_a_lost_connection_invalidates_at_once():
+    ad = _adapter()
+    _settle(ad, _di(auto=True))
+    f = ad.tick(_snap(_di(auto=True), connected=False, new=False))
+    assert not f.valid
+
+
+def test_a_held_pendant_dies_with_the_source_and_the_coincidence_hold_is_1_5_s():
+    ad = panel_io.PanelAdapter(debounce_scans=2, pendant=True)
+    fwd = _di(auto=False)
+    fwd[config.PENDANT_DI_FWD] = True
+    _settle(ad, _di(auto=False))
+    f = _settle(ad, fwd)
+    assert f.pendant.fwd
+    f = ad.tick(_snap(fwd, age=1.0, new=False))  # scan thread stalled 1 s: not a hand now
+    assert not f.pendant.fwd
+    # the default hold is counted in acquisitions at the DIO scan period: 1.5 s, not 0.6 s
+    assert ad.hold_scans * config.DIO_SCAN_PERIOD_S == pytest.approx(config.PANEL_COINCIDENCE_HOLD_S, abs=config.DIO_SCAN_PERIOD_S)

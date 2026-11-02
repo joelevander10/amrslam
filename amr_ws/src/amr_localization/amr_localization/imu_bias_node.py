@@ -38,6 +38,7 @@ class ImuBias(Node):
         self._wheels_still = False
         self._was_calibrated = False
         self._windows = 0
+        self._rejected = 0
 
         self._pub = self.create_publisher(Imu, "/imu/data", SENSOR_DATA)
         self.create_subscription(Imu, "/imu/data_raw", self._on_imu, SENSOR_DATA)
@@ -66,6 +67,12 @@ class ImuBias(Node):
     def _on_imu(self, msg: Imu) -> None:
         t = self._now()
         corrected = self.est.update(t, msg.angular_velocity.z, self._stationary(t))
+        if self.est.rejected != self._rejected:
+            self._rejected = self.est.rejected
+            self.get_logger().warn(
+                f"gyro window {self.est.last_rejected * 57.2958:+.4f} deg/s rejected as motion the wheels "
+                f"did not report (limit {self.est.max_bias * 57.2958:.2f} deg/s); bias kept"
+            )
         if self.est.windows != self._windows:
             self._windows = self.est.windows
             self.get_logger().info(

@@ -49,6 +49,7 @@ def fake():
     sv.inhibit_manual = False
     sv._pending_future = None
     sv.groups = {}
+    sv._respawnable, sv._respawn_at, sv._respawn_tries = {}, {}, {}
     sv.modes = []
     sv.mode = fsm.MAPPING
     sv.budget = {"save_s": 60.0, "survey_rpc_s": 15.0}
@@ -56,7 +57,7 @@ def fake():
     sv.get_logger = Log
     sv._set = lambda mode, phase="", reason="", fault="": sv.modes.append((mode, fault))
     sv._start_worker = lambda fn: None
-    for name in ("_fail", "_fail_active", "_step_survey", "_reap"):
+    for name in ("_fail", "_fail_active", "_step_survey", "_reap", "_respawn_due"):
         setattr(sv, name, types.MethodType(getattr(Supervisor, name), sv))
     return sv
 
@@ -139,3 +140,45 @@ def test_q17_recovery_refuses_a_dead_base_with_the_restart_instruction():
     sv.fault_code = "LAYER_EXITED"
     sv.groups = {"base": Alive()}
     assert sv._base_failure() is None
+
+
+def test_base_ready_after_the_boot_budget_leaves_fault_by_itself():
+    """2026-09-22: the safety reset came 70 s after boot; the base was alive and became
+    ready, but BASE_NOT_READY stayed latched and Recover demanded a service restart."""
+
+    class Alive:
+        def poll(self):
+            return None
+
+    class Snap:
+        ready = False
+
+    sv = fake()
+    sv._lock = __import__("threading").RLock()
+    sv.mode = fsm.FAULT
+    sv.fault_code = "BASE_NOT_READY"
+    sv.generation = 1
+    sv.groups = {"base": Alive()}
+    sv.snap = Snap()
+    sv._auto_enter_line = lambda: None
+    sv._boot_reported, sv.reports = True, []
+    sv._boot_report = lambda now, missing: sv.reports.append(missing)
+    for name in ("_tick", "_base_failure"):
+        setattr(sv, name, types.MethodType(getattr(Supervisor, name), sv))
+    import amr_bringup.supervisor_node as node
+
+    saved = node.rd.base_ready, node.rd.base_missing
+    node.rd.base_ready = lambda snap, now: snap.ready
+    node.rd.base_missing = lambda snap, now: "" if snap.ready else "wheel feedback"
+    sv.snap.mux_acknowledged = lambda gen, now: True
+    sv._worker_done = lambda: None
+    try:
+        sv._tick(1.0)
+        assert sv.modes == []  # still not ready: stays in FAULT
+        assert sv._base_failure() is None  # ...but Recover is not refused
+        sv.snap.ready = True
+        sv._tick(2.0)
+        assert sv.modes[-1][0] == fsm.IDLE
+        assert sv.reports == [""]  # and the operator is told the vehicle is ready
+    finally:
+        node.rd.base_ready, node.rd.base_missing = saved

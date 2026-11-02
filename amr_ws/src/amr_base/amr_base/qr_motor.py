@@ -247,6 +247,9 @@ class Inputs:
     right_coils_low: bool | None
     io_ok: bool  # DIO scan fresh AND the last analog write succeeded
     estop: bool
+    # amr_base.arm_policy's answer (2026-10-08 power model): False = STANDBY - the targets are
+    # forced to zero, the wheels coast to rest and the brakes hold; nothing is driven.
+    power: bool = True
 
 
 @dataclass(frozen=True)
@@ -258,10 +261,21 @@ class Output:
     operational: bool
     fault_reason: str
     event: str | None = None  # a transition worth one log line / Event
+    # DriveStatus.link_state: disarmed (push mode: brakes released) | standby (armed, power not
+    # wanted: brakes held) | armed (powered, driving) | fault
+    link: str = "disarmed"
 
 
 class DriveLogic:
-    """Arm state, fault latch and E-stop around the two wheel loops. Pure."""
+    """Arm state, fault latch and E-stop around the two wheel loops. Pure.
+
+    The QR reading of gvievo's link / power split (amr_base.arm_policy, 2026-10-08):
+        DISARMED          link off on request (/drives/disarm): 0 V, coils low, brakes
+                          RELEASED - push mode, the vehicle can be moved by hand
+        ARMED, no power   STANDBY: targets forced to zero, the wheels stop, brakes held
+        ARMED, power      the wheel loops drive (operational)
+        FAULT             latched, brakes held, until /drives/ack_fault
+    """
 
     def __init__(self, left: WheelLoop, right: WheelLoop, auto_arm: bool = True) -> None:
         self.left, self.right = left, right
@@ -322,6 +336,7 @@ class DriveLogic:
             self.right.reset(i.now)
             events.append("armed (targets zero)")
 
+        link = {ARMED: "armed", FAULT: "fault"}.get(self.state, "disarmed")
         if self.state != ARMED or i.estop:
             # FAULT and E-stop hold the wheels (QR stop_motor: brake on); a plain disarm
             # frees them (QR shutdown_system: brake off), so the vehicle can be pushed.
@@ -329,11 +344,15 @@ class DriveLogic:
             for w in (self.left, self.right):
                 w.reset(i.now)
             rest = WheelOut(False, False, hold, 0.0, REST)
+            if self.state == ARMED:
+                link = "armed" if i.power else "standby"
             return Output(
-                rest, rest, self.state, i.estop, False, self.fault_reason, "; ".join(events) or None
+                rest, rest, self.state, i.estop, False, self.fault_reason, "; ".join(events) or None, link
             )
 
-        cmd = i.cmd or (0.0, 0.0)
+        # Standby: no power wanted. The loops run on with zero targets, so a wheel that is
+        # still turning coasts to rest and then brakes, exactly as a released jog does.
+        cmd = (i.cmd or (0.0, 0.0)) if i.power else (0.0, 0.0)
         lo = self.left.step(i.now, cmd[0], i.left_rad_s, i.left_coils_low)
         ro = self.right.step(i.now, cmd[1], i.right_rad_s, i.right_coils_low)
         why = lo.fault or ro.fault
@@ -343,5 +362,16 @@ class DriveLogic:
             for w in (self.left, self.right):
                 w.reset(i.now)
             rest = WheelOut(False, False, True, 0.0, REST)
-            return Output(rest, rest, self.state, i.estop, False, self.fault_reason, "; ".join(events))
-        return Output(lo, ro, self.state, i.estop, True, "", "; ".join(events) or None)
+            return Output(
+                rest, rest, self.state, i.estop, False, self.fault_reason, "; ".join(events), "fault"
+            )
+        return Output(
+            lo,
+            ro,
+            self.state,
+            i.estop,
+            bool(i.power),
+            "",
+            "; ".join(events) or None,
+            "armed" if i.power else "standby",
+        )

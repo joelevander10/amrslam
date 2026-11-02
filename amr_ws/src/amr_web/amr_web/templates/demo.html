@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ c.product }}</title>
+{# The visitors' page (manuals/plans/2026-09-23-demo-page.md). Deliberately NOT base.html:
+   no nav, no rail, no role button, so nobody on a show floor can tap into Manual.
+   Read-only - the only request it makes is GET /api/demo. Text comes from
+   static/demo/content.json. The display unit is stationary: the live side is the
+   safety scanner's view, not motion. Fits 1280x720 with nothing below the fold. #}
+<link rel="stylesheet" href="/static/demo.css">
+</head>
+<body class="demo">
+<header class="d-head">
+  <div class="d-brand">
+    <div class="d-product">{{ c.product }}</div>
+    <div class="d-expansion">{{ c.expansion }}</div>
+  </div>
+  <div class="d-tagline">{{ c.tagline }}</div>
+  <button id="d-reload" class="d-exit" type="button" aria-label="Reload the page">
+    <svg viewBox="0 0 40 40" aria-hidden="true"><path d="M27.5 15.5 A9 9 0 1 0 29 22"/><path d="M28.5 9.5 V16 H22"/></svg>
+  </button>
+  <button id="d-exit" class="d-exit" type="button" aria-label="Leave the demo">
+    <svg viewBox="0 0 40 40" aria-hidden="true"><path d="M14 14 L26 26 M26 14 L14 26"/></svg>
+  </button>
+</header>
+
+<main class="d-main">
+  <section class="d-live" aria-live="polite">
+    <div class="d-live-head">
+      <div>
+        <div class="d-kicker">What it sees right now</div>
+        <div class="d-status" data-status="standby">
+          <span class="d-dot"></span>
+          <span id="d-sentence" class="d-sentence">Standing by for the next demonstration</span>
+        </div>
+      </div>
+      <div class="d-near"><span id="d-nearest">–</span><small> m</small><div>closest to it</div></div>
+    </div>
+    <div class="d-radar-wrap">
+      <canvas id="d-radar" data-outline='{{ outline | tojson }}' data-view="{{ view_m }}"></canvas>
+    </div>
+  </section>
+
+  <section class="d-story">
+    <div class="d-cards" id="d-cards" data-rotate="{{ c.rotate_s or 8 }}">
+      {% for card in c.cards %}
+      <article class="d-card{{ ' on' if loop.first }}">
+        <div class="d-kicker"><span>{{ '%02d' % loop.index }}</span>{{ card.kicker }}</div>
+        <h2>{{ card.title }}</h2>
+        <p>{{ card.body }}</p>
+      </article>
+      {% endfor %}
+    </div>
+    <div class="d-dots" id="d-dots">
+      {% for card in c.cards %}<button type="button" class="{{ 'on' if loop.first }}" aria-label="{{ card.kicker }}"></button>{% endfor %}
+    </div>
+    <div class="d-specs">
+      {% for sp in c.specs %}
+      <div class="d-spec"><b>{{ sp.value }}</b><span>{{ sp.label }}</span></div>
+      {% endfor %}
+    </div>
+  </section>
+</main>
+<script src="/static/demo.js"></script>
+</body>
+</html>

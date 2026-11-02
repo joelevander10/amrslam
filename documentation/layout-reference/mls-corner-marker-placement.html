@@ -1,0 +1,398 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Corner Marker Placement</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700&family=IBM+Plex+Mono:wght@600&family=IBM+Plex+Sans:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  /* Drawing-only layout image, same language as mls-zone-marker-placement.html. Canvas 1920x1080.
+     The corner view is NOT to scale (dimensions are written on it); details A and B are to
+     scale (1 mm = 1.4 px) except the broken 1.50 m dimension. Groups 1.50 m from the tangent
+     points (operator, 2026-10-23). Numbers: profiles/agv-01.json (auto_rpm 1592, HIGH x1.7,
+     high_ramp_s 2.0, high_margin_m 1.0, drive decel 3200 r/min/s), amr_line/speed_zone.py
+     (LATE_INNER_MPS2 0.5, urgent 0.95 x drive), agv_core/mission.py (arm window 0.65 m,
+     minimum HIGH budget 3.0 m). */
+  :root {
+    --paper: #e9edf2;
+    --surface: #ffffff;
+    --ink: #14171d;
+    --ink-2: #3d4553;
+    --ink-3: #636b7c;
+    --rule: #cbd2de;
+    --route: #1f3f7a; --route-dark: #152c57; --route-wash: #dde6f5;
+    --slow: #e09a00;  --slow-wash: #fde9b8;  --slow-ink: #8a5e00;
+    --fast: #2f8a57;  --fast-wash: #d3eedd;  --fast-ink: #1e5c39;
+    --tag: #c8176b;
+    --agv: #23272f;
+    color-scheme: light;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding-block: 0 40px;
+    background: var(--paper);
+    color: var(--ink);
+    font: 16px/1.45 "IBM Plex Sans", Arial, Helvetica, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------------- toolbar (never captured) ---------------- */
+  .toolbar {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+    padding: 10px 16px;
+    background: var(--surface);
+    border-bottom: 2px solid var(--ink);
+  }
+  .toolbar strong { margin-right: 8px; font: 700 15px "Archivo", Arial, sans-serif; }
+  .seg { display: flex; border: 1.5px solid var(--ink); }
+  .seg button, .toolbar .go {
+    border: 0; border-left: 1px solid var(--rule);
+    background: var(--surface); color: var(--ink-2);
+    padding: 7px 12px; cursor: pointer;
+    font: 600 11px "IBM Plex Mono", ui-monospace, monospace;
+    letter-spacing: .07em; text-transform: uppercase;
+  }
+  .seg button:first-child { border-left: 0; }
+  .seg button[aria-pressed="true"] { background: var(--agv); color: #fff; }
+  .toolbar .go { border: 1.5px solid var(--route-dark); background: var(--route); color: #fff; }
+  .toolbar .go:disabled { opacity: .6; cursor: progress; }
+  .toolbar button:focus-visible { outline: 2px solid var(--tag); outline-offset: 2px; }
+  .toolbar .status {
+    margin-left: auto; color: var(--ink-3);
+    font: 600 11px "IBM Plex Mono", ui-monospace, monospace; letter-spacing: .05em; text-transform: uppercase;
+  }
+
+  .stage-wrap { padding: 20px 16px 0; }
+  .stage { position: relative; margin: 0 auto; box-shadow: 0 1px 0 var(--rule), 0 10px 30px rgba(20,30,50,.12); }
+
+  /* ---------------- canvas 1920 x 1080 ---------------- */
+  .slide {
+    position: absolute; top: 0; left: 0;
+    width: 1920px; height: 1080px;
+    transform-origin: top left;
+    overflow: hidden;
+    background: var(--surface);
+  }
+
+  .dwg { position: absolute; inset: 0; width: 1920px; height: 1080px; }
+  .dwg text { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+  .head { font: 700 36px "Archivo", Arial, sans-serif !important; text-transform: uppercase; }
+  .sub  { font: 700 24px "Archivo", Arial, sans-serif !important; text-transform: uppercase; letter-spacing: .04em; }
+  .lbl { font-size: 26px; font-weight: 600; letter-spacing: .02em; }
+  .sm  { font-size: 22px; font-weight: 600; }
+  .xs  { font-size: 19px; font-weight: 600; }
+  .rule { font: 500 22px "IBM Plex Sans", Arial, sans-serif !important; }
+  .note { font: 500 20px "IBM Plex Sans", Arial, sans-serif !important; }
+  .rule tspan.k, .note tspan.k { font-weight: 700; fill: #14171d; }
+  .code { font: 700 22px "Archivo", Arial, sans-serif !important; fill: #fff; }
+  .code-s { font: 700 16px "Archivo", Arial, sans-serif !important; fill: #fff; letter-spacing: .04em; }
+  .normband { fill: none; stroke: var(--slow-wash); stroke-width: 56; }
+  .fastband { fill: none; stroke: var(--fast-wash); stroke-width: 56; }
+  .lane { fill: none; stroke: var(--route); stroke-width: 7; stroke-linejoin: round; }
+  .chev { fill: none; stroke: var(--route-dark); stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; }
+  .dim { stroke: var(--ink-2); stroke-width: 2.5; fill: none; }
+  .ext { stroke: var(--ink-3); stroke-width: 1.5; stroke-dasharray: 5 4; fill: none; }
+  .tick { stroke: var(--ink); stroke-width: 4; }
+  .lead { stroke: var(--tag); stroke-width: 2; fill: none; }
+  .strip { fill: var(--tag); }
+  .tape { fill: #2b3a55; }
+  .brk { stroke: #fff; stroke-width: 7; fill: none; stroke-linejoin: miter; }
+  .read { fill: var(--ink); }
+
+  .legend {
+    position: absolute; left: 60px; top: 962px; width: 1800px; height: 76px;
+    display: flex; align-items: center; justify-content: space-between;
+    margin: 0; padding: 0; list-style: none;
+    color: var(--ink-2); font: 500 24px "IBM Plex Sans", Arial, sans-serif;
+  }
+  .legend li { display: flex; align-items: center; gap: 12px; white-space: nowrap; }
+  .legend svg { flex: none; width: 60px; height: 40px; }
+</style>
+</head>
+<body>
+
+<nav class="toolbar" aria-label="Export">
+  <strong>Corner Marker Placement</strong>
+  <div class="seg" role="group" aria-label="Resolution">
+    <button type="button" data-res="2" aria-pressed="true">2× · 3840</button>
+    <button type="button" data-res="3" aria-pressed="false">3× · 5760</button>
+  </div>
+  <div class="seg" role="group" aria-label="Background">
+    <button type="button" data-bg="white" aria-pressed="true">White</button>
+    <button type="button" data-bg="none" aria-pressed="false">Transparent</button>
+  </div>
+  <button type="button" class="go" id="download">Download PNG</button>
+  <span class="status" id="status">16:9 · 1920 × 1080 base</span>
+</nav>
+
+<div class="stage-wrap">
+<div class="stage" id="stage">
+<section class="slide" id="slide" aria-label="MLS speed marker groups at a 90 degree corner of radius 2.0 m, 1.5 m from each tangent point">
+
+  <svg class="dwg" viewBox="0 0 1920 1080" role="img" aria-label="A 90 degree corner of radius 2.0 m joins straight S1 (horizontal, travel east) and straight S2 (vertical, travel south). On each straight a marker group lies on the inside of the corner: code 2 nearer the corner, its corner-side edge 1.50 m from the tangent point, then a 100 mm gap and code 1, whose far edge is 1.80 m from the tangent point. On S1 the HIGH budget on the shortest straight ends with a 1.35 m ramp and 1.0 m of NORMAL before code 1. On S2 code 2 then code 1 grants HIGH 1.80 m past the corner. Detail A shows the S1 group to scale, travelling into the corner; detail B shows the S2 group to scale, travelling out of it. Strips are 15 by 100 mm, code 1 centred 30 mm and code 2 60 mm from the track centre.">
+    <defs>
+      <path id="chev" d="M-9 -13 L9 0 L-9 13"/>
+      <marker id="arr" markerUnits="userSpaceOnUse" markerWidth="16" markerHeight="14" refX="15" refY="7" orient="auto-start-reverse"><path d="M0,0 L16,7 L0,14 Z" fill="#3d4553"/></marker>
+      <linearGradient id="ramp-h" gradientUnits="userSpaceOnUse" x1="180" y1="0" x2="360" y2="0">
+        <stop offset="0" stop-color="#d3eedd"/><stop offset="1" stop-color="#fde9b8"/>
+      </linearGradient>
+      <linearGradient id="ramp-v" gradientUnits="userSpaceOnUse" x1="0" y1="720" x2="0" y2="860">
+        <stop offset="0" stop-color="#fde9b8"/><stop offset="1" stop-color="#d3eedd"/>
+      </linearGradient>
+    </defs>
+
+    <rect x="60" y="40" width="1800" height="890" fill="#f5f6f8" stroke="#2a2f3a" stroke-width="6"/>
+
+    <!-- title -->
+    <text class="head" x="96" y="98" fill="#14171d">MLS speed markers at a 90° corner</text>
+    <text class="sub" x="96" y="136" fill="#636b7c">R 2.0 m · groups 1.5 m off the tangents · not to scale</text>
+
+    <!-- ===== corner view: S1 east -> R 2.0 -> S2 south ===== -->
+    <!-- speed along the tape: HIGH | ramp down | NORMAL (group, corner, group) | ramp up | HIGH -->
+    <path class="fastband" d="M63 300 H180"/>
+    <path d="M180 300 H360" fill="none" stroke="url(#ramp-h)" stroke-width="56"/>
+    <path class="normband" d="M360 300 H700 A230 230 0 0 1 930 530 V720"/>
+    <path d="M930 720 V860" fill="none" stroke="url(#ramp-v)" stroke-width="56"/>
+    <path class="fastband" d="M930 860 V927"/>
+    <path class="lane" d="M63 300 H700 A230 230 0 0 1 930 530 V927"/>
+    <use href="#chev" class="chev" transform="translate(120 300)"/>
+    <use href="#chev" class="chev" transform="translate(930 895) rotate(90)"/>
+
+    <!-- zone labels -->
+    <text class="lbl" x="84" y="205" fill="#1e5c39">HIGH 0.85 m/s</text>
+    <text class="lbl" x="370" y="205" fill="#8a5e00">NORMAL 0.5 m/s</text>
+    <text class="head" x="96" y="378" fill="#14171d" style="font-size:30px">S1</text>
+    <text class="lbl" x="975" y="392" fill="#8a5e00">NORMAL</text>
+    <text class="sm"  x="975" y="422" fill="#8a5e00">0.5 m/s</text>
+    <text class="sm"  x="975" y="450" fill="#8a5e00">group to group</text>
+    <text class="lbl" x="975" y="782" fill="#3d4553">RAMP TO HIGH</text>
+    <text class="sm"  x="975" y="812" fill="#3d4553">2 s ≈ 1.35 m</text>
+    <text class="sm"  x="975" y="840" fill="#3d4553">from code 1</text>
+    <text class="sm"  x="975" y="905" fill="#1e5c39">HIGH 0.85 m/s</text>
+    <text class="head" x="895" y="915" text-anchor="end" fill="#14171d" style="font-size:30px">S2</text>
+
+    <!-- tangent points -->
+    <path class="tick" d="M700 262 V338"/>
+    <text class="lbl" x="700" y="250" text-anchor="middle" fill="#14171d">T1</text>
+    <path class="tick" d="M892 530 H968"/>
+    <text class="lbl" x="882" y="540" text-anchor="end" fill="#14171d">T2</text>
+
+    <!-- radius and arc -->
+    <path class="dim" d="M700 530 L857 373" marker-end="url(#arr)"/>
+    <circle cx="700" cy="530" r="5" fill="#3d4553"/>
+    <text class="lbl" x="760" y="502" fill="#14171d">R 2.0 m</text>
+    <text class="sm"  x="840" y="282" fill="#3d4553">90° · arc 3.14 m</text>
+
+    <!-- S1 group (exit when heading east), inside of the corner: code 1 then code 2 -->
+    <rect class="strip" x="520" y="307" width="30" height="8"/>
+    <rect class="strip" x="570" y="319" width="30" height="8"/>
+    <path class="lead" d="M525 262 L535 307 M595 262 L585 319"/>
+    <circle cx="525" cy="245" r="17" fill="#c8176b"/><text class="code" x="525" y="253" text-anchor="middle">1</text>
+    <circle cx="595" cy="245" r="17" fill="#c8176b"/><text class="code" x="595" y="253" text-anchor="middle">2</text>
+    <text class="sub" x="622" y="253" fill="#c8176b" style="font-size:20px">A</text>
+
+    <!-- S2 group (entry when heading south), inside of the corner: code 2 then code 1 -->
+    <rect class="strip" x="902" y="640" width="8" height="30"/>
+    <rect class="strip" x="914" y="690" width="8" height="30"/>
+    <path class="lead" d="M882 655 H902 M882 705 H914"/>
+    <circle cx="865" cy="655" r="17" fill="#c8176b"/><text class="code" x="865" y="663" text-anchor="middle">2</text>
+    <circle cx="865" cy="705" r="17" fill="#c8176b"/><text class="code" x="865" y="713" text-anchor="middle">1</text>
+    <text class="sub" x="830" y="640" fill="#c8176b" style="font-size:20px">B</text>
+
+    <!-- S1 dimension chain, inside the corner -->
+    <path class="dim" d="M180 315 V365 M360 315 V365 M520 330 V365 M600 330 V364 M600 394 V445 M700 338 V445"/>
+    <path class="dim" d="M180 350 H360" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <path class="dim" d="M360 350 H520" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <path class="dim" d="M520 350 H700" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <path class="dim" d="M600 430 H700" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <text class="sm" x="270" y="385" text-anchor="middle" fill="#3d4553">ramp 1.35 m</text>
+    <text class="sm" x="440" y="385" text-anchor="middle" fill="#3d4553">margin 1.0 m</text>
+    <text class="sm" x="610" y="385" text-anchor="middle" fill="#3d4553">1.80 m</text>
+    <text class="sm" x="650" y="465" text-anchor="middle" fill="#3d4553">1.50 m</text>
+    <text class="sm" x="84" y="420" fill="#1e5c39">HIGH budget ends</text>
+    <text class="sm" x="84" y="448" fill="#1e5c39">2.35 m before code 1</text>
+    <text class="sm" x="84" y="476" fill="#636b7c">(shortest straight)</text>
+
+    <!-- S2 dimension chain, outside the corner; ramp on the inside -->
+    <path class="dim" d="M968 530 H1095 M942 640 H995 M942 720 H1100"/>
+    <path class="dim" d="M980 530 V640" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <path class="dim" d="M1085 530 V720" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <text class="sm" x="990" y="592" fill="#3d4553">1.50 m</text>
+    <text class="sm" x="1095" y="632" fill="#3d4553">1.80 m</text>
+    <path class="dim" d="M895 720 H915 M895 860 H915"/>
+    <path class="dim" d="M902 720 V860" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <text class="sm" x="888" y="797" text-anchor="end" fill="#3d4553">ramp 1.35 m</text>
+
+    <!-- why 1.5 m: what each read does, and the rules -->
+    <text class="sub" x="84" y="548" fill="#8a5e00">Into the corner, still HIGH?</text>
+    <text class="rule" x="84" y="582" fill="#3d4553"><tspan class="k">Planned</tspan>  budget spent: NORMAL 2.80 m before T1</text>
+    <text class="rule" x="84" y="614" fill="#3d4553"><tspan class="k">Code 1 read</tspan>  0.5 m/s² · NORMAL 1.23 m before T1</text>
+    <text class="rule" x="84" y="646" fill="#3d4553"><tspan class="k">Code 1 missed</tspan>  code 2 urgent ~1 m/s² · NORMAL 1.25 m before T1</text>
+    <text class="rule" x="84" y="678" fill="#636b7c">(was code 1 at 1.05 m: NORMAL only 0.58 m before T1)</text>
+    <text class="rule" x="84" y="732" fill="#3d4553"><tspan class="k">Placement</tspan>  code 2 edge 1.50 m from T, both sides</text>
+    <text class="rule" x="84" y="764" fill="#3d4553"><tspan class="k">Out of the corner</tspan>  HIGH only from 1.80 m past T2</text>
+    <text class="rule" x="84" y="796" fill="#3d4553"><tspan class="k">Corner</tspan>  R 2.0 m at 0.5 m/s · 0.13 m/s² lateral</text>
+    <text class="rule" x="84" y="828" fill="#3d4553"><tspan class="k">HIGH straight</tspan>  ≥ 8.95 m tangent to tangent</text>
+    <text class="rule" x="84" y="860" fill="#3d4553"><tspan class="k">Survey</tspan>  shortest_straight_m = straight − 3.60 m</text>
+    <text class="rule" x="84" y="892" fill="#3d4553"><tspan class="k">Reverse travel</tspan>  B is the exit group, A the entry</text>
+
+    <!-- ===== detail A: S1 group, travelling INTO the corner. 1 mm = 1.4 px ===== -->
+    <rect x="1190" y="58" width="650" height="425" fill="#fff" stroke="#cbd2de" stroke-width="2"/>
+    <text class="sub" x="1210" y="94" fill="#14171d">A · S1 group · into the corner</text>
+    <text class="xs" x="1210" y="122" fill="#636b7c">plan view · to scale 1 mm = 1.4 px · mm · travel →</text>
+    <!-- tape 30 mm, centre y 228 -->
+    <rect class="tape" x="1205" y="207" width="620" height="42"/>
+    <path d="M1205 228 H1825" stroke="#fff" stroke-width="1.5" stroke-dasharray="10 8"/>
+    <path class="brk" d="M1748 200 l-8 14 l16 14 l-16 14 l16 14 l-8 4"/>
+    <path class="tick" d="M1800 196 V262"/>
+    <text class="lbl" x="1800" y="188" text-anchor="middle" fill="#14171d">T1</text>
+    <!-- code 1 (straight side), 30 mm off centre; code 2 (corner side), 60 mm off centre -->
+    <rect class="strip" x="1280" y="259.5" width="140" height="21"/>
+    <text class="code-s" x="1350" y="276" text-anchor="middle">CODE 1</text>
+    <rect class="strip" x="1560" y="301.5" width="140" height="21"/>
+    <text class="code-s" x="1630" y="318" text-anchor="middle">CODE 2</text>
+    <!-- read points: a code is reported once its strip has fully passed -->
+    <path class="read" d="M1411 190 H1429 L1420 203 Z M1691 190 H1709 L1700 203 Z"/>
+    <text class="xs" x="1420" y="160" text-anchor="middle" fill="#3d4553">1 read</text>
+    <text class="xs" x="1420" y="182" text-anchor="middle" fill="#3d4553">1.70 m</text>
+    <text class="xs" x="1700" y="160" text-anchor="middle" fill="#3d4553">2 read</text>
+    <text class="xs" x="1700" y="182" text-anchor="middle" fill="#3d4553">1.50 m</text>
+    <!-- across: centre to centre -->
+    <path class="ext" d="M1280 270 H1255 M1560 312 H1225"/>
+    <path class="dim" d="M1262 228 V270" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <path class="dim" d="M1232 228 V312" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <text class="xs" x="1247" y="294" text-anchor="middle" fill="#3d4553">30</text>
+    <text class="xs" x="1232" y="336" text-anchor="middle" fill="#3d4553">60</text>
+    <!-- along: 100 | gap 100 | 100 | 1.50 m (broken, not to scale) -->
+    <path class="dim" d="M1280 281 V368 M1420 281 V368 M1560 323 V368 M1700 323 V368 M1800 262 V368"/>
+    <path class="dim" d="M1280 355 H1420" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <path class="dim" d="M1420 355 H1560" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <path class="dim" d="M1560 355 H1700" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <path class="dim" d="M1700 355 H1800" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <path class="dim" d="M1740 364 l10 -18 M1750 364 l10 -18"/>
+    <text class="xs" x="1350" y="385" text-anchor="middle" fill="#3d4553">100</text>
+    <text class="xs" x="1490" y="385" text-anchor="middle" fill="#c8176b">gap 100</text>
+    <text class="xs" x="1630" y="385" text-anchor="middle" fill="#3d4553">100</text>
+    <text class="xs" x="1750" y="385" text-anchor="middle" fill="#14171d">1.50 m</text>
+    <text class="note" x="1210" y="420" fill="#3d4553"><tspan class="k">1 then 2</tspan>  leaving the straight: never arms HIGH</text>
+    <text class="note" x="1210" y="448" fill="#3d4553"><tspan class="k">Still HIGH at 1</tspan>  0.5 m/s², 0.47 m · at 2: urgent, 0.25 m</text>
+    <text class="note" x="1210" y="472" fill="#636b7c">strips 15 × 100, S up · tape 30, N up · inside of the corner</text>
+
+    <!-- ===== detail B: S2 group, travelling OUT OF the corner. 1 mm = 1.4 px ===== -->
+    <rect x="1190" y="497" width="650" height="425" fill="#fff" stroke="#cbd2de" stroke-width="2"/>
+    <text class="sub" x="1210" y="533" fill="#14171d">B · S2 group · out of the corner</text>
+    <text class="xs" x="1210" y="561" fill="#636b7c">plan view · to scale 1 mm = 1.4 px · mm · travel →</text>
+    <!-- tape 30 mm, centre y 667 -->
+    <rect class="tape" x="1205" y="646" width="620" height="42"/>
+    <path d="M1205 667 H1825" stroke="#fff" stroke-width="1.5" stroke-dasharray="10 8"/>
+    <path class="brk" d="M1262 639 l-8 14 l16 14 l-16 14 l16 14 l-8 4"/>
+    <path class="tick" d="M1222 635 V701"/>
+    <text class="lbl" x="1222" y="627" text-anchor="middle" fill="#14171d">T2</text>
+    <!-- code 2 (corner side), 60 mm off centre; code 1 (straight side), 30 mm off centre -->
+    <rect class="strip" x="1312" y="740.5" width="140" height="21"/>
+    <text class="code-s" x="1382" y="757" text-anchor="middle">CODE 2</text>
+    <rect class="strip" x="1592" y="698.5" width="140" height="21"/>
+    <text class="code-s" x="1662" y="715" text-anchor="middle">CODE 1</text>
+    <!-- read points -->
+    <path class="read" d="M1443 629 H1461 L1452 642 Z M1723 629 H1741 L1732 642 Z"/>
+    <text class="xs" x="1452" y="599" text-anchor="middle" fill="#3d4553">2 read · arms</text>
+    <text class="xs" x="1452" y="621" text-anchor="middle" fill="#3d4553">1.60 m</text>
+    <text class="xs" x="1732" y="599" text-anchor="middle" fill="#1e5c39">1 → HIGH</text>
+    <text class="xs" x="1732" y="621" text-anchor="middle" fill="#1e5c39">1.80 m</text>
+    <!-- across: centre to centre -->
+    <path class="ext" d="M1732 709 H1790 M1452 751 H1820"/>
+    <path class="dim" d="M1782 667 V709" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <path class="dim" d="M1812 667 V751" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <text class="xs" x="1774" y="742" text-anchor="end" fill="#3d4553">30</text>
+    <text class="xs" x="1804" y="784" text-anchor="end" fill="#3d4553">60</text>
+    <!-- along: 1.50 m (broken) | 100 | gap 100 | 100 -->
+    <path class="dim" d="M1222 701 V807 M1312 762 V807 M1452 762 V807 M1592 720 V807 M1732 720 V807"/>
+    <path class="dim" d="M1222 794 H1312" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <path class="dim" d="M1312 794 H1452" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <path class="dim" d="M1452 794 H1592" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <path class="dim" d="M1592 794 H1732" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <path class="dim" d="M1258 803 l10 -18 M1268 803 l10 -18"/>
+    <text class="xs" x="1267" y="824" text-anchor="middle" fill="#14171d">1.50 m</text>
+    <text class="xs" x="1382" y="824" text-anchor="middle" fill="#3d4553">100</text>
+    <text class="xs" x="1522" y="824" text-anchor="middle" fill="#c8176b">gap 100</text>
+    <text class="xs" x="1662" y="824" text-anchor="middle" fill="#3d4553">100</text>
+    <text class="note" x="1210" y="859" fill="#3d4553"><tspan class="k">2 then 1</tspan>  within 0.65 m (here 0.20 m): HIGH, 2 s ramp</text>
+    <text class="note" x="1210" y="887" fill="#3d4553"><tspan class="k">Either missed</tspan>  stays NORMAL to the next corner</text>
+    <text class="note" x="1210" y="911" fill="#636b7c">same group as A, mirrored: code 2 always nearer the corner</text>
+  </svg>
+
+  <ul class="legend">
+    <li><svg viewBox="0 0 60 40"><path d="M2 20 H58" stroke="#d3eedd" stroke-width="30"/><path d="M2 20 H58" stroke="#1f3f7a" stroke-width="5"/></svg>HIGH 0.85 m/s</li>
+    <li><svg viewBox="0 0 60 40"><path d="M2 20 H58" stroke="#fde9b8" stroke-width="30"/><path d="M2 20 H58" stroke="#1f3f7a" stroke-width="5"/></svg>NORMAL 0.5 m/s</li>
+    <li><svg viewBox="0 0 60 40"><defs><linearGradient id="lg" gradientUnits="userSpaceOnUse" x1="2" y1="0" x2="58" y2="0"><stop offset="0" stop-color="#d3eedd"/><stop offset="1" stop-color="#fde9b8"/></linearGradient></defs><path d="M2 20 H58" stroke="url(#lg)" stroke-width="30"/><path d="M2 20 H58" stroke="#1f3f7a" stroke-width="5"/></svg>Speed ramp</li>
+    <li><svg viewBox="0 0 60 40"><rect x="8" y="14" width="44" height="12" fill="#c8176b"/></svg>MLS marker strip</li>
+    <li><svg viewBox="0 0 60 40"><circle cx="30" cy="20" r="16" fill="#c8176b"/><text x="30" y="28" text-anchor="middle" font-family="Archivo, Arial" font-weight="700" font-size="22" fill="#fff">1</text></svg>Marker code</li>
+    <li><svg viewBox="0 0 60 40"><path d="M21 10 H39 L30 26 Z" fill="#14171d"/></svg>Code reported</li>
+    <li><svg viewBox="0 0 60 40"><path d="M30 4 V36" stroke="#14171d" stroke-width="4"/><path d="M2 20 H58" stroke="#1f3f7a" stroke-width="5"/></svg>Tangent point</li>
+  </ul>
+</section>
+</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/dist/html-to-image.js"></script>
+<script>
+  const FILE_NAME = 'mls-corner-marker-placement';
+
+  /* ---- fit the 1920x1080 canvas to the window ---- */
+  const stage = document.getElementById('stage');
+  const slide = document.getElementById('slide');
+  function fit() {
+    const avail = Math.min(document.documentElement.clientWidth - 32, 1920);
+    const s = avail / 1920;
+    stage.style.width = 1920 * s + 'px';
+    stage.style.height = 1080 * s + 'px';
+    slide.style.transform = `scale(${s})`;
+  }
+  addEventListener('resize', fit);
+  fit();
+
+  /* ---- export ---- */
+  let res = 2, bg = 'white';
+  document.querySelectorAll('[data-res]').forEach(b => b.addEventListener('click', () => {
+    res = +b.dataset.res;
+    document.querySelectorAll('[data-res]').forEach(x => x.setAttribute('aria-pressed', x === b));
+  }));
+  document.querySelectorAll('[data-bg]').forEach(b => b.addEventListener('click', () => {
+    bg = b.dataset.bg;
+    document.querySelectorAll('[data-bg]').forEach(x => x.setAttribute('aria-pressed', x === b));
+  }));
+
+  const status = document.getElementById('status');
+  const btn = document.getElementById('download');
+  btn.addEventListener('click', async () => {
+    if (!window.htmlToImage) { status.textContent = 'Export library did not load — check internet connection'; return; }
+    btn.disabled = true;
+    status.textContent = 'Rendering…';
+    try {
+      await document.fonts.ready;
+      const transparent = bg === 'none';
+      const url = await htmlToImage.toPng(slide, {
+        width: 1920, height: 1080, pixelRatio: res,
+        backgroundColor: transparent ? undefined : '#ffffff',
+        style: { transform: 'none', background: transparent ? 'transparent' : '#ffffff' },
+      });
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${FILE_NAME}@${res}x${transparent ? '-transparent' : ''}.png`;
+      document.body.appendChild(a); a.click(); a.remove();
+      status.textContent = `Saved ${1920 * res} × ${1080 * res} PNG`;
+    } catch (e) {
+      console.error(e);
+      status.textContent = 'Export failed — see console';
+    } finally {
+      btn.disabled = false;
+    }
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MRU Straight Test</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700&family=IBM+Plex+Mono:wght@600&family=IBM+Plex+Sans:wght@500&display=swap" rel="stylesheet">
+<style>
+  /* Drawing-only layout image, same language as mls-zone-marker-placement.html. Canvas 1920x1080.
+     The straight is to scale for an assumed 10 m free area (1 m = 145 px); the code-3 and MRU4
+     positions are indicative. Rules: manuals/tracked-plan-3-tape-localization.md section 7.5,
+     manuals/tape-localization-runbook.md section 1A, missions/mru-straight-markers.json (2026-10-18).
+     Directions are site-plan directions: manuals/site-layout-103.md "Compass". */
+  :root {
+    --paper: #e9edf2;
+    --surface: #ffffff;
+    --ink: #14171d;
+    --ink-2: #3d4553;
+    --ink-3: #636b7c;
+    --rule: #cbd2de;
+    --route: #1f3f7a; --route-dark: #152c57; --route-wash: #dde6f5;
+    --slow: #e09a00;  --slow-wash: #fde9b8;  --slow-ink: #8a5e00;
+    --bad: #b3261e;
+    --tag: #c8176b;
+    --agv: #23272f;
+    color-scheme: light;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding-block: 0 40px;
+    background: var(--paper);
+    color: var(--ink);
+    font: 16px/1.45 "IBM Plex Sans", Arial, Helvetica, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------------- toolbar (never captured) ---------------- */
+  .toolbar {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+    padding: 10px 16px;
+    background: var(--surface);
+    border-bottom: 2px solid var(--ink);
+  }
+  .toolbar strong { margin-right: 8px; font: 700 15px "Archivo", Arial, sans-serif; }
+  .seg { display: flex; border: 1.5px solid var(--ink); }
+  .seg button, .toolbar .go {
+    border: 0; border-left: 1px solid var(--rule);
+    background: var(--surface); color: var(--ink-2);
+    padding: 7px 12px; cursor: pointer;
+    font: 600 11px "IBM Plex Mono", ui-monospace, monospace;
+    letter-spacing: .07em; text-transform: uppercase;
+  }
+  .seg button:first-child { border-left: 0; }
+  .seg button[aria-pressed="true"] { background: var(--agv); color: #fff; }
+  .toolbar .go { border: 1.5px solid var(--route-dark); background: var(--route); color: #fff; }
+  .toolbar .go:disabled { opacity: .6; cursor: progress; }
+  .toolbar button:focus-visible { outline: 2px solid var(--tag); outline-offset: 2px; }
+  .toolbar .status {
+    margin-left: auto; color: var(--ink-3);
+    font: 600 11px "IBM Plex Mono", ui-monospace, monospace; letter-spacing: .05em; text-transform: uppercase;
+  }
+
+  .stage-wrap { padding: 20px 16px 0; }
+  .stage { position: relative; margin: 0 auto; box-shadow: 0 1px 0 var(--rule), 0 10px 30px rgba(20,30,50,.12); }
+
+  /* ---------------- canvas 1920 x 1080 ---------------- */
+  .slide {
+    position: absolute; top: 0; left: 0;
+    width: 1920px; height: 1080px;
+    transform-origin: top left;
+    overflow: hidden;
+    background: var(--surface);
+  }
+
+  .dwg { position: absolute; inset: 0; width: 1920px; height: 1080px; }
+  .dwg text { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+  .head { font: 700 36px "Archivo", Arial, sans-serif !important; text-transform: uppercase; }
+  .sub  { font: 700 24px "Archivo", Arial, sans-serif !important; text-transform: uppercase; letter-spacing: .04em; }
+  .lbl { font-size: 26px; font-weight: 600; letter-spacing: .02em; }
+  .sm  { font-size: 22px; font-weight: 600; }
+  .rule { font: 500 22px "IBM Plex Sans", Arial, sans-serif !important; }
+  .rule tspan.k { font-weight: 700; fill: #14171d; }
+  .code { font: 700 22px "Archivo", Arial, sans-serif !important; fill: #fff; }
+  .lane { fill: none; stroke: var(--route); stroke-width: 7; stroke-linejoin: round; }
+  .turn { fill: none; stroke: var(--route); stroke-width: 7; }
+  .hand { fill: none; stroke: var(--ink-3); stroke-width: 4; stroke-dasharray: 12 8; }
+  .chev { fill: none; stroke: var(--route-dark); stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; }
+  .creep { fill: none; stroke: var(--slow-wash); stroke-width: 44; }
+  .dim { stroke: var(--ink-2); stroke-width: 2.5; fill: none; }
+  .ext { stroke: var(--ink-3); stroke-width: 1.5; stroke-dasharray: 5 4; fill: none; }
+  .tick { stroke: var(--ink); stroke-width: 4; }
+  .lead { stroke: var(--tag); stroke-width: 2; fill: none; }
+  .strip { fill: var(--tag); }
+  .tape { fill: #2b3a55; }
+  .shadow { fill: #fff; stroke: var(--ink-3); stroke-width: 3; }
+  .ev  { fill: var(--tag); stroke: #fff; stroke-width: 2; }
+  .ev0 { fill: #fff; stroke: var(--ink-3); stroke-width: 3; }
+
+  .legend {
+    position: absolute; left: 60px; top: 962px; width: 1800px; height: 76px;
+    display: flex; align-items: center; justify-content: space-between;
+    margin: 0; padding: 0; list-style: none;
+    color: var(--ink-2); font: 500 26px "IBM Plex Sans", Arial, sans-serif;
+  }
+  .legend li { display: flex; align-items: center; gap: 14px; white-space: nowrap; }
+  .legend svg { flex: none; width: 64px; height: 40px; }
+</style>
+</head>
+<body>
+
+<nav class="toolbar" aria-label="Export">
+  <strong>MRU Straight Test</strong>
+  <div class="seg" role="group" aria-label="Resolution">
+    <button type="button" data-res="2" aria-pressed="true">2× · 3840</button>
+    <button type="button" data-res="3" aria-pressed="false">3× · 5760</button>
+  </div>
+  <div class="seg" role="group" aria-label="Background">
+    <button type="button" data-bg="white" aria-pressed="true">White</button>
+    <button type="button" data-bg="none" aria-pressed="false">Transparent</button>
+  </div>
+  <button type="button" class="go" id="download">Download PNG</button>
+  <span class="status" id="status">16:9 · 1920 × 1080 base</span>
+</nav>
+
+<div class="stage-wrap">
+<div class="stage" id="stage">
+<section class="slide" id="slide" aria-label="Stage 1 straight test in front of MRU4: marker run strip layout">
+
+  <!-- x along the straight: px = 230 + 145 * metres from the west tape end. E (east limit) drawn at 10 m. -->
+  <svg class="dwg" viewBox="0 0 1920 1080" role="img" aria-label="The straight in front of MRU4, west tape end on the left, east on the right. Out (westbound, lower lane) from T-HOME: code 1 ignored, shadow stops T-ATT and MW-4, code 2 at 1.0 m from the tape end slows to 0.1 m/s within 0.3 m, the AGV stops when the tape is lost and pivots clockwise. Back (eastbound, upper lane): code 2 re-pass skipped, shadow stop ME-4, code 1 at E minus 2.0 m stops the AGV 0.5 m later at T-HOME, a code 2 backstop at E minus 1.0 m means the home marker was missed and faults. Two code 3 strips at least 3 m apart. Key: site-plan north is the MRU line at the top of the site plan.">
+    <defs>
+      <path id="chev" d="M-9 -13 L9 0 L-9 13"/>
+      <marker id="arr" markerUnits="userSpaceOnUse" markerWidth="16" markerHeight="14" refX="15" refY="7" orient="auto-start-reverse"><path d="M0,0 L16,7 L0,14 Z" fill="#3d4553"/></marker>
+      <marker id="arr-route" markerUnits="userSpaceOnUse" markerWidth="22" markerHeight="20" refX="12" refY="10" orient="auto"><path d="M0,0 L22,10 L0,20 Z" fill="#152c57"/></marker>
+      <marker id="arr-hand" markerUnits="userSpaceOnUse" markerWidth="18" markerHeight="16" refX="10" refY="8" orient="auto"><path d="M0,0 L18,8 L0,16 Z" fill="#636b7c"/></marker>
+      <pattern id="hatch" patternUnits="userSpaceOnUse" width="16" height="16" patternTransform="rotate(45)">
+        <rect width="16" height="16" fill="#f5f6f8"/><path d="M0 0 V16" stroke="#cbd2de" stroke-width="6"/>
+      </pattern>
+    </defs>
+
+    <rect x="60" y="40" width="1800" height="900" fill="#f5f6f8" stroke="#2a2f3a" stroke-width="6"/>
+
+    <!-- title -->
+    <text class="head" x="96" y="98" fill="#14171d">Straight test · marker run</text>
+    <text class="sub" x="96" y="136" fill="#636b7c">MRU line at MRU4 · stage 1 · no RFID · drawn for E = 10 m</text>
+    <text class="sm" x="96" y="176" fill="#3d4553">x = metres from the west tape end · E = east limit of the free area</text>
+
+    <!-- ===== site-plan key ===== -->
+    <rect x="1240" y="56" width="600" height="206" fill="#fff" stroke="#cbd2de" stroke-width="2"/>
+    <text class="sub" x="1260" y="88" fill="#14171d">Site plan key</text>
+    <rect x="1286" y="108" width="132" height="72" fill="#dde6f5"/>
+    <path class="lane" d="M1300 164 H1760 V214" style="stroke-width:5"/>
+    <path class="tick" d="M1300 150 V178"/>
+    <rect x="1330" y="122" width="62" height="30" fill="#fff" stroke="#3d4553" stroke-width="2"/>
+    <rect x="1440" y="122" width="62" height="30" fill="#fff" stroke="#cbd2de" stroke-width="2"/>
+    <rect x="1550" y="122" width="62" height="30" fill="#fff" stroke="#cbd2de" stroke-width="2"/>
+    <rect x="1660" y="122" width="62" height="30" fill="#fff" stroke="#cbd2de" stroke-width="2"/>
+    <text x="1361" y="144" text-anchor="middle" fill="#14171d" style="font-size:17px">MRU4</text>
+    <text x="1471" y="144" text-anchor="middle" fill="#636b7c" style="font-size:17px">MRU3</text>
+    <text x="1581" y="144" text-anchor="middle" fill="#636b7c" style="font-size:17px">MRU2</text>
+    <text x="1691" y="144" text-anchor="middle" fill="#636b7c" style="font-size:17px">MRU1</text>
+    <text class="sm" x="1286" y="204" fill="#1f3f7a">this sheet</text>
+    <text class="sm" x="1748" y="208" text-anchor="end" fill="#636b7c">trunk</text>
+    <text class="lbl" x="1262" y="173" fill="#14171d">W</text>
+    <text class="lbl" x="1776" y="173" fill="#14171d">E</text>
+    <path d="M1810 118 V72" stroke="#14171d" stroke-width="4" marker-end="url(#arr)"/>
+    <text class="lbl" x="1810" y="142" text-anchor="middle" fill="#14171d">N</text>
+    <text class="sm" x="1260" y="248" fill="#636b7c">site-plan N (MRU line on top), not true N</text>
+
+    <!-- MRU4 machine (indicative position) -->
+    <rect x="760" y="226" width="100" height="52" fill="#fff" stroke="#3d4553" stroke-width="3"/>
+    <text class="lbl" x="810" y="261" text-anchor="middle" fill="#14171d">MRU4</text>
+    <text class="sm" x="872" y="261" fill="#636b7c">as built</text>
+
+    <!-- not free: east of E -->
+    <rect x="1680" y="350" width="177" height="330" fill="url(#hatch)"/>
+    <text class="sm" x="1768" y="580" text-anchor="middle" fill="#3d4553">not free</text>
+    <text class="sm" x="1768" y="608" text-anchor="middle" fill="#636b7c">MRU3…1 →</text>
+
+    <!-- tape: ends at x = 0 (west), continues east past E -->
+    <rect class="tape" x="230" y="510" width="1627" height="12"/>
+    <path class="tick" d="M230 496 V536"/>
+    <text class="sm" x="240" y="554" fill="#14171d">tape end</text>
+
+    <!-- creep zone on the way out: code 2 → tape end at 0.1 m/s -->
+    <path class="creep" d="M375 650 H230"/>
+
+    <!-- lanes: BACK eastbound (upper), OUT westbound (lower); one tape, drawn twice -->
+    <path class="lane" d="M230 380 H1462"/>
+    <path class="lane" d="M1462 650 H230"/>
+    <path class="turn" d="M230 650 A135 135 0 0 1 230 380" marker-end="url(#arr-route)"/>
+    <path class="hand" d="M1462 380 A135 135 0 0 1 1462 650" marker-end="url(#arr-hand)"/>
+    <g>
+      <use href="#chev" class="chev" transform="translate(700 380)"/>
+      <use href="#chev" class="chev" transform="translate(1100 380)"/>
+      <use href="#chev" class="chev" transform="translate(1000 650) rotate(180)"/>
+      <use href="#chev" class="chev" transform="translate(600 650) rotate(180)"/>
+    </g>
+    <text class="sub" x="420" y="420" fill="#1f3f7a">Back · eastbound →</text>
+    <text class="sub" x="420" y="628" fill="#1f3f7a">← Out · westbound</text>
+    <text class="sm" x="140" y="572" fill="#1f3f7a">pivot</text>
+    <text class="sm" x="140" y="600" fill="#1f3f7a">CW</text>
+    <text class="sm" x="1474" y="560" fill="#636b7c">turn by</text>
+    <text class="sm" x="1474" y="588" fill="#636b7c">hand</text>
+
+    <!-- alignment through the lanes for the strips that act -->
+    <path class="ext" d="M375 380 V650 M1390 380 V650 M1535 380 V510"/>
+
+    <!-- strips (one side of the tape) and their codes -->
+    <rect class="strip" x="367" y="498" width="16" height="10"/>
+    <rect class="strip" x="1382" y="498" width="16" height="10"/>
+    <rect class="strip" x="1527" y="498" width="16" height="10"/>
+    <rect class="strip" x="584" y="486" width="16" height="9"/><rect class="strip" x="584" y="499" width="16" height="9"/>
+    <rect class="strip" x="1019" y="486" width="16" height="9"/><rect class="strip" x="1019" y="499" width="16" height="9"/>
+    <path class="lead" d="M592 474 V486 M1027 474 V486"/>
+    <circle cx="375" cy="458" r="17" fill="#c8176b"/><text class="code" x="375" y="466" text-anchor="middle">2</text>
+    <circle cx="592" cy="458" r="17" fill="#c8176b"/><text class="code" x="592" y="466" text-anchor="middle">3</text>
+    <circle cx="1027" cy="458" r="17" fill="#c8176b"/><text class="code" x="1027" y="466" text-anchor="middle">3</text>
+    <circle cx="1390" cy="458" r="17" fill="#c8176b"/><text class="code" x="1390" y="466" text-anchor="middle">1</text>
+    <circle cx="1535" cy="458" r="17" fill="#c8176b"/><text class="code" x="1535" y="466" text-anchor="middle">2</text>
+    <text class="sm" x="640" y="466" fill="#636b7c">P0 reference</text>
+
+    <!-- BACK lane: events and shadow stops -->
+    <circle class="ev0" cx="375" cy="380" r="9"/>
+    <text class="sm" x="387" y="346" fill="#636b7c">re-pass: skipped</text>
+    <path class="shadow" d="M810 368 L824 392 H796 Z"/>
+    <text class="sm" x="822" y="346" fill="#636b7c">ME-4 · shadow</text>
+    <circle class="ev" cx="1390" cy="380" r="11"/>
+    <text class="lbl" x="1380" y="318" text-anchor="end" fill="#14171d">HOME: stop in 0.5 m</text>
+    <text class="sm" x="1380" y="346" text-anchor="end" fill="#3d4553">→ T-HOME, run DONE</text>
+    <path class="tick" d="M1462 360 V400"/>
+    <path d="M1462 380 H1560" stroke="#b3261e" stroke-width="4" stroke-dasharray="8 6"/>
+    <circle class="ev" cx="1535" cy="380" r="11" style="fill:#b3261e"/>
+    <text class="lbl" x="1547" y="318" fill="#b3261e">BACKSTOP</text>
+    <text class="sm" x="1547" y="346" fill="#b3261e">home missed → FAULT</text>
+
+    <!-- OUT lane: events and shadow stops -->
+    <circle class="ev" cx="375" cy="650" r="11"/>
+    <text class="lbl" x="387" y="694" fill="#14171d">U-TURN: 0.1 m/s in 0.3 m</text>
+    <text class="sm" x="387" y="722" fill="#3d4553">tape lost → stop, pivot CW</text>
+    <path class="shadow" d="M810 662 L824 638 H796 Z"/>
+    <text class="sm" x="822" y="694" fill="#636b7c">MW-4 · shadow</text>
+    <path class="shadow" d="M1172 662 L1186 638 H1158 Z"/>
+    <text class="sm" x="1160" y="722" text-anchor="end" fill="#636b7c">T-ATT · shadow</text>
+    <text class="sm" x="1160" y="750" text-anchor="end" fill="#636b7c">≥ 2 m W of T-HOME</text>
+    <circle class="ev0" cx="1390" cy="650" r="9"/>
+    <text class="sm" x="1380" y="694" text-anchor="end" fill="#636b7c">code 1 ignored</text>
+    <!-- AGV at T-HOME, facing west (start) -->
+    <rect x="1432" y="626" width="64" height="48" rx="4" fill="#23272f"/>
+    <path d="M1446 650 L1466 636 V664 Z" fill="#fff"/>
+    <text class="lbl" x="1420" y="722" fill="#14171d">START · T-HOME</text>
+    <text class="sm" x="1420" y="750" fill="#3d4553">facing west</text>
+
+    <!-- east limit -->
+    <path class="tick" d="M1680 350 V680"/>
+
+    <!-- dimension chain -->
+    <path class="dim" d="M230 768 V802 M375 768 V802 M592 768 V802 M1027 768 V802 M1390 768 V802 M1462 768 V802 M1535 768 V802 M1680 768 V802"/>
+    <path class="dim" d="M230 785 H375" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <path class="dim" d="M592 785 H1027" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <path class="dim" d="M1390 785 H1462" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <path class="dim" d="M1462 785 H1535" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <path class="dim" d="M1535 785 H1680" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <text class="sm" x="302" y="826" text-anchor="middle" fill="#3d4553">1.0 m</text>
+    <text class="sm" x="810" y="826" text-anchor="middle" fill="#3d4553">≥ 3 m between code 3</text>
+    <text class="sm" x="1426" y="826" text-anchor="middle" fill="#3d4553">0.5</text>
+    <text class="sm" x="1498" y="826" text-anchor="middle" fill="#3d4553">0.5</text>
+    <text class="sm" x="1607" y="826" text-anchor="middle" fill="#3d4553">1.0 m</text>
+    <text class="lbl" x="218" y="796" text-anchor="end" fill="#14171d">0</text>
+    <text class="lbl" x="1692" y="796" fill="#14171d">E</text>
+
+    <!-- placement rules -->
+    <text class="rule" x="96" y="868" fill="#3d4553"><tspan class="k">Place</tspan>  code 2 at x = 1.0 m · code 1 at E − 2.0 m · code 2 at E − 1.0 m · T-HOME = E − 1.5 m · strips 15 × 100 mm, S up, one side</text>
+    <text class="rule" x="96" y="900" fill="#3d4553"><tspan class="k">Keep clear</tspan>  no other code 1 or 2 between the backstop and the tape end · code 3 ≥ 1 m from every strip and stop (positions here indicative)</text>
+    <text class="rule" x="96" y="932" fill="#3d4553"><tspan class="k">Missed U-turn strip</tspan>  the AGV stops where the tape ends, as a missed tag 0180 · markers down while driving → hold MARKERS_LOST</text>
+  </svg>
+
+  <ul class="legend">
+    <li><svg viewBox="0 0 64 40"><path d="M2 20 H62" stroke="#1f3f7a" stroke-width="5"/></svg>AGV pass</li>
+    <li><svg viewBox="0 0 64 40"><path d="M2 20 H62" stroke="#fde9b8" stroke-width="30"/><path d="M2 20 H62" stroke="#1f3f7a" stroke-width="5"/></svg>Creep 0.1 m/s</li>
+    <li><svg viewBox="0 0 64 40"><rect x="10" y="14" width="44" height="12" fill="#c8176b"/></svg>MLS strip</li>
+    <li><svg viewBox="0 0 64 40"><circle cx="32" cy="20" r="11" fill="#c8176b"/></svg>Acts</li>
+    <li><svg viewBox="0 0 64 40"><circle cx="32" cy="20" r="9" fill="#fff" stroke="#636b7c" stroke-width="3"/></svg>Read, ignored</li>
+    <li><svg viewBox="0 0 64 40"><path d="M32 8 L46 32 H18 Z" fill="#fff" stroke="#636b7c" stroke-width="3"/></svg>Shadow stop (logged only)</li>
+    <li><svg viewBox="0 0 64 40"><rect x="2" y="4" width="60" height="32" fill="url(#lg-h)"/><defs><pattern id="lg-h" patternUnits="userSpaceOnUse" width="10" height="10" patternTransform="rotate(45)"><rect width="10" height="10" fill="#f5f6f8"/><path d="M0 0 V10" stroke="#cbd2de" stroke-width="4"/></pattern></defs></svg>Not free</li>
+  </ul>
+</section>
+</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/dist/html-to-image.js"></script>
+<script>
+  const FILE_NAME = 'mru-straight-test-layout';
+
+  /* ---- fit the 1920x1080 canvas to the window ---- */
+  const stage = document.getElementById('stage');
+  const slide = document.getElementById('slide');
+  function fit() {
+    const avail = Math.min(document.documentElement.clientWidth - 32, 1920);
+    const s = avail / 1920;
+    stage.style.width = 1920 * s + 'px';
+    stage.style.height = 1080 * s + 'px';
+    slide.style.transform = `scale(${s})`;
+  }
+  addEventListener('resize', fit);
+  fit();
+
+  /* ---- export ---- */
+  let res = 2, bg = 'white';
+  document.querySelectorAll('[data-res]').forEach(b => b.addEventListener('click', () => {
+    res = +b.dataset.res;
+    document.querySelectorAll('[data-res]').forEach(x => x.setAttribute('aria-pressed', x === b));
+  }));
+  document.querySelectorAll('[data-bg]').forEach(b => b.addEventListener('click', () => {
+    bg = b.dataset.bg;
+    document.querySelectorAll('[data-bg]').forEach(x => x.setAttribute('aria-pressed', x === b));
+  }));
+
+  const status = document.getElementById('status');
+  const btn = document.getElementById('download');
+  btn.addEventListener('click', async () => {
+    if (!window.htmlToImage) { status.textContent = 'Export library did not load — check internet connection'; return; }
+    btn.disabled = true;
+    status.textContent = 'Rendering…';
+    try {
+      await document.fonts.ready;
+      const transparent = bg === 'none';
+      const url = await htmlToImage.toPng(slide, {
+        width: 1920, height: 1080, pixelRatio: res,
+        backgroundColor: transparent ? undefined : '#ffffff',
+        style: { transform: 'none', background: transparent ? 'transparent' : '#ffffff' },
+      });
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${FILE_NAME}@${res}x${transparent ? '-transparent' : ''}.png`;
+      document.body.appendChild(a); a.click(); a.remove();
+      status.textContent = `Saved ${1920 * res} × ${1080 * res} PNG`;
+    } catch (e) {
+      console.error(e);
+      status.textContent = 'Export failed — see console';
+    } finally {
+      btn.disabled = false;
+    }
+  });
+</script>
+</body>
+</html>

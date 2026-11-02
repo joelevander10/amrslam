@@ -14,7 +14,7 @@ import sys
 import can
 from helpers import check
 
-import lss
+from agv_core.drivers.canbus import lss
 
 
 class FakeBus:
@@ -295,12 +295,9 @@ def test_bench_tools_respect_the_owner_lock():
     import os
     import shutil
     import tempfile
-    import bus_health
-    import drive_forward
-    import ownerlock
-    import read_imu
-    import verify_bus
-    import verify_drivers
+
+    from agv_core import ownerlock
+    from agv_core.drivers.canbus import bus_health, drive_forward, read_imu, verify_bus, verify_drivers
     print("\nbench tools: the CAN owner lock comes before the bus")
 
     opened = []

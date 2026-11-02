@@ -238,6 +238,7 @@ class Controller:
     t_acked: list = field(default_factory=lambda: [None, None])
     _consumed: str = ""  # run ids already run (or refused): a hold never re-runs one
     _pending_outcome: str = DONE  # what "exit" completes as: done, or halted
+    generation: int = -1  # the lease generation the prepared move was admitted under
 
     @property
     def active(self) -> bool:
@@ -286,6 +287,26 @@ class Controller:
             return f"time limit {limit:.1f} s exceeded"
         return None
 
+    def veto_start(self, request: Request | None, gate: str | None, now: float) -> Out | None:
+        """Audit R02 (2026-10-02): pp_enter() blocks for several SDO transactions, and the
+        hold, the lease, the selector or the request itself can change meanwhile. Called
+        after a successful enter and BEFORE the start edge: None = start; otherwise the
+        move halts without ever having been started and returns to pv the normal way."""
+        r = request
+        why = None
+        if r is None or now - r.t_recv > self.hold_timeout_s:
+            why = "hold went stale during setup"
+        elif r.run_id != self.run_id or r.generation != self.generation or r.spec != self.spec:
+            why = f"the request changed during setup ({r.run_id})"
+        elif not r.hold:
+            why = "hold released during setup"
+        elif gate:
+            why = f"{gate} (during setup)"
+        if why is None:
+            return None
+        self._pending_outcome = HALTED
+        return self._begin_halt(now, why)
+
     def _begin_halt(self, now: float, why: str) -> Out:
         self.state, self.reason, self.t_halt = HALTING, why, now
         return Out("cw", (CW_HALTED, CW_HALTED), reason=why)
@@ -303,6 +324,7 @@ class Controller:
                 self.last = Result(r.run_id, REFUSED, i.gate, None, None, i.now)
                 return Out()
             self.run_id, self.spec, self.reason = r.run_id, r.spec, ""
+            self.generation = r.generation
             self._pending_outcome = DONE
             return Out("enter", spec=r.spec)
 

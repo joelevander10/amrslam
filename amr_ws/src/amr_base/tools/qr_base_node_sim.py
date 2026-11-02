@@ -26,6 +26,8 @@ os.environ["AGV_PROFILE"] = "amr-qr-01"
 os.environ["AMR_LOCK_DIR"] = tempfile.mkdtemp(prefix="amr_lock_")
 # amr_base package source (this file lives in amr_base/tools/)
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+# the repo root, for agv_core (amr-launch.sh puts it on PYTHONPATH on the vehicle)
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", ".."))
 
 
 # ---------------------------------------------------------------- ROS stubs
@@ -76,6 +78,10 @@ class Time:
 
     def to_msg(self):
         return Stamp(self.t)
+
+    @property
+    def nanoseconds(self):
+        return int(self.t * 1e9)
 
 
 class Clock:
@@ -151,7 +157,7 @@ mod("rclpy.executors", ExternalShutdownException=RuntimeError)
 mod(
     "rclpy.qos",
     QoSProfile=lambda **k: None,
-    QoSDurabilityPolicy=Msg(VOLATILE=0),
+    QoSDurabilityPolicy=Msg(VOLATILE=0, TRANSIENT_LOCAL=1),
     QoSReliabilityPolicy=Msg(BEST_EFFORT=0, RELIABLE=1),
 )
 mod("diagnostic_msgs")
@@ -185,16 +191,18 @@ mod(
     DriveStatus=msgclass("DriveStatus", {}),
     Event=EV,
     IoImage=msgclass("IoImage", {}),
+    LineState=msgclass("LineState", {"drive_power": False}),
     PanelState=msgclass("PanelState", {}),
+    RunState=msgclass("RunState", {"drive_power": False}),
     WheelStates=msgclass("WheelStates", {"left_counts": 0, "right_counts": 0, "counts_valid": False}),
     WheelVelocities=Msg,
 )
 
 # ---------------------------------------------------------------- hardware sims
 import can  # noqa: E402
+from agv_core import config  # noqa: E402
 
 from amr_base import qr_base_node as qbn  # noqa: E402
-from amr_base.agv_repo import config  # noqa: E402
 
 state = {
     "volts": [0.0, 0.0],
@@ -432,14 +440,66 @@ with lock:
     do, v = list(state["do"]), list(state["volts"])
 check("command timeout -> 0 V, both brakes", v == [0.0, 0.0] and do[6] and do[3], f"{v} {do[:7]}")
 
+check("MANUAL: power wanted (no Manual Arm input on the QR panel)", last("/drives/status").power_wanted)
 press(1)
 check("START in MANUAL -> AUTO", last("/amr/panel_state").mode_auto)
+time.sleep(0.3)
+st = last("/drives/status")
+with lock:
+    do = list(state["do"])
+check(
+    "AUTO with no run asking: standby, brakes held, not operational",
+    st.link_state == "standby" and not st.operational and st.left_state == "Switched on" and do[3] and do[6],
+    f"{st.link_state} {st.left_state} {st.power_reason}",
+)
+
+
+def ask(power):
+    node.subs["/amr/run_state"](
+        sys.modules["amr_interfaces.msg"].RunState(header=Msg(stamp=Stamp(time.time())), drive_power=power)
+    )
+
+
+ask(True)
+time.sleep(0.3)
+st = last("/drives/status")
+check(
+    "AUTO, the run asks for power: armed and operational",
+    st.operational and st.link_state == "armed",
+    f"{st.link_state} {st.power_reason}",
+)
+ask(False)
+time.sleep(0.3)
+check("the run stops asking: standby again", not last("/drives/status").operational)
 n0 = sum(m.start_edge for m in node.pubs["/amr/panel_state"].msgs)
 press(1)
 n1 = sum(m.start_edge for m in node.pubs["/amr/panel_state"].msgs)
 check("START in AUTO -> one Start edge", n1 - n0 == 1)
 press(2)
 check("STOP in AUTO -> MANUAL", not last("/amr/panel_state").mode_auto)
+check(
+    "display copies published", node.pubs["/amr/panel_state_ui"].msgs and node.pubs["/wheel_states_ui"].msgs
+)
+
+res = node.srvs["/drives/disarm"](None, Msg())
+time.sleep(0.3)
+st = last("/drives/status")
+with lock:
+    do = list(state["do"])
+check(
+    "push mode (/drives/disarm): brakes released, standby with the reason, not an emergency",
+    res.success
+    and st.link_state == "standby"
+    and st.left_state == "Ready to switch on"
+    and "push" in st.power_reason
+    and not do[3]
+    and not do[6]
+    and not st.operational,
+    f"{st.link_state} {st.left_state} {st.power_reason}",
+)
+node.srvs["/drives/arm"](None, Msg())
+time.sleep(0.3)
+check("Brakes ON (/drives/arm): armed again in MANUAL", last("/drives/status").operational)
 
 with lock:
     state["di"][0] = False  # E-stop pressed (NC opens)

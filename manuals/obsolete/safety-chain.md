@@ -1,6 +1,6 @@
-# EVOTY tow-tractor AGV — Safety system brief
+# Tow-tractor AGV — Safety system brief
 
-**Vehicle:** EVOTY differential-drive tow tractor, 600 kg towed, 1.0 m/s design speed, flat floor
+**Vehicle:** differential-drive tow tractor, 600 kg towed, 1.0 m/s design speed, flat floor
 **Purpose of this document:** a single-page picture of the safety chain as it stands — what is wired, what is configured, what it achieves, and what it does not yet achieve.
 **Status:** Category 0 stop chain built and commissioned. **Not the shippable ISO 3691-4 configuration.**
 **Date:** 2026-09-04

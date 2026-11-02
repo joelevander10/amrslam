@@ -54,6 +54,14 @@ class Limits:
     # a stale wheel stream counts as a loss - the drive status (10 Hz) can trail the wheel
     # timeout (0.10 s) by a tick.
     wheels_grace_s: float = 0.4
+    # The MLS IMU is SDO-polled in drive_node's loop, which blocks while the drives power up
+    # (engage ~0.35 s, 2026-10-09: AUTO Start -> LOST "stale: imu" -> run FAULT). The EKF
+    # takes only yaw rate from it, so a gap this short is not a loss; the scan check stays strict.
+    imu_grace_s: float = 0.6
+    # AMCL computes variance as E[x^2]-E[x]^2: a collapsed particle cloud can come out a hair
+    # below zero (fix plan 001 B5, sim: cov_xx -0.0000). Down to this much it is rounding and
+    # reads as 0; anything more negative is still not evidence (Q07). m^2 / rad^2, sigma 1 mm.
+    cov_neg_tol: float = 1e-6
 
 
 @dataclass
@@ -68,6 +76,9 @@ class Readiness:
     limits: Limits = field(default_factory=Limits)
     state: int = UNLOCALIZED
     reason: str = "no initial pose"
+    # Alarm catalogue code for `reason` (agv_core/alarms.py): what the operator is told
+    # and which button clears it. "" only while READY.
+    code: str = "LOC_NOT_SET"
     confirmed: bool = False
     can_confirm: bool = False
     cov: tuple[float, float, float] | None = None  # xx, yy, yaw
@@ -88,6 +99,7 @@ class Readiness:
     def on_initialpose(self, t: float) -> None:
         """Operator (or explicit seed) estimate: (re)start validation."""
         self.state, self.reason = CHECKING, "initial pose received; converging"
+        self.code = "LOC_NOT_CONFIRMED"
         self.confirmed, self.can_confirm = False, False
         self._clear_evidence()
         self._initial_t = t
@@ -97,14 +109,16 @@ class Readiness:
     ) -> None:
         """Latest AMCL covariance. A sample stamped before the current initial pose belongs to
         an earlier attempt and is ignored; a non-finite or negative covariance is not evidence
-        of anything and replaces the held one with "unknown" (review Q07)."""
+        of anything and replaces the held one with "unknown" (review Q07). Rounding noise just
+        below zero (`cov_neg_tol`) is a collapsed cloud, not a bad sample, and counts as 0."""
         if self._initial_t is not None and (stamp if stamp is not None else t) < self._initial_t:
             return
+        tol = self.limits.cov_neg_tol
         vals = (cov_xx, cov_yy, cov_yaw)
-        if not all(math.isfinite(v) and v >= 0.0 for v in vals):
+        if not all(math.isfinite(v) and v >= -tol for v in vals):
             self.cov, self.cov_t = None, None
             return
-        self.cov, self.cov_t = vals, t
+        self.cov, self.cov_t = tuple(max(v, 0.0) for v in vals), t
 
     def on_scan_match(self, t: float, match: float, long: float, stamp: float | None = None) -> None:
         """Latest scan against the map at the estimated pose.
@@ -132,7 +146,9 @@ class Readiness:
         if self._match_bad_since is None:
             self._match_bad_since = t
         elif self.state == READY and t - self._match_bad_since >= self.limits.match_hold_s:
-            self._lose(f"scan passes through mapped obstacles ({100 * long:.0f} % of beams)")
+            self._lose(
+                f"scan passes through mapped obstacles ({100 * long:.0f} % of beams)", "LOC_SCAN_MISMATCH"
+            )
 
     def on_map_odom(
         self,
@@ -171,7 +187,7 @@ class Readiness:
         self._stable_since = None
         why = f"localisation corrected by {d:.2f} m / {math.degrees(a):.1f} deg"
         if self.state == READY:
-            self._lose(why)
+            self._lose(why, "LOC_JUMP")
         elif self.state == CHECKING:
             self.reason = why + "; waiting to settle"
 
@@ -185,10 +201,16 @@ class Readiness:
             for name, limit in self.limits.age_limits.items()
             if name not in excused and (ages.get(name) is None or ages[name] > limit)
         ]
-        if self.state == READY and stale == ["wheels"]:
-            a = ages.get("wheels")
-            if a is not None and a <= self.limits.age_limits["wheels"] + self.limits.wheels_grace_s:
-                stale = []  # a safety stop's drive report may still be on its way
+        if self.state == READY and stale:
+            # a safety stop's drive report may still be on its way (wheels); the drive loop is
+            # busy powering the drives (imu). Only these two streams are ever graced.
+            grace = {"wheels": self.limits.wheels_grace_s, "imu": self.limits.imu_grace_s}
+            stale = [
+                n for n in stale
+                if n not in grace
+                or ages.get(n) is None
+                or ages[n] > self.limits.age_limits[n] + grace[n]
+            ]
         if self.state == UNLOCALIZED:
             self.can_confirm = False
             return self.state
@@ -207,15 +229,18 @@ class Readiness:
             # while stationary, so its age is not a READY condition - the scan check is.
             match_stale = self.scan_match_t is None or t - self.scan_match_t > self.limits.match_age_max_s
             if stale:
-                self._lose("stale: " + ", ".join(stale))
+                self._lose("stale: " + ", ".join(stale), "LOC_STREAM_STALE")
             elif match_stale:
-                self._lose("scan-consistency check against the map stopped (gate or transform failure)")
+                self._lose(
+                    "scan-consistency check against the map stopped (gate or transform failure)",
+                    "LOC_GATE_FAILED",
+                )
             elif not cov_ok:
                 # A single wide sample during a turn is a transient; sustained growth is a loss.
                 if self._cov_bad_since is None:
                     self._cov_bad_since = t
                 elif t - self._cov_bad_since >= self.limits.cov_hold_s:
-                    self._lose(f"covariance grew: {self._cov_text()}")
+                    self._lose(f"covariance grew: {self._cov_text()}", "LOC_COV_GREW")
             else:
                 self._cov_bad_since = None
             return self.state
@@ -232,7 +257,7 @@ class Readiness:
             return self.state
         if not amcl_fresh:
             self._stable_since = None
-            self.reason = "no AMCL update yet - drive slowly so the filter updates"
+            self.reason = "no AMCL update yet - converging in place (or drive slowly)"
             self.can_confirm = False
             return self.state
         if not cov_ok:
@@ -266,18 +291,25 @@ class Readiness:
         )
         return self.state
 
+    def wants_nomotion_update(self) -> bool:
+        """While CHECKING, AMCL is asked to match the scan in place (2026-10-09: the operator
+        had to nudge the vehicle before AMCL would update at all). READY never asks: a forced
+        update while parked only re-weights the same particles, and READY holds on the
+        independent scan check, not on AMCL updates."""
+        return self.state == CHECKING
+
     # ---- operator ------------------------------------------------------------
 
     def confirm(self) -> bool:
         if self.state != CHECKING or not self.can_confirm:
             return False
         self.state, self.confirmed = READY, True
-        self.reason = "operator confirmed scan alignment"
+        self.reason, self.code = "operator confirmed scan alignment", ""
         return True
 
     def reset(self, reason: str = "reset by operator") -> None:
         """Back to UNLOCALIZED; every piece of readiness proof is dropped."""
-        self.state, self.reason = UNLOCALIZED, reason
+        self.state, self.reason, self.code = UNLOCALIZED, reason, "LOC_NOT_SET"
         self.confirmed, self.can_confirm = False, False
         self._clear_evidence()
 
@@ -290,8 +322,10 @@ class Readiness:
         self.scan_match = self.scan_long = self.scan_match_t = self._match_bad_since = None
         self._prev_map_odom = self._prev_map_odom_t = self.last_jump = None
 
-    def _lose(self, why: str) -> None:
-        self.state, self.reason = LOST, why
+    def _lose(self, why: str, code: str = "LOC_LOST") -> None:
+        """Lose the fix. `code` is the alarm-catalogue code the operator surface looks up
+        (agv_core/alarms.py); `why` stays the engineer's sentence."""
+        self.state, self.reason, self.code = LOST, why, code
         self.confirmed, self.can_confirm = False, False
 
     def _cov_text(self) -> str:

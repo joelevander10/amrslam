@@ -85,12 +85,55 @@ def _commit_new(dest: str, data: bytes) -> str:
 
 
 def _plain(name: str) -> bool:
-    return bool(name) and "/" not in name and "\0" not in name and not name.startswith(".")
+    return (
+        isinstance(name, str)
+        and bool(name)
+        and "/" not in name
+        and "\\" not in name
+        and "\0" not in name
+        and not name.startswith(".")
+    )
+
+
+def _name(kind: str, name: str) -> str:
+    """Every identifier that becomes a path component, on READS as well as
+    writes: `load_mission(maps, "../../outside")` used to open that file
+    (review 2026-09-21, F10)."""
+    if not _plain(name):
+        raise StoreError(f"{kind} must be a plain name: {name!r}")
+    return name
+
+
+def _revision(revision: int) -> int:
+    if not isinstance(revision, int) or isinstance(revision, bool) or revision < 1:
+        raise StoreError(f"revision must be a positive integer: {revision!r}")
+    return revision
+
+
+def _inside(maps_dir: str, path: str) -> str:
+    """The path, unless it (or a symlink on it) resolves outside the store."""
+    root = os.path.realpath(maps_dir)
+    real = os.path.realpath(path)
+    if real != root and not real.startswith(root + os.sep):
+        raise StoreError("path escapes the map store")
+    return path
+
+
+def _doc(path: str, what: str) -> dict:
+    """A YAML mapping, or a StoreError: corrupt or scalar YAML is a bounded refusal."""
+    try:
+        with open(path) as fh:
+            doc = yaml.safe_load(fh)
+    except (OSError, yaml.YAMLError) as e:
+        raise StoreError(f"{what}: {e}") from e
+    if not isinstance(doc, dict):
+        raise StoreError(f"{what}: not a mapping")
+    return doc
 
 
 def routes_dir(maps_dir: str, map_id: str, route_id: str | None = None) -> str:
-    d = os.path.join(maps_dir, map_id, "routes")
-    return os.path.join(d, route_id) if route_id else d
+    d = os.path.join(maps_dir, _name("map id", map_id), "routes")
+    return os.path.join(d, _name("route_id", route_id)) if route_id else d
 
 
 def list_routes(maps_dir: str, map_id: str) -> dict[str, list[int]]:
@@ -108,7 +151,7 @@ def list_routes(maps_dir: str, map_id: str) -> dict[str, list[int]]:
 
 
 def route_path(maps_dir: str, map_id: str, route_id: str, revision: int) -> str:
-    return os.path.join(routes_dir(maps_dir, map_id, route_id), f"rev{revision}.yaml")
+    return os.path.join(routes_dir(maps_dir, map_id, route_id), f"rev{_revision(revision)}.yaml")
 
 
 def sha256_file(path: str) -> str:
@@ -133,11 +176,21 @@ def save_route(maps_dir: str, route: Route) -> tuple[int, str, str]:
 
 
 def load_route(maps_dir: str, map_id: str, route_id: str, revision: int) -> tuple[Route, str]:
-    path = route_path(maps_dir, map_id, route_id, revision)
+    path = _inside(maps_dir, route_path(maps_dir, map_id, route_id, revision))
     if not os.path.isfile(path):
         raise StoreError(f"no such route revision: {path}")
-    with open(path) as fh:
-        return Route.loads(fh.read()), sha256_file(path)
+    try:
+        with open(path) as fh:
+            route = Route.loads(fh.read())
+    except (OSError, ValueError, TypeError, KeyError, yaml.YAMLError) as e:
+        raise StoreError(f"route {map_id}/{route_id} rev{revision}: {e}") from e
+    # the file's identity must be the one asked for, not just a well-formed route
+    if route.map.id != map_id or route.route_id != route_id or int(route.revision) != revision:
+        raise StoreError(
+            f"route file identity {route.map.id}/{route.route_id} rev{route.revision} "
+            f"is not {map_id}/{route_id} rev{revision}"
+        )
+    return route, sha256_file(path)
 
 
 # ---- missions --------------------------------------------------------------
@@ -153,9 +206,9 @@ def list_missions(maps_dir: str) -> list[dict]:
         return []
     out = []
     for f in sorted(os.listdir(d)):
-        if f.endswith(".yaml"):
-            with open(os.path.join(d, f)) as fh:
-                out.append(yaml.safe_load(fh))
+        if f.endswith(".yaml") and _plain(f):
+            with contextlib.suppress(StoreError):  # one corrupt file does not hide the rest
+                out.append(_doc(os.path.join(d, f), f"mission {f}"))
     return out
 
 
@@ -192,8 +245,20 @@ def save_mission(
 
 
 def load_mission(maps_dir: str, mission_id: str) -> dict:
-    path = os.path.join(missions_dir(maps_dir), f"{mission_id}.yaml")
+    path = _inside(maps_dir, os.path.join(missions_dir(maps_dir), f"{_name('mission_id', mission_id)}.yaml"))
     if not os.path.isfile(path):
         raise StoreError(f"no such mission: {mission_id}")
-    with open(path) as fh:
-        return yaml.safe_load(fh)
+    doc = _doc(path, f"mission {mission_id}")
+    if doc.get("mission_id") != mission_id:
+        raise StoreError(f"mission file {mission_id!r} names {doc.get('mission_id')!r}")
+    for key in ("map", "route"):
+        ref = doc.get(key)
+        if not isinstance(ref, dict) or not _plain(str(ref.get("id", ""))):
+            raise StoreError(f"mission {mission_id}: bad {key} reference")
+        if (
+            not isinstance(ref.get("revision"), int)
+            or isinstance(ref.get("revision"), bool)
+            or ref["revision"] < 1
+        ):
+            raise StoreError(f"mission {mission_id}: {key} revision must be a positive integer")
+    return doc

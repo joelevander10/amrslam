@@ -6,12 +6,14 @@ import struct
 
 import can
 import pytest
+from agv_core.drivers.canbus import guard  # noqa: E402
 
 from amr_base import canopen
 from amr_base.canopen import (
     ARMED,
     DISARMED,
     FAULT,
+    STANDBY,
     DriveLink,
     MonitorCursor,
     Router,
@@ -24,8 +26,6 @@ from amr_base.canopen import (
     tpdo_configuration_steps,
     unwrap_i32,
 )
-
-import guard  # noqa: E402  (repo module via agv_repo)
 
 # ---------------------------------------------------------------- layout
 
@@ -116,21 +116,36 @@ def test_target_rpm_watchdog_and_clamp():
 
 
 def test_decide_table():
-    assert decide(DISARMED, False, 0, 0, [], [], []).action == "none"
-    assert decide(ARMED, False, 0, 0, [], [], []).action == "disarm"
-    assert decide(FAULT, False, 0, 0, [], [], []).action == "disarm"
-    assert decide(DISARMED, True, 10.0, 12.0, [], [], []).action == "none"  # backoff
-    assert decide(DISARMED, True, 12.0, 12.0, [], [], []).action == "arm"
-    # Q02: owed cleanup is retried on the backoff and blocks arming, wanted or not
-    assert decide(DISARMED, True, 12.0, 12.0, [], [], [], cleanup_owed=True).action == "cleanup"
-    assert decide(DISARMED, False, 12.0, 12.0, [], [], [], cleanup_owed=True).action == "cleanup"
-    assert decide(DISARMED, True, 10.0, 12.0, [], [], [], cleanup_owed=True).action == "none"
-    assert decide(ARMED, True, 0, 0, [], [], []).action == "none"
-    assert decide(ARMED, True, 0, 0, [1], [], []).action == "fault"
-    assert decide(ARMED, True, 0, 0, [], [], [2]).action == "fault"
-    # ETO drop-out: disarm and re-arm with zero, not a latched fault
-    assert decide(ARMED, True, 0, 0, [], [2], []).action == "disarm"
-    assert decide(FAULT, True, 99.0, 0, [], [], []).action == "none"  # latched until ack
+    # (state, want_link, want_power, now, retry_at, silent, dropped, faulted)
+    assert decide(DISARMED, False, False, 0, 0, [], [], []).action == "none"
+    assert decide(STANDBY, False, False, 0, 0, [], [], []).action == "disarm"
+    assert decide(ARMED, False, True, 0, 0, [], [], []).action == "disarm"
+    assert decide(FAULT, False, False, 0, 0, [], [], []).action == "disarm"
+    # DISARMED -> STANDBY whether or not power is wanted: the link comes first
+    assert decide(DISARMED, True, False, 10.0, 12.0, [], [], []).action == "none"  # backoff
+    assert decide(DISARMED, True, False, 12.0, 12.0, [], [], []).action == "prepare"
+    assert decide(DISARMED, True, True, 12.0, 12.0, [], [], []).action == "prepare"
+    # Q02: owed cleanup is retried on the backoff and blocks linking, wanted or not
+    assert decide(DISARMED, True, True, 12.0, 12.0, [], [], [], cleanup_owed=True).action == "cleanup"
+    assert decide(DISARMED, False, False, 12.0, 12.0, [], [], [], cleanup_owed=True).action == "cleanup"
+    assert decide(DISARMED, True, True, 10.0, 12.0, [], [], [], cleanup_owed=True).action == "none"
+    # STANDBY: power follows the policy, on the backoff
+    assert decide(STANDBY, True, False, 12.0, 12.0, [], [], []).action == "none"
+    assert decide(STANDBY, True, True, 10.0, 12.0, [], [], []).action == "none"  # backoff
+    assert decide(STANDBY, True, True, 12.0, 12.0, [], [], []).action == "engage"
+    # a power stage that is off is ALLOWED to be out of Operation enabled
+    assert decide(STANDBY, True, False, 12.0, 12.0, [], [1, 2], []).action == "none"
+    # silence and alarms latch in standby too: the counts are what standby is for
+    assert decide(STANDBY, True, False, 0, 0, [1], [], []).action == "fault"
+    assert decide(STANDBY, True, True, 0, 0, [], [], [2]).action == "fault"
+    # ARMED
+    assert decide(ARMED, True, True, 0, 0, [], [], []).action == "none"
+    assert decide(ARMED, True, False, 0, 0, [], [], []).action == "release"
+    assert decide(ARMED, True, True, 0, 0, [1], [], []).action == "fault"
+    assert decide(ARMED, True, True, 0, 0, [], [], [2]).action == "fault"
+    # ETO drop-out: release and engage again with zero, not a latched fault
+    assert decide(ARMED, True, True, 0, 0, [], [2], []).action == "release"
+    assert decide(FAULT, True, True, 99.0, 0, [], [], []).action == "none"  # latched until ack
 
 
 # ---------------------------------------------------------------- fake bus
@@ -197,12 +212,18 @@ def test_arm_configures_pdos_guard_and_enables_both_drives():
     assert idx.count(0x1400) == 6 and idx.count(0x1800) == 10 and idx.count(0x1801) == 10
     assert (1, 0x1016, 1, (100 << 16) | 500) in w and (2, 0x1016, 1, (100 << 16) | 500) in w
     cws = [(n, v) for n, i, _, v in w if i == 0x6040]
-    # 0x000F: motion extension (bit 13 = 0), required for the 400 W geared motor
-    assert cws == [(1, 0x06), (1, 0x07), (1, 0x000F), (2, 0x06), (2, 0x07), (2, 0x000F)]
+    # Shutdown on both (standby), then the enable per drive. 0x000F: motion extension
+    # (bit 13 = 0), required for the 400 W geared motor
+    assert cws == [
+        (1, 0x06), (2, 0x06), (1, 0x06), (1, 0x07), (1, 0x000F), (2, 0x06), (2, 0x07), (2, 0x000F)
+    ]
     assert (1, 0x60FF, 0, 0) in w  # armed with a zero target
-    # PDO config happened while pre-operational (NMT 0x80 broadcast came before)
+    # PDO config happened while pre-operational (NMT 0x80 PER DRIVE came before;
+    # a broadcast would also silence the MLS on node 10, whose TPDO1 only flows
+    # in Operational)
     nmt = [(m.data[0], m.data[1]) for m in bus.sent if m.arbitration_id == 0]
-    assert nmt[0] == (0x80, 0) and (0x01, 1) in nmt and (0x01, 2) in nmt
+    assert nmt[:2] == [(0x80, 1), (0x80, 2)] and (0x01, 1) in nmt and (0x01, 2) in nmt
+    assert all(node in (1, 2) for _, node in nmt)  # never a broadcast, never node 10
 
 
 def test_failed_enable_rolls_back_both_drives():
@@ -213,6 +234,101 @@ def test_failed_enable_rolls_back_both_drives():
     assert link.state == DISARMED
     disable = [(n, v) for n, i, _, v in bus.writes if i == 0x6040 and v in (0x06, 0x00)]
     assert (1, 0x00) in disable and (2, 0x00) in disable
+
+
+def test_prepare_links_without_power_and_sends_no_rpdo():
+    bus = FakeBus(statusword=0x0221)  # Ready to switch on
+    link = _link(bus)
+    link.prepare(20, 100, 500, 30.0, False, False)
+    assert link.state == STANDBY and not link.energised
+    w = bus.writes
+    assert (1, 0x1016, 1, (100 << 16) | 500) in w and (2, 0x1016, 1, (100 << 16) | 500) in w
+    assert [(n, v) for n, i, _, v in w if i == 0x6040] == [(1, 0x06), (2, 0x06)]
+    assert (1, 0x6060, 0, 3) in w and (2, 0x60FF, 0, 0) in w
+    nmt = [(m.data[0], m.data[1]) for m in bus.sent if m.arbitration_id == 0]
+    assert nmt[-2:] == [(0x01, 1), (0x01, 2)]  # Operational: the TPDOs flow in standby
+    assert not [m for m in bus.sent if m.arbitration_id in (0x201, 0x202)]
+
+
+def test_prepare_tolerates_sto_because_standby_needs_no_power():
+    bus = FakeBus(statusword=0x0250)  # Switch on disabled: the safety chain holds STO
+    link = _link(bus)
+    link.prepare(20, None, 0, 30.0, False, False)
+    assert link.state == STANDBY
+    with pytest.raises(RuntimeError, match="Operation enabled"):
+        link.engage()
+    # a failed engage stays in standby with both drives told Shutdown, for the retry
+    assert link.state == STANDBY and not link.energised
+    assert [(n, v) for n, i, _, v in bus.writes if i == 0x6040][-2:] == [(1, 0x06), (2, 0x06)]
+
+
+def test_engage_then_release_returns_to_standby_at_zero():
+    bus = FakeBus()
+    link = _link(bus)
+    link.prepare(20, 100, 500, 30.0, False, False)
+    epoch = link.arm_epoch
+    link.engage()
+    assert link.state == ARMED and link.energised
+    bus.writes.clear()
+    bus.sent.clear()
+    bus.statusword = 0x1637  # operation enabled, speed zero
+    assert link.release() is True
+    assert link.state == STANDBY and not link.energised and link.pc_guard_set  # 1016h stays
+    rpdos = [struct.unpack("<Hi", bytes(m.data)) for m in bus.sent if m.arbitration_id in (0x201, 0x202)]
+    assert rpdos == [(0x000F, 0), (0x000F, 0)]  # zero first, while still enabled
+    assert [(n, i, v) for n, i, _, v in bus.writes if i in (0x60FF, 0x6040)] == [
+        (1, 0x60FF, 0), (2, 0x60FF, 0), (1, 0x6040, 0x06), (2, 0x6040, 0x06)
+    ]
+    assert not any(i == 0x1016 for _, i, _, _ in bus.writes)
+    assert link.arm_epoch == epoch  # wheel positions run on through power changes
+    link.engage()
+    assert link.state == ARMED
+
+
+def test_a_release_that_cannot_finish_latches_fault():
+    bus = FakeBus()
+    link = _link(bus)
+    link.arm(20, None, 0, 30.0, False, False)
+    real = bus.send
+
+    def refuse_controlword(m):
+        sdo_download = 0x601 <= m.arbitration_id <= 0x67F and m.data[0] != 0x40
+        if sdo_download and (m.data[1], m.data[2]) == (0x40, 0x60):
+            node = m.arbitration_id - 0x600
+            bus._reply(node, bytes([0x80, 0x40, 0x60, 0]) + b"\x00\x00\x02\x06")
+            return
+        real(m)
+
+    bus.send = refuse_controlword
+    assert link.release() is False
+    assert link.state == FAULT and "power-off incomplete" in link.fault_reason and link.energised
+
+
+def test_a_fault_in_standby_is_disarmed_without_an_rpdo():
+    """RPDO1 carries 0x0F: sent to a drive in Ready to switch on it would ENABLE it."""
+    bus = FakeBus(statusword=0x0221)
+    link = _link(bus)
+    link.prepare(20, None, 0, 30.0, False, False)
+    link.fault("drive silent: [1]")
+    assert link.state == FAULT
+    bus.sent.clear()
+    link.disarm()
+    assert link.state == DISARMED
+    assert not [m for m in bus.sent if m.arbitration_id in (0x201, 0x202)]
+
+
+def test_wheel_feedback_is_valid_in_standby():
+    bus = FakeBus(statusword=0x0221)
+    link = _link(bus)
+    link.prepare(20, None, 0, 30.0, False, False)
+    now = 1000.0
+    for n in (1, 2):
+        t = link.telemetry[n]
+        t.statusword, t.rpm, t.position, t.error_register = 0x0221, 0, 500, 0
+        t.t_status = t.t_position = now
+    pos = {n: canopen.WheelPosition() for n in (1, 2)}
+    fb = canopen.wheel_feedback(link, now, 0.05, ((1, True), (2, False)), {1: True, 2: True}, pos)
+    assert fb[1][2] and fb[2][2]
 
 
 def test_preflight_refuses_a_fault_or_remote_clear():
@@ -296,7 +412,7 @@ def test_disarm_retires_the_pc_loss_guard_first():
 def test_monitor_cursor_reads_one_object_per_node_per_call_and_keeps_timeouts_apart():
     """U7: the diagnostic slot is bounded (one SDO per call) and a timeout is
     stored as None, never a plausible number."""
-    import canmon  # repo module via agv_repo
+    from agv_core import canmon
 
     poller = canmon.MonitorPoller({1: "left", 2: "right"}, objects=canmon.OBJECTS[:2])
     cur = MonitorCursor(poller, [1, 2])

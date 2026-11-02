@@ -24,6 +24,8 @@ import sys
 import time
 from dataclasses import dataclass, field
 
+from amr_bringup import logs
+
 ALLOWED_EXECUTABLES = ("ros2",)
 # Direct module entry points: `ros2 run` does not forward SIGINT to its child,
 # so nodes we must stop cleanly are started as `python3 -m <module>` instead.
@@ -71,6 +73,10 @@ class Group:
         for a in argv:
             if not isinstance(a, str) or "\0" in a:
                 raise ValueError("argv must be plain strings")
+        if log_path:
+            # Every spawn begins a fresh file (power-loss plan W2): a report then carries
+            # the previous run's log, and no single file grows for the life of the install.
+            logs.rotate(log_path)
         out = open(log_path, "ab", buffering=0) if log_path else subprocess.DEVNULL
         proc = subprocess.Popen(
             argv,

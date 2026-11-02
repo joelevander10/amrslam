@@ -44,7 +44,9 @@ class ScanGateNode(Node):
         self.declare_parameter("min_period_s", 0.1)
         self.declare_parameter("settle_s", 0.02)
         self.declare_parameter("hold_max_s", 0.5)
-        self.declare_parameter("poll_period_s", 0.01)
+        # 50 Hz (CPU, 2026-10-02; was 100): settle_s is already 20 ms, so a release is
+        # at most one more poll period later. Polls with nothing pending return at once.
+        self.declare_parameter("poll_period_s", 0.02)
         self.declare_parameter("despeckle", False)
         self.declare_parameter("despeckle_window", 2)
         self.declare_parameter("despeckle_min_neighbours", 1)

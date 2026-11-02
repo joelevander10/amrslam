@@ -1,0 +1,40 @@
+# nanoScan3 field set on agv-01 (Safety Designer, monitoring case 1), as configured
+# 2026-10-02. This file is a COPY for the software: the scanner's verified configuration
+# is the authority, and Safety Designer stays humans-only. Change both together.
+#
+# Scanner frame, metres: x forward from the scanner face, y to the left. Every field is
+# a rectangle from x_min to x_max and y_min to y_max (the Safety Designer view draws y
+# across and x up, in mm). The ranges the driver reports on /field_data are the corner
+# distances: protective sqrt(0.50^2 + 0.40^2) = 0.64 m, warning 2 sqrt(0.97^2 + 0.60^2)
+# = 1.14 m, warning 1 sqrt(1.77^2 + 0.75^2) = 1.92 m.
+#
+# path   = the /output_paths index that carries the field's state
+# active = the path's status while the field is OCCUPIED (all three read False then)
+# scale  = AUTO speed factor while occupied; the protective field is a stop (0.0).
+#          With both warning fields occupied the lower factor wins.
+# stop_m = a warning field with scale 0.0 is a DECELERATION STOP that ends this far after
+#          entry (constant decel v^2 / 2 stop_m, capped by the drive's ramp). It may not
+#          exceed the gap to the protective field: warning_2 0.97 - protective 0.50 = 0.47 m.
+#          0.40 (2026-10-08, tracked-speed-plan-1 D8): 0.07 m left for detection latency
+#          (scanner response, /output_paths at ~17 Hz, the mux tick) - ~0.08 s at 0.85 m/s.
+#
+# base.launch.py reads protective/warning_1/warning_2 into the mux parameters, so the
+# indices, polarity, factors and the stop distance live here only.
+monitoring_case: 1
+fields:
+  protective:
+    path: 0
+    active: false
+    scale: 0.0
+    rect: {x_min: -0.02, x_max: 0.50, y_min: -0.40, y_max: 0.40}
+  warning_1:          # outer: first to trip on approach
+    path: 2
+    active: false
+    scale: 0.5
+    rect: {x_min: -0.02, x_max: 1.77, y_min: -0.75, y_max: 0.75}
+  warning_2:          # inner
+    path: 1
+    active: false
+    scale: 0.0          # stop (2026-10-07); x0.2 until 2026-10-02, x0.1 until 2026-10-07
+    stop_m: 0.40
+    rect: {x_min: -0.02, x_max: 0.97, y_min: -0.60, y_max: 0.60}

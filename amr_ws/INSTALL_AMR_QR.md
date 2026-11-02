@@ -1,8 +1,12 @@
 # Installing the SLAM stack on the AMR QR, from zero
 
-Target: the AMR QR's PC, **Ubuntu 24.04 + ROS 2 Jazzy**, profile `amr-qr-01`.
-Background and design: [AMR_QR.md](AMR_QR.md). Day-to-day operation after install:
-[OPERATE_AMR_QR.md](OPERATE_AMR_QR.md).
+Target: the AMR QR's PC, **Ubuntu 24.04 + ROS 2 Jazzy**, profile `amr-qr-01`, user
+`amrslam`. The code is the gvievo-01 stack (gvievo-01-gvievo-main, 2026-10-23) with the
+AMR QR platform on top. Background and design: [AMR_QR.md](AMR_QR.md). Day-to-day
+operation after install: [OPERATE_AMR_QR.md](OPERATE_AMR_QR.md).
+
+**Updating a PC that already runs the previous AMR SLAM code?** Go to
+[Part U](#part-u--updating-from-the-previous-amr-slam-code) at the end instead.
 
 Parts A–D move nothing. Part E moves the wheels: **vehicle on blocks, drive wheels off
 the ground**. Part F is on the floor.
@@ -66,20 +70,21 @@ version is older, so pymodbus comes from pip.
 
 ## Part C — The code
 
-**6. Unpack into `~/agv_can`**
+**6. Clone into `~/agv_can`**
 ```bash
 cd ~
-unzip ~/Downloads/gvievo-01-slam-roadmap-amr-qr.zip
-mv gvievo-01-slam-roadmap agv_can
-ls ~/agv_can        # config.py, profiles/, amr_ws/, ...
+git clone https://github.com/joelevander10/amrslam.git agv_can
+ls ~/agv_can        # agv_core/, profiles/, amr_ws/, tests/, ...
 ```
+`agv_core/` is the vehicle library (profile loader, drivers). It is not a ROS package:
+`env/vehicle.sh` (step 7) and the service put `~/agv_can` on `PYTHONPATH`.
 
 **7. Shell environment**: append to `~/.bashrc`
 ```bash
 source /opt/ros/jazzy/setup.bash
 export AGV_PROFILE=amr-qr-01
 [ -f ~/agv_can/amr_ws/install/setup.bash ] && source ~/agv_can/amr_ws/install/setup.bash
-source ~/agv_can/amr_ws/env/vehicle.sh      # ROS_DOMAIN_ID=10, CycloneDDS on loopback
+source ~/agv_can/amr_ws/env/vehicle.sh      # ROS_DOMAIN_ID=10, CycloneDDS, PYTHONPATH for agv_core
 ```
 Then:
 ```bash
@@ -90,9 +95,8 @@ echo $ROS_DISTRO $AGV_PROFILE $ROS_DOMAIN_ID     # jazzy amr-qr-01 10
 **8. Check that the profile loads**
 ```bash
 cd ~/agv_can
-python3 -c "import config; print(config.PROFILE_NAME, config.PLATFORM, round(config.MAX_SPEED_MPS,3))"
-# amr-qr-01 qr_analog 0.283
-python3 main.py      # must REFUSE ("use the ROS stack") - correct on this vehicle
+python3 -c "from agv_core import config; print(config.PROFILE_NAME, config.PLATFORM, config.TRACKED, round(config.MAX_SPEED_MPS,3))"
+# amr-qr-01 qr_analog False 0.283
 ```
 
 **9. Build**
@@ -101,22 +105,24 @@ cd ~/agv_can/amr_ws
 colcon build --symlink-install
 source install/setup.bash
 ```
-Always build with `--symlink-install`. The nodes find `config.py` and `profiles/`
-through the symlinks, so after a profile edit you only restart the nodes; no rebuild.
+Always build with `--symlink-install`, so a `git pull` of Python or launch changes needs
+only a restart. Rebuild after a pull that adds a package, a node or a message.
 
 **10. Offline tests** (no hardware)
 ```bash
 cd ~/agv_can && python3 tests/run_all.py | tail -2
-# 923 checks, "all checks passed". The suite pins AGV_PROFILE=agv-01 itself, so the
+# 782 checks, "all checks passed". The suite pins AGV_PROFILE=agv-01 itself, so the
 # amr-qr-01 export from step 7 does not affect it.
-cd amr_ws && python3 -m pytest -q src/amr_base/test/test_qr_*.py src/amr_description/test/
+cd amr_ws/src && AGV_PROFILE=agv-01 python3 -m pytest -q amr_base/test/test_qr_*.py \
+  amr_base/test/test_wasd_teleop.py amr_localization/test amr_description/test
 ```
 
 ## Part D — Hardware links (parked, nothing moves)
 
 **11. Stop the old QR controller.** Stop `app.py` (Flask, port 5050) and disable whatever
 starts it at boot (systemd unit, cron job, autostart). It owns the same I/O modules, CAN
-bus and IMU port, and `qr_base_node` refuses to start while it runs.
+bus and IMU port. Nothing checks for it any more, so make sure it is really gone:
+`ss -ltn | grep 5050` must print nothing.
 
 **12. Network**
 ```bash
@@ -149,7 +155,7 @@ ip -details link show can0          # UP, bitrate 125000
 If `can0` already exists without slcand, the adapter runs candleLight firmware. Skip the
 service and use `sudo ip link set can0 up type can bitrate 125000` instead.
 
-d. In `~/agv_can/profiles/amr-qr-01.json` set `"imu_port": "/dev/amr_imu"`.
+d. `profiles/amr-qr-01.json` already uses `"imu_port": "/dev/amr_imu"`.
 
 **14. Sensor checks** (read-only tools)
 
@@ -214,9 +220,12 @@ ros2 launch amr_bringup drivers.launch.py lidar:=false
 
 Terminal 2 — status:
 ```bash
-ros2 topic echo /drives/status --once       # operational: true
+ros2 topic echo /drives/status --once       # operational: true, link_state: armed (MANUAL)
 ros2 topic echo /amr/panel_state --once     # valid: true, mode_auto: false
 ```
+Drive power follows gvievo's power model: in MANUAL the drives are powered (the QR panel
+has no Manual Arm input); in AUTO they sit in **standby** (0 V, brakes held,
+`link_state: standby`) until a run asks for power after Start. See OPERATE §0.
 
 Terminal 3 — keyboard drive, slow speeds. The panel must be MANUAL, which it is at boot.
 ```bash
@@ -241,9 +250,9 @@ What to check:
 ## Part F — Lidar and the floor
 
 **18. Lidar**
-- Put the scanner's IP and this PC's address into
-  `amr_ws/src/amr_bringup/config/nanoscan3.amr-qr-01.yaml`. Keep clear of 192.168.3.1,
-  which is the GLS621.
+- The scanner is at 192.168.1.2 (`nanoscan3.amr-qr-01.yaml`); `host_ip: "auto"` picks
+  this PC's address on the route to it. If no route exists at launch, `lidar.host_ip` in
+  the profile is used instead (set it to this PC's 192.168.1.x address).
 - Start it:
   ```bash
   ros2 launch amr_bringup lidar.launch.py foxglove:=true
@@ -262,14 +271,19 @@ What to check:
 ## Part G — Run it as a service
 
 **20. Install the systemd service**
+
+The deploy files are already written for user `amrslam` and profile `amr-qr-01`
+(`amr.service`, `amr.env`, `amr-web.sudoers`); do not edit them on the PC, or the next
+`git pull` stops on them. A different user name: change it in the repo and push.
 ```bash
 cd ~/agv_can/amr_ws/deploy
-sed -i "s/gvipc-evo-01/$USER/g" amr.service amr_nav.service amr_mapping.service amr.env amr_legacy.env
-sed -i 's/^AGV_PROFILE=agv-01/AGV_PROFILE=amr-qr-01/' amr.env
-sudo ./install.sh                    # validates + installs unit files, starts nothing
+sudo ./install.sh                    # validates + installs amr.service, sysctl + journald drop-ins
+sudo install -o root -g root -m 0440 amr-web.sudoers /etc/sudoers.d/amr-web && sudo visudo -c
+sudo systemctl restart systemd-journald
 sudo systemctl enable --now amr.service
 journalctl -u amr.service -f
 ```
+The sudoers line lets the web page's **Restart** button restart `amr.service`.
 Open `http://<robot-ip>:5001/`. The Status page should show Mode `IDLE`, Selector
 `MANUAL` and Drives `ARMED`. Next: [OPERATE_AMR_QR.md](OPERATE_AMR_QR.md).
 
@@ -279,9 +293,44 @@ Open `http://<robot-ip>:5001/`. The Status page should show Mode `IDLE`, Selecto
 
 | Symptom | Likely cause |
 |---|---|
-| `qr_base_node refuses to start` | `app.py` still running, or something else listens on port 5050 |
+| `qr_base_node` exits with "owned by ..." | Another process holds the dio/can/imu lock (a `qr_calibrate` still running, or a second launch) |
+| `ModuleNotFoundError: agv_core` | `~/agv_can` not on `PYTHONPATH`: source `env/vehicle.sh` (the service does it itself) |
 | `CAN unavailable` | `can0` down (13c) or the adapter was replugged |
 | Drives never `operational` | DIO or analog module unreachable, encoders silent (`candump can0`), E-stop pressed |
 | `hardware launch refuses domain` | `ROS_DOMAIN_ID` isn't 10; `env/vehicle.sh` not sourced |
 | `TypeError ... device_id` | pymodbus older than 3.10 (step 5) |
 | Robot slow | Expected until step 16 raises `motor_max_rpm` |
+
+---
+
+## Part U — Updating from the previous AMR SLAM code
+
+The repo moved to the latest gvievo-01 code (2026-11-02): `config.py`, `core/` and
+`drivers/` became the `agv_core/` library, the legacy controller is gone, and messages
+changed. A plain `git pull` plus a full rebuild does it; nothing on the robot outside
+`~/agv_can` changes, and `~/amr_maps` and `~/.amr` are kept.
+
+```bash
+sudo systemctl stop amr.service 2>/dev/null; pkill -f "ros2 launch" ; true
+cd ~/agv_can
+git status --short                 # local edits block the pull - see below
+git checkout -- .                  # drop them (the repo now has the robot's values)
+git pull
+git log --oneline -1               # the "rebase on gvievo-01-gvievo-main" commit or newer
+cd amr_ws && rm -rf build install log
+colcon build --symlink-install && source install/setup.bash
+source env/vehicle.sh
+python3 -c "from agv_core import config; print(config.PROFILE_NAME, config.PLATFORM)"   # amr-qr-01 qr_analog
+cd ~/agv_can && python3 tests/run_all.py | tail -2                                     # 782 checks
+```
+`git status` listing `profiles/amr-qr-01.json` or `nanoscan3.amr-qr-01.yaml`: the repo
+already carries the robot's values (IMU 115200 baud, right encoder inverted, measured
+feedforward, scanner 192.168.1.2). Note anything else you changed on the robot before
+the checkout and put it back in the repo.
+
+Then re-run Part G step 20 (the unit files changed: watchdog, sudoers, journald), and
+repeat the quick checks: step 14 (`qr_calibrate io / enc / imu`), step 17 on blocks
+(`drivers.launch.py lidar:=false` + `wasd_teleop`), step 18 (lidar). The learnt scan
+files `~/.amr/robot_fixed.yaml` and `~/.amr/scan_mask.yaml` keep working.
+
+What behaves differently after the update: [OPERATE_AMR_QR.md](OPERATE_AMR_QR.md) §0.

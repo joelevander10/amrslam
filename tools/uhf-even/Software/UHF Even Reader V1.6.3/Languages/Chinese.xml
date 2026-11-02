@@ -1,0 +1,479 @@
+﻿<?xml version="1.0" encoding="utf-8" ?>
+<SimplifiedChinese>
+  <Form>
+    <!--这是panelRFSetting界面的中文翻译-->
+    <Name>panelRFSetting</Name>
+    <Controls>
+      <Control name="groupBox1">连接方式</Control>
+      <Control name="gpbCom">串口连接</Control>
+      <Control name="label2">串口号</Control>
+      <Control name="label3">波特率</Control>
+      <Control name="btnSportOpen">打开</Control>
+      <Control name="btnSportClose">关闭</Control>
+      <Control name="groupBox7">读写器版本</Control>
+      <Control name="label25">硬件版本:</Control>
+      <Control name="label26">固件版本:</Control>
+      <Control name="label27">设备SN:</Control>
+      <Control name="groupBox6">软件设置</Control>
+      <Control name="label17">语言选择:</Control>
+      <Control name="btnOutputPara">导出参数</Control>
+      <Control name="btnInputPara">导入参数</Control>
+      <Control name="btnEnbableKC">闭合继电器1</Control>
+      <Control name="btnDisableKC">释放继电器1</Control>
+	  <Control name="btnEnbableKC2">闭合继电器2</Control>
+      <Control name="btnDisableKC2">释放继电器2</Control>
+      <Control name="groupBox9">读写器参数</Control>
+      <Control name="label1">输出功率:</Control>
+      <Control name="btnSetTxPower">设置功率:</Control>	  
+      <Control name="label18">工作频段:</Control>
+      <Control name="label4">波特率:</Control>
+      <Control name="label35">起始频率:</Control>
+      <Control name="label5">设备地址(HEX):</Control>
+      <Control name="label31">结束频率:</Control>
+      <Control name="rdbPointFreq">单频点</Control>
+      <Control name="groupBox8">读卡设置</Control>
+      <Control name="label10">工作模式:</Control>
+      <Control name="label14">通讯接口:</Control>
+      <Control name="label19">询查区域(号码):</Control>
+      <Control name="label21">起始地址(Byte):</Control>
+      <Control name="label22">字节长度(Byte):</Control>
+      <Control name="label8">过滤时间(S):</Control>
+      <Control name="label9">触发时间(S):</Control>
+      <Control name="label23">Q值:</Control>
+      <Control name="label24">Session:</Control>
+      <Control name="label7">韦根输出:</Control>
+      <Control name="label15">询查间隔时间(*10ms):</Control>
+      <Control name="cbxBuzzerEn">蜂鸣器使能</Control>
+      <Control name="ckbAnt1">天线1</Control>	  
+      <Control name="ckbAnt2">天线2</Control>	 
+      <Control name="ckbAnt3">天线3</Control>	 
+	  <Control name="ckbAnt4">天线4</Control>	 
+      <Control name="ckbAnt5">天线5</Control>	  
+      <Control name="ckbAnt6">天线6</Control>	 
+      <Control name="ckbAnt7">天线7</Control>	 
+	  <Control name="ckbAnt8">天线8</Control>	  
+	  <Control name="btnCheckAnt">搜索天线</Control>	 
+      <Control name="btnGetAllPara">获取所有参数</Control>	 
+	  <Control name="btnSetAllPara">设置所有参数</Control>	 
+	  <Control name="btnSetDefaultPara">默认参数</Control>	 	
+	  <Control name="RFlabel8">注意：所有口令和数据都是十六进制格式，地址和长度是十进制格式</Control>	  
+	  
+	  <Control name="groupNet">网络连接</Control>	 
+	  <Control name="rflabel33">IP地址：</Control>	 	
+	  <Control name="rflabel32">端口号：</Control>	  
+	  
+	  <Control name="btnConnect">连接</Control>	 
+	  <Control name="btnDisConnect">断开</Control>	
+	  <Control name="btnScannet">扫描设备</Control>	
+	  
+	  
+	  <Control name="RFgroupBox3">占空比设置</Control>	 
+	  <Control name="Rflabel34">盘点轮空间隔</Control>	
+	  <Control name="RFlabel35">轮空时间间隔(*1ms)</Control>		  
+	  <Control name="RFgroupBox5">天线设置</Control>	
+
+	  
+    </Controls>
+  </Form>
+    <Form>
+    <!--这是panelInventory界面的中文翻译-->
+    <Name>panelInventory</Name>
+    <Controls>
+      <Control name="lblinvsum">询查总数：</Control>
+      <Control name="rdbScene0">循环询查</Control>
+      <Control name="rdbScene1">按时间</Control>
+	  <Control name="rdbScene2">按次数</Control>
+      <Control name="rdbScene4">自定义</Control>
+      <Control name="btnISOSelect">自定义参数设置</Control>
+	  <Control name="invlabel138">(0:持续询查)</Control>
+      <Control name="labe20">识别速度：</Control>
+      <Control name="labe25">识别时间</Control>
+      <Control name="labe26">累计返回:</Control>
+      <Control name="labe27">累计运行时间:</Control>
+	  <Control name="label30">询查区域(号码):</Control>
+      <Control name="label31">起始地址(Byte):</Control>
+      <Control name="label32">字节长度(Byte):</Control>
+      <Control name="label33">Q值:</Control>
+      <Control name="label34">Session:</Control>
+	  <Control name="label35">询查间隔时间(*10ms):</Control>
+      <Control name="btnFirstPage">首页</Control>
+      <Control name="btnPrevPage">上一页</Control>
+      <Control name="btnNextPage">下一页</Control>
+      <Control name="btnLastPage">尾页</Control>
+      <Control name="label36">每页显示:</Control>
+      <Control name="label37">条</Control>
+      <Control name="btnClear">清除数据</Control>
+      <Control name="btnSave">保存数据</Control>
+      <Control name="colNum">序号</Control>
+      <Control name="colCode">编码</Control>
+	  <Control name="colCodeLen">数据长度</Control>
+      <Control name="colCount">次数(天线1/天线2/天线3/天线4)</Control>
+      <Control name="colCw">信道</Control>
+	  <Control name="groupBox2">询查方式</Control>
+	  <Control name="groupBox3">询查参数</Control>
+	  <Control name="btnInventory">开始</Control>
+	  <Control name="invlabel8">注意：所有口令和数据都是十六进制格式，地址和长度是十进制格式</Control>
+	  <Control name="netlabel138">(0: 持续询查)</Control>
+	  
+	  
+	  <Control name="invlabel20">识别速度：</Control>
+	  <Control name="invlabel25">识别时间：</Control>
+	  <Control name="invlabel26">累计返回：</Control>
+	  <Control name="invlabel27">累计运行时间：</Control>
+	  
+	  
+	  
+
+    </Controls>
+  </Form>
+      <Form>
+    <!--这是activeInventory界面的中文翻译-->
+    <Name>activeInventory</Name>
+    <Controls>
+	  <Control name="activelblinvsum">盘点总数：</Control>
+      <Control name="activelabe1">识别速度：</Control>
+      <Control name="activelabe2">识别时间</Control>
+      <Control name="activelabe3">累计返回:</Control>
+      <Control name="activelabe4">累计运行时间:</Control>
+      <Control name="activebtnFirstPage">首页</Control>
+      <Control name="activebtnPrevPage">上一页</Control>
+      <Control name="activebtnNextPage">下一页</Control>
+      <Control name="activebtnLastPage">尾页</Control>
+      <Control name="activelabel5">每页显示:</Control>
+      <Control name="activelabel6">条</Control>
+      <Control name="activebtnClear">清除数据</Control>
+      <Control name="activebtnSave">保存数据</Control>
+      <Control name="activecolNum">序号</Control>
+      <Control name="activecolCode">编码</Control>
+	  <Control name="activecolCodeLen">数据长度</Control>
+      <Control name="activecolCount">次数(天线1/天线2/天线3/天线4)</Control>
+      <Control name="activecolCw">信道</Control>
+	  <Control name="btnInventoryActive">获取</Control>
+	  
+    </Controls>
+  </Form>
+        <Form>
+    <!--这是panelInventory界面的中文翻译-->
+    <Name>panelEpc</Name>
+    <Controls>
+      <Control name="EpcgroupBox1">选定标签操作</Control>
+      <Control name="epcckbSelTag">已选定标签：</Control>
+      <Control name="epclabel1">标签列表：</Control>
+      <Control name="epcbtnSelectTag">选定标签</Control>
+      <Control name="epcgroupBox2">读写数据</Control>
+      <Control name="epcrdbRWRsv">Reserve</Control>
+      <Control name="epcrdbRWUii">EPC 区</Control>
+      <Control name="epcrdbRWTid">TID 区</Control>
+      <Control name="epcrdbRWUser">USER </Control>
+	  <Control name="epclabel2">访问密码(HEX):</Control>
+      <Control name="epclabel3">起始地址(WORD):</Control>
+      <Control name="epclabel4">数据长度(WORD):</Control>
+      <Control name="epcbtnRead">读标签</Control>
+      <Control name="epcbtnWrite">写标签</Control>
+	  <Control name="epclabel5">写入数据:</Control>
+      <Control name="epcgroupBox3">设置锁定状态</Control>
+
+	  <Control name="epcrdbLAccPwd">访问密码区</Control>
+	  <Control name="epcrdbLKillPwd">灭活密码区</Control>
+      <Control name="epcrdbLUii">EPC 区</Control>
+      <Control name="epcrdbLTid">TID 区</Control>
+      <Control name="epcrdbLUser">USER 区</Control>
+	  
+	  <Control name="epcrdbLOpen">开放</Control>
+      <Control name="epcrdbLLock">锁定</Control>
+      <Control name="epcrdbLPOpen">永久开放</Control>
+      <Control name="epcrdbLPLock">永久锁定</Control>
+	  <Control name="epclabel6">访问口令(HEX):</Control>
+	  <Control name="epcbtnLock">锁定标签</Control>
+	  
+	  
+      <Control name="epcgroupBox4">灭活标签</Control>
+	  <Control name="epclabel7">灭活口令(HEX):</Control>
+	  <Control name="epcbtnKillTag">灭活标签</Control>
+	  
+      <Control name="epclabel8">注意：所有口令和数据都是十六进制格式，地址和长度是十进制格式</Control>
+	  <Control name="epcbtnSave">导出数据</Control>
+      <Control name="epcbtnClear">清除数据</Control>
+
+      <Control name="epccolNum">序号</Control>
+	  <Control name="epccolPC">PC</Control>
+	  <Control name="epccolCRC">CRC</Control>
+      <Control name="epccolCode">EPC</Control>
+	  <Control name="epccolDataLen">数据长度</Control>
+	  <Control name="epccolData">数据</Control>
+      <Control name="epccolAnt">天线</Control>
+      <Control name="epccolCount">数目</Control>
+    </Controls>
+  </Form>
+  <Form>
+    <!--这是panelInventory界面的中文翻译-->
+    <Name>testPanel1</Name>
+    <Controls>
+      <Control name="testgroupBox1">频率测试</Control>
+      <Control name="testlabel1">测试频率:</Control>
+      <Control name="testlabel2">在以下测试中测试频率为可选项</Control>
+      <Control name="testbtnFreqCfg">设置</Control>
+      <Control name="testgroupBox2">回波测试</Control>
+      <Control name="testlabel3">测试次数:</Control>
+      <Control name="testlabel4">回波损耗:</Control>
+      <Control name="testbtnBackWave">回波测试</Control>
+      <Control name="testgroupBox3">开启载波</Control>
+	  <Control name="testlabel5">说明：开启载波</Control>
+      <Control name="testbtnCw">开启</Control>
+      <Control name="testgroupBox4">工作温度监控</Control>
+      <Control name="testlabel6">温度阈值:</Control>
+      <Control name="testlabel7">当前温度:</Control>
+	  <Control name="testlabel8">工作温度到达设定值后，自动休眠冷却后继续工作。</Control>
+      <Control name="testbtnSetTemp">设置温度</Control>
+      <Control name="testbtnGetTemp">获取温度</Control>
+    </Controls>
+  </Form>
+    <Form>
+    <!--这是FrmMain界面的中文翻译-->
+    <Name>FrmMain</Name>
+    <Controls>
+      <Control name="tabPage5">参数设置</Control>
+      <Control name="tabPage1">应答模式</Control>
+      <Control name="tabPage3">主动模式</Control>
+      <Control name="tabPage2">读写标签</Control>
+      <Control name="test_tabPage">测试功能</Control>
+	  <Control name="NetInfo">网络设置</Control>
+	  <Control name="AdvanceSettingPage">高级设置</Control>
+	  
+    </Controls>
+  </Form>
+  
+      <Form>
+    <!--这是netSet界面的中文翻译-->
+    <Name>netSet</Name>
+    <Controls>
+      <Control name="netgroupBox1">网络参数</Control>
+      <Control name="netlabel1">IP地址：</Control>
+      <Control name="netlabel2">MAC地址：</Control>
+      <Control name="netlabel3">端口号：</Control>
+	  <Control name="netlabel9">子网掩码：</Control>
+      <Control name="netlabel10">默认网关：</Control>
+      <Control name="btnGetNetInfo">获取</Control>
+	  <Control name="btnSetNetInfo">设置</Control>
+	  
+	  <Control name="netgroupBox2">远程参数</Control>
+      <Control name="cbxRemoteNetEn">发送使能</Control>
+      <Control name="netlabel8">远程IP：</Control>
+      <Control name="netlabel7">远程端口：</Control>
+      <Control name="netlabel5">心跳时间：</Control>
+	  <Control name="netlabel6">(0~255)单位*5秒</Control>
+	  <Control name="btnGetRemoteNetInfo">获取</Control>
+	  <Control name="btnSetRemoteNetInfo">设置</Control>
+	  
+	  <Control name="netlabel11">路由SSID：</Control>
+      <Control name="netlabel12">WiFi密码：</Control>
+      <Control name="netlabel13">远程IP：</Control>
+	  <Control name="netlabel14">远程端口：</Control>
+	  <Control name="btnGetWIFIInfo">获取</Control>
+	  <Control name="btnSetWIFIInfo">设置</Control>
+	  <Control name="cbxWIFItEn">WiFi使能</Control>
+	  
+    </Controls>
+  </Form>
+  
+        <Form>
+    <!--这是advanceSetting界面的中文翻译-->
+    <Name>advanceSetting</Name>
+    <Controls>
+      <Control name="advgroupBox1">读卡权限</Control>
+      <Control name="advcbxCodeEn">密码使能</Control>
+      <Control name="advlabel2">密码(HEX)：</Control>
+      <Control name="advcbxMaskEn">掩码使能</Control>
+	  <Control name="advlabel9">起始地址：</Control>
+      <Control name="advlabel6">掩码长度：</Control>
+      <Control name="advlabel10">掩码数据：</Control>
+	  <Control name="advlabel3">条件(EPC)：</Control>
+	  
+	  <Control name="advgroupBox2">输出控制</Control>
+      <Control name="advcbxKCEn">继电器1</Control>
+	  <Control name="advcbxKCEn2">继电器2</Control>
+      <Control name="advlabel4">有效时间(S)：</Control>
+      <Control name="advcbxKCPowerEn">继电器带电</Control>
+      <Control name="advcbxbufferen">缓存使能</Control>
+	  <Control name="advcbxprotocolen">协议使能</Control>
+	  <Control name="advlabel5">特定协议格式</Control>
+	  <Control name="advgroupBox3">输入控制</Control>
+	  
+	  <Control name="advlabel7">触发有效：</Control>
+      <Control name="advrdbhighlevel">高电平触发</Control>
+	  <Control name="advrdbLowlevel">低电平触发</Control>
+	  <Control name="btnGetPermissonInfo">获取</Control>
+	  <Control name="btnSetPermissonInfo">设置</Control>
+	  <Control name="btnGetGpioInfo">获取</Control>
+	  <Control name="btnSetGpioInfo">设置</Control>
+	  
+    </Controls>
+  </Form>
+  
+      <Form>
+    <!--这是系统数据的中文翻译-->
+    <Name>Systemdata</Name>
+    <Controls>
+      <Control name="strAnsmode">应答模式</Control>
+      <Control name="strAutmode">主动模式</Control>
+      <Control name="strtrimode">触发模式</Control>
+      <Control name="strMSBmode">高字节在前输出</Control>
+      <Control name="strLSBmode">低字节在前输出</Control>
+	  
+	  <Control name="strPasswordOrMaskMatched">密码或者掩码符合条件</Control>
+      <Control name="strPasswordAndMaskMatched">密码和掩码均符合条件</Control>
+	  
+	  <Control name="Text1">阅读器打开成功，串口号：</Control>
+	  <Control name="Text2">读卡器未连接</Control>
+	  <Control name="Text3">开始获取阅读器使用天线</Control>
+	  <Control name="Text4">正在检测天线，请稍后...</Control>
+	  <Control name="Text5">阅读器使用天线获取成功</Control>
+	  <Control name="Text6">天线检测失败，请确认天线连接后，点击天线设置中“获取”按钮，重新检测，无天线操作可能会损坏设备</Control>
+	  <Control name="Text7">使用天线获取失败：</Control>
+	  <Control name="Text8">请至少选择一个天线</Control>
+	  <Control name="Text9">提示</Control>
+	  <Control name="Text10">开始设置阅读器使用天线</Control>
+	  <Control name="Text11">阅读器使用天线设置成功</Control>
+	  <Control name="Text12">使用天线设置失败：</Control>
+	  <Control name="Text13">已成功连接的天线编号：</Control>
+	  <Control name="Text14">天线</Control>
+	  <Control name="Text15">所有天线都已断开</Control>
+	  <Control name="Text16">打开串口失败，请输入串口号</Control>
+	  <Control name="Text17">阅读器已经打开，请先关闭阅读器</Control>
+	  <Control name="Text18">阅读器打开失败：</Control>
+	  <Control name="Text19">获取设备参数</Control>
+	  <Control name="Text20">获取协议失败：</Control>
+	  <Control name="Text21">更新协议失败：</Control>
+	  <Control name="Text22">获取阅读器参数失败：</Control>
+	  <Control name="Text23">关闭阅读器</Control>
+	  <Control name="Text24">阅读器波特率获取值错误为：</Control>
+	  <Control name="Text25">读取参数成功</Control>
+	  <Control name="Text26">请输入起始频率</Control>
+	  <Control name="Text27">输入的\"频率\"值必须是840~960（包括840和960）之间的数（可以是小数）</Control>
+	  <Control name="Text28">输入的\"信道间隔频率\"值必须是0~500（包括0和500）之间的整数</Control>
+	  <Control name="Text29">输入的\"信道间隔频率\"值必须是1~50（包括1和50）之间的整数</Control>
+	  <Control name="Text30">请选择起始频率</Control>
+	  <Control name="Text31">请选择信道个数</Control>
+	  <Control name="Text32">设置参数成功:</Control>
+	  <Control name="Text33">设置参数失败:</Control>
+	  <Control name="Text34">读卡器恢复默认设置成功</Control>
+	  <Control name="Text35">恢复默认参数失败</Control>
+	  <Control name="Text36">保存参数成功</Control>
+	  <Control name="Text37">导入参数成功</Control>
+	  <Control name="Text38">配置文件不存在，未取到参数</Control>
+	  <Control name="Text39">设置成功，请重启软件</Control>
+	  <Control name="Text40">请输入正确的盘点时间，盘点时间必须大于0</Control>
+	  <Control name="Text41">请输入正确的盘点次数，盘点次数必须大于0</Control>
+	  <Control name="Text42">请输入正确的盘点时间，盘点时间必须小于255</Control>
+	  <Control name="Text43">开始执行盘点</Control>
+	  
+	  <Control name="Text44">盘点标签失败：</Control>
+	  <Control name="Text45">开始</Control>
+	  <Control name="Text46">盘点完毕</Control>
+	  <Control name="Text47">请输入每页显示行数</Control>
+	  <Control name="Text48">输入的每页显示行数必须是数字</Control>
+	  <Control name="Text49">输入的每页显示行数必须是 1~65535 之间的数</Control>
+	  <Control name="Text50">显示标签时发生错误：</Control>
+	  <Control name="Text51">获取ISO select参数失败：</Control>
+	  <Control name="Text52">获取ISO query参数失败：</Control>
+	  <Control name="Text53">设置ISO select参数失败：</Control>
+	  <Control name="Text54">设置ISO query参数失败：</Control>
+	  <Control name="Text55">读取</Control>
+	  <Control name="Text56">读取完毕</Control>
+	  <Control name="Text57">读标签</Control>
+	  <Control name="Text58">请先选择存储区</Control>
+	  <Control name="Text59">请先输入\"起始地址\"参数</Control>
+	  <Control name="Text60">输入的\"起始地址\"值必须是0~65535（包括0和65535）之间的整数</Control>
+	  <Control name="Text61">请先输入\"数据长度\"值</Control>
+	  <Control name="Text62">输入的\"数据长度\"值必须是0~65535（包括0和65535）之间的整数</Control>
+	  <Control name="Text63">输入的\"访问密码\"必须是长度为16位的十六进制数</Control>	  
+	  
+	  <Control name="Text64">开始执行读标签</Control>
+	  <Control name="Text65">停止读取</Control>
+	  <Control name="Text66">读标签失败：</Control>
+	  <Control name="Text67">写标签</Control>
+	  <Control name="Text68">请先输入\"访问密码\"</Control>
+	  <Control name="Text69">请先输入需要写入的数据</Control>
+	  <Control name="Text70">开始执行写标签</Control>
+	  <Control name="Text71">停止写入</Control>
+	  <Control name="Text72">写标签失败：</Control>
+	  <Control name="Text73">锁定标签</Control>	  
+	  
+	  <Control name="Text74">灭活标签</Control>
+	  <Control name="Text75">请先输入\"灭活口令\"</Control>
+	  <Control name="Text76">输入的\"灭活口令\"必须是长度为16位的十六进制数</Control>
+	  <Control name="Text77">标签灭活后将彻底毁坏，是否继续灭活标签？</Control>
+	  <Control name="Text78">开始执行灭活标签</Control>
+	  <Control name="Text79">停止灭活</Control>
+	  <Control name="Text80">灭活标签失败：</Control>
+	  <Control name="Text81">执行完毕</Control>
+	  <Control name="Text82">操作标签失败：</Control>
+	  <Control name="Text83">显示标签数据时发生错误：</Control>	  
+	  
+	  <Control name="Text84">标签返回错误：0x</Control>
+	  <Control name="Text85">请先选择锁定方式</Control>
+	  <Control name="Text86">请先输入\"访问口令\"</Control>
+	  <Control name="Text87">输入的\"灭活口令\"必须是长度为16位的十六进制数</Control>
+	  <Control name="Text88">开始执行锁定标签</Control>
+	  <Control name="Text89">停止锁定</Control>
+	  <Control name="Text90">锁定标签失败：</Control>
+	  <Control name="Text91">停止</Control>
+	  
+	  <Control name="Text92">请先输入\"Pointer\"</Control>
+	  <Control name="Text93">\"Pointer\"的值必须是0~65535（包括0和65535）之间的整数</Control>
+	  <Control name="Text94">信息：</Control>
+	  <Control name="Text95">警告：</Control>
+	  <Control name="Text96">错误：</Control>
+	  <Control name="Text97">停止锁定</Control>
+	  <Control name="Text98">锁定标签失败：</Control>
+	  <Control name="Text99">停止</Control>
+	  
+	  <Control name="Text100">请输入'输出功率'</Control>
+	  <Control name="Text101">输入的'输出功率'值必须是10~34（包括10和34）之间的整数</Control>
+	  <Control name="Text102">开始设置阅读器射频输出功率</Control>
+	  <Control name="Text103">阅读器射频输出功率设置成功</Control>
+	  <Control name="Text104">输出功率设置失败：</Control>
+	  
+	  <Control name="Text105">阅读器本地网络参数获取成功</Control>
+	  <Control name="Text106">阅读器本地网络参数获取失败：</Control>
+	  
+	  <Control name="Text107">请输入读写ip地址</Control>
+	  <Control name="Text108">IP地址格式错误</Control>
+	  <Control name="Text109">mac地址格式错误</Control>
+	  <Control name="Text110">port格式错误</Control>
+	  <Control name="Text111">阅读器本地网络参数设置成功</Control>
+	  <Control name="Text112">阅读器本地网络参数设置失败：</Control>
+	  
+	  <Control name="Text113">阅读器本地高级参数设置成功</Control>
+	  <Control name="Text114">阅读器本地高级参数设置失败</Control>
+	  <Control name="Text115">开始获取阅读器本地高级参数</Control>
+	  <Control name="Text116">获取阅读器本地高级参数成功</Control>
+	  <Control name="Text117">高级设置访问密码：</Control>
+	  
+	  <Control name="Text118">断开阅读器连接</Control>
+	  <Control name="Text119">等待阅读器响应超时</Control>
+	  
+	  <Control name="Text120">读写器连接失败，请输入IP地址</Control>
+	  <Control name="Text121">读写器连接失败，输入的IP地址格式错误，请输入IPv4格式的IP地址</Control>
+	  <Control name="Text122">读写器连接失败，请输入端口号</Control>
+	  <Control name="Text123">读写器连接失败，输入端口号必须是1~65535之间的整数（包括1和65535）</Control>
+	  <Control name="Text124">阅读器已经打开，请先关闭阅读器</Control>
+	  <Control name="Text125">阅读器打开成功，IP地址：</Control>
+	  <Control name="Text126">，端口号：</Control>
+	  <Control name="Text127">阅读器打开失败：</Control>
+	  
+	  <Control name="Text128">输出格式为ModBus TCP/RTU格式，用03或者04功能码读取数据</Control>
+	  <Control name="Text129">输出号码为ASCII格式，号码输出为字符串形式</Control>
+	  <Control name="Text130">输出号码为HEX格式，输出为纯号码，没有帧头帧尾</Control>
+
+	  <Control name="Text131">开始设置天线功率</Control>
+	  <Control name="Text132">设置天线功率成功</Control>
+	  <Control name="Text133">设置天线功率失败：</Control> 
+	  
+	  <Control name="Text134">开始获取天线功率</Control>
+	  <Control name="Text135">获取天线功率成功</Control>
+	  <Control name="Text136">获取天线功率失败：</Control> 
+    </Controls>
+  </Form>
+  
+</SimplifiedChinese>

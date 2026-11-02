@@ -2,8 +2,10 @@
 
 Day-to-day operation of the AMR QR (profile `amr-qr-01`) once
 [INSTALL_AMR_QR.md](INSTALL_AMR_QR.md) is done. This is the AMR QR version of
-[RUNBOOK.md](RUNBOOK.md) §2; the RUNBOOK has the full detail for every page. The only
-real difference is the panel: the AMR QR has **two buttons instead of a selector switch**.
+[RUNBOOK.md](RUNBOOK.md) §2; the RUNBOOK has the full detail for every page. The
+differences: the AMR QR has **two buttons instead of a selector switch**, no Manual Arm
+switch, no horn, a **push mode** for the brakes, and it does not use the scanner's field
+outputs (§6).
 
 ## 0. The panel in one table
 
@@ -20,13 +22,26 @@ real difference is the panel: the AMR QR has **two buttons instead of a selector
 - The web page can never start motion by itself. Motion needs either a held jog key in
   MANUAL, or START in AUTO.
 
+**Drive power** (the gvievo power model, 2026-10-08):
+
+| Situation | Drives tile | Wheels |
+|---|---|---|
+| MANUAL | `ARMED` | powered, brakes on while still; a held jog drives |
+| AUTO, nothing running | `OFF` · "AUTO, no run asking for power" | **standby**: 0 V, brakes held - normal, not a fault |
+| AUTO, after START of a run | `OFF` for the **2 s pre-move warning**, then `ARMED` | the route drives |
+| Push mode (Manual page) | `OFF` · "push mode: brakes released" | brakes released, rolls freely |
+| E-stop / FAULT | red | 0 V, brakes held |
+
 ---
 
 ## 1. Start of shift
 
 1. Check the area is clear and the E-stop is released. Switch the vehicle on.
 2. The service starts by itself (`amr.service`). Open `http://<robot-ip>:5001/` on the
-   tablet or laptop.
+   tablet or laptop. The page opens in the **operator** view (Home · Run · Manual ·
+   Alarms); **Home** must say `READY`. For Maps, Routes, Status and the rest, switch to the
+   **engineer** view: press `Op` in the header and type the PIN (**1805** by default,
+   kept in `~/.amr/web.json`).
 3. The **Status** page and the left rail should show:
 
    | Tile | Should read |
@@ -42,7 +57,8 @@ real difference is the panel: the AMR QR has **two buttons instead of a selector
    - An I/O module is off: the DIO at 192.168.1.40 or the analog module at .30.
    - CAN is down (no encoders).
 
-   Fix the cause and wait a few seconds; the drives re-arm by themselves. If a drive
+   Fix the cause and wait a few seconds; the drives re-arm by themselves. Push mode
+   left on shows `OFF` · "push mode": press **Brakes ON** on the Manual page. If a drive
    FAULT is latched, clear it from a shell:
    ```bash
    ros2 service call /drives/ack_fault std_srvs/srv/Trigger
@@ -129,8 +145,11 @@ Keep the vehicle in **MANUAL** until step 6.
    push mode, then **Brakes ON**). It must be within **0.20 m and 10°**.
 5. **Load** the mission, then press **Load (READY)**. Run state becomes `READY`.
 6. **Go.** Clear the area and stay within reach of the E-stop.
-   - Press **START** once: the Selector tile shows **AUTO**.
-   - Press **START** again: run state becomes **EXECUTING**.
+   - Press **START** once: the Selector tile shows **AUTO**. The drives go to standby
+     (brakes held).
+   - Press **START** again: run state becomes **EXECUTING**. For the first 2 s
+     (`timing.auto_start_delay_s`) it is the **pre-move warning**: the drives power up and
+     nothing moves yet. Then the vehicle drives. The AMR QR has no horn: watch it.
    - `Start refused: ... from the route start`: press **STOP** (back to MANUAL), jog onto
      the start, then START twice again.
    - `localisation not READY`: repeat steps 2–3.
@@ -139,8 +158,9 @@ Keep the vehicle in **MANUAL** until step 6.
    - **E-stop** puts the route in `BLOCKED`. Release the E-stop, then press **START** to
      continue from where it stopped.
    - **Pause** (web) keeps progress. To continue: **Prepare resume**, then **START**.
-   - An **obstacle** in the path gives `BLOCKED` and continues by itself 2 s after the
-     path is clear.
+   - Something in the path: Nav2's controller stops with **controller stop**
+     (`BLOCKED`) and continues by itself once clear, at most 3 times per step, then
+     FAULT. This is the ONLY obstacle stop on the AMR QR besides the E-stop - see §6.
    - **Abort** (web) ends the run; the mission must be loaded again.
 8. **Finished**: run state `DONE`. For another run, **Load** again and press **START**
    (you are still in AUTO). To leave navigation, press **STOP** (MANUAL), **Abort** any
@@ -154,7 +174,8 @@ PAUSED or BLOCKED. Abort it first.
 | You see | Meaning | Do |
 |---|---|---|
 | Run `BLOCKED`, E-stop | E-stop pressed during a run | Release E-stop, press **START** |
-| Run `BLOCKED`, obstacle | Something in the path (the executor's own lidar check; the scanner's protective field is not used on the AMR QR) | Clear it; continues after 2 s |
+| Run `BLOCKED`, controller stop | Nav2 saw something in the path ("collision ahead"), from the filtered scan | Clear it; continues by itself (3 tries per step, then FAULT) |
+| Run `FAULT`, "drives did not power up" | No torque within 8 s of START (E-stop, push mode, I/O lost) | Fix it, then START again |
 | Run `FAULT` | Sensor, drive, localisation or a tolerance exceeded | Read the reason. With the vehicle still, press **STOP** in MANUAL (= Reset) or **Acknowledge fault**. Then localise / reposition / load / START again |
 | Localisation `LOST` | Sensor stale, pose uncertain or jumped | Set the initial pose again and **Confirm** |
 | Drives `FAULT: ... stalled` | A wheel was commanded but did not turn for 2 s: blocked wheel, driver alarm or disabled, no motor power | Fix the cause, then `ros2 service call /drives/ack_fault std_srvs/srv/Trigger` |
@@ -179,3 +200,17 @@ PAUSED or BLOCKED. Abort it first.
 Stopping the service first matters on this vehicle: the analog module keeps its last
 voltage if the PC just loses power in the middle of a move. The hard-wired E-stop is the
 real stop.
+
+## 8. What the AMR QR does not have (read once)
+
+- **No scanner field gating.** gvievo-01 stops AUTO from the nanoScan3's protective and
+  warning fields (`/output_paths`). The AMR QR's scanner configuration came from the old
+  controller and reported its field occupied with the area empty, so on this vehicle the
+  mux assumes the fields clear and the route ignores them. Obstacles in AUTO are stopped
+  only by **Nav2's collision check** (local costmap from the filtered scan; returns
+  closer than 0.5 m to the scanner are ignored because of the scratched window) and by
+  the **E-stop**. Keep route speeds low (0.15–0.20 m/s) and the E-stop in reach. To get
+  the field stop back: verify the field set in SICK Safety Designer, then ask for
+  `scanner_fields` to be set up for this profile.
+- **No Manual Arm switch, no horn, no pendant, no RFID, no tape mode** (profile
+  `tracked: false`).

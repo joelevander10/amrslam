@@ -265,7 +265,8 @@ class Clearance:
     cells: int
     outside: bool = False  # part of the sweep leaves the map: never clear, whatever the mask holds
     # occupied or unknown cells inside a DYNAMIC area (a trolley in the map): they do not block
-    # approval; the executor checks them live (a return there always counts as an obstacle)
+    # approval. NOTE since 2026-09-20 the executor makes no live scan check, so this is a
+    # statement about the map only: nothing re-checks these cells while the route runs.
     provisional: int = 0
 
     @property

@@ -9,8 +9,15 @@ Stationary is decided by the caller (wheel velocities, not the gyro itself -
 a gyro cannot tell a slow turn from its own bias). The estimate is refreshed
 whenever the vehicle has been still for window_s, so temperature drift is
 tracked between moves without any service call.
+
+A window whose mean exceeds `max_bias` is motion the wheels did not report, not
+bias, and is rejected (the previous bias stays). 2026-10-23 10:16:25: while the
+drives cycled between powered and unpowered, the wheels read "still" while the
+vehicle turned ~1.8 deg in 2 s, and a +0.9052 deg/s window became the bias. Applied
+during a move, that is ~50 deg/min of false heading. The real bias is ~0.06 deg/s.
 """
 
+import math
 from dataclasses import dataclass, field
 
 
@@ -18,7 +25,10 @@ from dataclasses import dataclass, field
 class BiasEstimator:
     window_s: float = 2.0
     settle_s: float = 0.3  # ignore the first samples after stopping (ramp-down)
+    max_bias: float = math.radians(0.3)  # rad/s; ~5x the measured MLS bias
     bias: float | None = None
+    rejected: int = 0  # windows refused as motion
+    last_rejected: float | None = None  # the mean of the last refused window, rad/s
     _still_since: float | None = None
     _sum: float = 0.0
     _n: int = 0
@@ -49,8 +59,13 @@ class BiasEstimator:
                 self._sum += gyro_z
                 self._n += 1
                 if t - self._still_since >= self.settle_s + self.window_s and self._n > 0:
-                    self.bias = self._sum / self._n
-                    self._n_windows += 1
+                    mean = self._sum / self._n
+                    if abs(mean) > self.max_bias:
+                        self.rejected += 1
+                        self.last_rejected = mean
+                    else:
+                        self.bias = mean
+                        self._n_windows += 1
                     self._still_since = t  # start the next window
                     self._sum, self._n = 0.0, 0
         if self.bias is None:

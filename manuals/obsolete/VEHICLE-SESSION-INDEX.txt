@@ -1,0 +1,105 @@
+================================================================================
+VEHICLE SESSION INDEX — what to read, what to run, in what order (2026-09-21)
+Give this file to the coding agent on the AGV PC. It supersedes nothing; it
+tells you which of the many documents matter today and which to ignore.
+================================================================================
+
+BLOCKER, BEFORE PULLING ON THE VEHICLE
+  On the laptop, 25 files are UNCOMMITTED on branch slam-roadmap: the other
+  session's Increment 0 (ModeState.LINE=7, LEASE_LINE=8, supervisor dispatch
+  tables, gating/readiness constants), its executor rewrite (obstacle check
+  removed, prereq_grace_s debounce), and three plan docs. The five LINE
+  commits (2289935..063b008) are BUILT ON those files. If the vehicle pulls
+  git without them, amr_line will not even import (no LineState constants,
+  no _start_line). Commit them on the laptop first — or bring the working
+  tree over as-is. Do not test until `git status` on the vehicle is clean and
+  `git log --oneline -8` shows 063b008 at the top.
+
+--------------------------------------------------------------------------------
+READ FIRST (30 minutes, in this order)
+--------------------------------------------------------------------------------
+1. README.md, section "Layout" and "Safety model"
+     What agv_core/, amr_ws/ and the legacy controller are, and the rule that
+     the two stacks never both own can0.
+2. manuals/slam-generalized-plan/dual-product-plan.md
+     The plan you are executing. Read: Context, Decisions, Architecture,
+     Increment 0, Increment 1, Risks (R1 especially), Verification table.
+     Skip Increments 2-5 for today.
+3. manuals/slam-generalized-plan/codebase-restructure-2026-09-20.md
+     Why config.py/core/drivers moved into agv_core, and what that means for
+     PYTHONPATH on the vehicle.
+4. amr_ws/RUNBOOK.md, sections 3 (Diagnostics and commissioning), 4 (Fault
+   recovery), 5 (Install rehearsal), 7 (Rollback)
+     The other session updated section 2C and 4 for the executor change:
+     there is NO obstacle hold any more; only the protective field and the
+     E-stop stop the vehicle for something in the way, and the field looks
+     forward only.
+5. amr_ws/src/amr_line/amr_line/__init__.py and job.py module docstrings
+     What holds the vehicle in LINE mode and how each hold resumes.
+
+IGNORE TODAY
+  manuals/obsolete/**, manuals/agent-prompts/pp-*.md (PP blind-run, done),
+  coding-plan-speed-boost*.md (landed), dynamic-mapping.md (its Increment 1
+  is in; the rest is future), amr_slam_architecture.md, other-design.md,
+  the two *.html diagram files, line-follow-u11-layout-plan.md (superseded by
+  dual-product-plan.md; its body predates the restructure).
+  coding-plan-auto-resume.md §7 step 3 ("an obstacle left in the path: it
+  waits") is OBSOLETE — the software obstacle check was removed 2026-09-20.
+
+--------------------------------------------------------------------------------
+RUN, IN THIS ORDER — stop at the first failure of each file
+--------------------------------------------------------------------------------
+A. VEHICLE-TEST-agv_core-restructure.txt          (sections 0-7, ~1 h)
+     The restructure must hold before anything built on it is tested. Its
+     section 6 (the two stacks exclude each other) is the one that matters
+     most for safety. Nothing in it is LINE-specific.
+
+B. Regression of the OTHER session's executor change   (~30 min, floor)
+     Its own vehicle check is coding-plan-auto-resume.md §7, MINUS step 3:
+       1. straight route at base speed; step into the protective field ->
+          STO, then resumes ~2 s after you step out; log shows
+          SAFETY_STOP protective field, then AUTO_RESUMED
+       2. same on an arc and during a rotate
+       4. MANUAL during the hold aborts the run
+       5. supervisor keeps NAVIGATION through the drive dropout
+     Plus, new since 2026-09-20 and not written down anywhere else:
+       6. a prerequisite that flickers for ONE frame (unplug/replug the
+          panel DIO briefly, or block the scan for < 0.5 s) does NOT fault a
+          loaded mission; one that stays gone for > 0.5 s does
+       7. losing wheel feedback while moving stops AT ONCE as a `pending`
+          hold — confirm it is not debounced
+     Increment 0's only vehicle gate: one IDLE -> NAVIGATION -> IDLE swap
+     still works exactly as before. That is covered by step 5 of file C.
+
+C. VEHICLE-TEST-line-layer.txt                     (sections 0-6, ~3 h)
+     Section 0 first, before anything moves: read MLS 1800h:02 and 1800h:05.
+     That single read decides whether the day is a commissioning or a bench
+     demo. Then sim (section 2) before jacked-up (3) before floor (4).
+
+--------------------------------------------------------------------------------
+LAPTOP-VERIFIED ALREADY — do not re-derive, but do re-run on the vehicle
+--------------------------------------------------------------------------------
+  python3 tests/run_all.py                    898 checks; the 10 that fail on
+                                              Windows (ownerlock) must PASS here
+  cd amr_ws && python3 -m pytest -q src/*/test   amr_base+amr_bringup: 216 pass /
+                                              10 known Windows-stub fails -> all
+                                              should pass on Linux;
+                                              amr_line: 53 pass
+  cd amr_ws && ruff check --config ruff.toml src/     clean (run from INSIDE amr_ws)
+  simulate(delay_s=0.040) gate                passed: 14.5 mm / 4.24 s at 2546
+                                              r/min, negative control diverges.
+                                              The gains do not move.
+
+--------------------------------------------------------------------------------
+REPORT
+--------------------------------------------------------------------------------
+One report, three sections (A, B, C), each step PASS/FAIL/SKIPPED with exact
+output where not clean. Plus: the 1800h values and verdict; the three numbers
+from C §4.4 per run (track_hz, sample_age_s, peak error after 1 m); the git
+hash tested; every file changed on the vehicle.
+
+ROLLBACK
+  LINE:        revert 063b008, de0fabd, d4db570, 17676e0, 2289935 (that order)
+  restructure: revert dc9f608 (leave it unless A fails)
+  then: cd amr_ws && rm -rf build install log && colcon build --symlink-install
+================================================================================

@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang='zh-CN'>
+<head>
+<title>app</title>
+<meta charset='utf-8'>
+<link rel="stylesheet" href="./style.css" type="text/css">
+<script>
+    var baseUrl = 'http://localhost:8888';
+</script>
+<script src="./Jquery.js"></script>
+<script src="./Log.js"></script>
+<script src="./FreqInfo.js"></script>
+<script src="./Devicepara.js"></script>
+<script src="./Reader.js"></script>
+<script src="./SerialConnect.js"></script>
+<script src="./NetConnect.js"></script>
+<script src="./ChannelRegion.js"></script>
+</head>
+<body>
+    <div class="container">
+        <div class="left">
+            <div class="action-panel">
+                <div class="connect-cfg">
+                    <fieldset>
+                        <legend>Serial Connect</legend>
+                        <ul class="form-wrap">
+                            <li class="form-item">
+                                <label>port:</label>
+                                <div class="contrl-wrap">
+                                    <select id="port"></select>
+                                </div>
+                            </li> 
+                            <li class="form-item">
+                                <label>buad:</label>
+                                <div class="contrl-wrap">
+                                    <select id="cmbComBaud">
+                                        <option value="0">9600</option>
+                                        <option value="1">19200</option>
+                                        <option value="2">38400</option>
+                                        <option value="3">57600</option>
+                                        <option value="4">115200</option>
+                                    </select>
+                                </div>
+                            </li> 
+                            <li class="form-item">
+                                <div class="contrl-wrap tc">
+                                    <button class="btn" id="btnSportOpen">OPEN(O)</button>&nbsp;&nbsp;&nbsp;&nbsp;<button class="btn" id="btnSportClose">CLOSE(C)</button>
+                                </div>
+                            </li>
+                        </ul>
+                    </fieldset>
+                    <fieldset>
+                        <legend>Net Connect</legend>
+                        <ul class="form-wrap">
+                        <li class="form-item">
+                            <label>IP Addr:</label>
+                            <div class="contrl-wrap">
+                                <input type="text" id="idAddr" value="192.168.1.200"/>
+                            </div>
+                        </li> 
+                        <li class="form-item">
+                            <label>port:</label>
+                            <div class="contrl-wrap">
+                                <input type="text" id="net_port" value="2022"/>
+                            </div>
+                        </li> 
+                        <li class="form-item">
+                            <div class="contrl-wrap tc">
+                                <button class="btn" id="btnConnect">CONNECT(C)</button>&nbsp;&nbsp;&nbsp;&nbsp;<button class="btn" id="btnDisConnect">DISCONNECT(C)</button>
+                            </div>
+                            </li>
+                        </ul>
+                    </fieldset>
+                    <ul class="form-wrap mt10">
+                        <li class="form-item">
+                        <div class="contrl-wrap tc">
+                            <button class="btn" id="Close_Realy">Close_Realy</button>&nbsp;&nbsp;&nbsp;&nbsp;
+                            <button class="btn" id="Release_Realy">Release_Realy</button>
+                        </div>
+                        </li>
+                    </ul>
+                </div>
+                <div class="other-cfg">
+                    <ul class="form-wrap">
+                        <li class="form-item">
+                        <label>RfPower(dbm):</label>
+                        <div class="contrl-wrap space-between">
+                            <select style="width:30%" id="cmbTxPower">
+                                <option value="0">0</option>
+                                <option value="1">1</option>
+                                <option value="2">2</option>
+                                <option value="3">3</option>
+                                <option value="4">4</option>
+                                <option value="5">5</option>
+                                <option value="6">6</option>
+                                <option value="7">7</option>
+                                <option value="8">8</option>
+                                <option value="9">9</option>
+                                <option value="10">10</option>
+                                <option value="11">11</option>
+                                <option value="12">12</option>
+                                <option value="13">13</option>
+                                <option value="14">14</option>
+                                <option value="15">15</option>
+                                <option value="16">16</option>
+                                <option value="17">17</option>
+                                <option value="18">18</option>
+                                <option value="19">19</option>
+                                <option value="20">20</option>
+                                <option value="21">21</option>
+                                <option value="22">22</option>
+                                <option value="23">23</option>
+                                <option value="24">24</option>
+                                <option value="25">25</option>
+                                <option value="26">26</option>
+                                <option value="27">27</option>
+                                <option value="28">28</option>
+                                <option value="29">29</option>
+                                <option value="30">30</option>
+                                <option value="31">31</option>
+                                <option value="32">32</option>
+                                <option value="33">33</option>
+                            </select>
+                            <button class="btn" id="btnGetTxPower" style="width:30%">Get</button>
+                            <button class="btn" id="btnSetTxPower" style="width:30%">Set</button>
+                        </div>
+                        </li> 
+                        <li class="form-item">
+                        <label>WorkModde:</label>
+                        <div class="contrl-wrap space-between">
+                            <select style="width:30%" id="cmbWorkmode">
+                                <option value="0">AnswerMode</option>
+                                <option value="1">ActiveMode</option>
+                            </select>
+                            <button class="btn" style="width:30%" id="btnGetWorkMode">Get</button>
+                            <button class="btn" style="width:30%" id="btnSetWorkMode">Set</button>
+                        </div>
+                        </li> 
+                    </ul>
+                    <fieldset class="mt20">
+                        <ul class="form-wrap">
+                            <li class="form-item">
+                                <label>Freq Band:</label>
+                                <div class="contrl-wrap space-between">
+                                    <select style="width:30%" id="cmbRegion"></select>
+                                    <button class="btn" style="width:30%" id="btnGetFreq">Get</button>
+                                    <button class="btn" style="width:30%" id="btnSetFreq">Set</button>
+                                </div>
+                            </li> 
+                            <li class="form-item">
+                                <label>Freq Start:</label>
+                                <div class="contrl-wrap space-between">
+                                    <select style="width:45%" id="cmbFreqStart"></select>
+                                    <input style="width:45%" id="cmbFreqStart_input"/>
+                                    <label style="margin-left:50px">End:</label>
+                                    <select style="width: 45%" id="cmbFreqEnd"></select>
+                                    <input style="width:45%" id="cmbFreqEnd_input"/>
+                                </div>
+                            </li> 
+                        </ul>
+                    </fieldset>
+                    <ul class="form-wrap mt20">
+                        <li class="form-item">
+                            <div class="contrl-wrap space-around">
+                                <button class="btn start" style="width:30%" id="btnInventoryActive">Start</button>
+                                <button class="btn stop" style="width:30%" id="btninvStop">Stop</button>
+                            </div>
+                        </li> 
+                    </ul>
+                </div>
+            </div>
+            <div class="data-table">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>No.</th>
+                            <th>Data</th>
+                            <th>Len</th>
+                            <th>Cnt(Ant1/2/3/4)</th>
+                            <th>RSSI(dBm)</th>
+                            <th>Channel</th>
+                        </tr>
+                    </thead>
+                    <tbody id="data_table_body">
+                        
+                    </tbody>
+                </table>
+            </div>
+            
+            <p class="tr" style="margin-right:10px">
+                <button class="btn" id="btnClear">Clear</button>
+            </p>
+        </div>
+        <div class="right">
+            <ul id="log">
+              
+            </ul>
+        </div>
+    </div>
+    <script>
+        var devicepara = new Devicepara();
+        Reader.init();
+        ChannelRegion.init()
+        SerialConnect.init();
+        NetConnect.init();
+    </script>
+</body>
+</html>

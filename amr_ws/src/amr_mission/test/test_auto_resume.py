@@ -9,13 +9,13 @@ import pytest
 from amr_navigation.compiler import STRAIGHT, CompiledStep
 from test_route_executor_logic import _clock_stub, make_node
 
-from amr_interfaces.msg import DriveStatus, RunState
+from amr_interfaces.msg import DriveStatus, LocalizationState, RunState
 from amr_mission import goal_attempts as ga
 from amr_mission import route_executor_node as ren
 from amr_mission import run_fsm as fsm
 
 
-def node():
+def node(start=True):
     st = CompiledStep(
         "s1",
         STRAIGHT,
@@ -39,6 +39,8 @@ def node():
         return True
 
     n._send_follow = send
+    if not start:
+        return n  # left READY: a mission loaded, waiting for AUTO + Start
     n.fsm.start(True, True)
     send(n.compiled.steps[0], None)
     n.phase = ren.PHASE_GOAL
@@ -169,23 +171,19 @@ def test_abort_during_a_safety_stop_is_a_hold_not_a_retry():
     assert n.fsm.state == fsm.BLOCKED and n.hold_cause == "field" and n._aborts == 0
 
 
-def test_obstacle_hold_resumes_by_itself_and_can_be_switched_off():
+def test_controller_hold_resumes_by_itself_and_can_be_switched_off():
     n = node()
-    n._obstruction = lambda st, pose: "6 scan points inside the straight envelope"
+    n.goals.current, n.goals.result = object(), ga.ABORTED
     tick(n, torque=True, field=True)
-    assert n.fsm.state == fsm.BLOCKED and n.hold_cause == "obstacle"
-    run_for(n, 3.0, torque=True, field=True)
-    assert n.fsm.state == fsm.BLOCKED  # still there
-    n._obstruction = lambda st, pose: None
+    assert n.fsm.state == fsm.BLOCKED and n.hold_cause == "controller"
     run_for(n, 2.2, torque=True, field=True)
-    assert n.fsm.state == fsm.EXECUTING
+    assert n.fsm.state == fsm.EXECUTING and n._aborts == 1
     m = node()
     m.auto_resume_enabled = False
-    m._obstruction = lambda st, pose: "6 scan points inside the straight envelope"
+    m.goals.current, m.goals.result = object(), ga.ABORTED
     tick(m, torque=True, field=True)
-    m._obstruction = lambda st, pose: None
     run_for(m, 5.0, torque=True, field=True)
-    assert m.fsm.state == fsm.BLOCKED  # today's behaviour: Resume + Start
+    assert m.fsm.state == fsm.FAULT  # no auto-resume: an aborted goal is a fault
 
 
 def test_run_state_carries_the_hold_cause():
@@ -207,16 +205,16 @@ def test_run_state_carries_the_hold_cause():
     assert pytest.approx(n.safety_window) == 1.0
 
 
-def test_a_safety_stop_during_an_obstacle_hold_or_a_pause_is_not_a_fault():
+def test_a_safety_stop_during_another_hold_or_a_pause_is_not_a_fault():
     n = node()
-    n._obstruction = lambda st, pose: "6 scan points inside the straight envelope"
+    n.goals.current, n.goals.result = object(), ga.ABORTED
     tick(n, torque=True, field=True)
-    assert n.hold_cause == "obstacle"
-    tick(n, field=False)  # the person walks on into the protective field
+    assert n.hold_cause == "controller"
+    tick(n, field=False)  # someone walks on into the protective field
     tick(n, torque=False, wheels=False, field=False)
     run_for(n, 3.0, torque=False, wheels=False, field=False)
     assert n.fsm.state == fsm.BLOCKED and n.hold_cause == "field"
-    n._obstruction = lambda st, pose: None
+    n.goals.result = None
     run_for(n, 2.5, torque=True, field=True)
     assert n.fsm.state == fsm.EXECUTING
     # an operator Pause, then the E-stop: still PAUSED (Resume + Start), never a fault
@@ -234,3 +232,149 @@ def test_the_hold_cause_ends_with_the_hold():
     n.fsm.abort("aborted by operator")
     tick(n, torque=True, field=True)
     assert n.hold_cause == ""
+
+
+# ---- prerequisite debounce (operator decision 2026-09-20) ---------------------------------
+# A prerequisite must fail CONTINUOUSLY for prereq_grace_s before it costs the run. The
+# localisation state is the lever here because it fails without the clock, which tick()
+# advances on its own. NOT_READY is a literal rather than LocalizationState.LOST so the test
+# means the same thing under the laptop's stubbed messages, where every constant is 0.
+NOT_READY = 99
+
+
+def test_a_prereq_lapse_shorter_than_the_grace_period_is_not_a_fault():
+    n = node()
+    n.prereq_grace_s = 0.5
+    n._loc.state = NOT_READY
+    run_for(n, 0.3, torque=True, field=True)
+    assert n.fsm.state == fsm.EXECUTING  # inside the grace period: the run carries on
+    n._loc.state = LocalizationState.READY
+    run_for(n, 1.0, torque=True, field=True)
+    assert n.fsm.state == fsm.EXECUTING  # recovered: the timer was cleared, never faulted
+
+
+def test_a_prereq_that_stays_broken_still_faults():
+    n = node()
+    n.prereq_grace_s = 0.5
+    n._loc.state = NOT_READY
+    run_for(n, 0.3, torque=True, field=True)
+    assert n.fsm.state == fsm.EXECUTING
+    run_for(n, 0.4, torque=True, field=True)
+    assert n.fsm.state == fsm.FAULT and "localisation not READY" in n.fsm.reason
+
+
+def test_the_grace_period_does_not_survive_a_recovery_in_between():
+    """Two 0.3 s lapses with a good tick between them are not one 0.6 s failure."""
+    n = node()
+    n.prereq_grace_s = 0.5
+    for _ in range(4):
+        n._loc.state = NOT_READY
+        run_for(n, 0.3, torque=True, field=True)
+        n._loc.state = LocalizationState.READY
+        tick(n, torque=True, field=True)
+    assert n.fsm.state == fsm.EXECUTING
+
+
+def test_a_momentary_lapse_does_not_unready_a_loaded_mission():
+    n = node(start=False)
+    assert n.fsm.state == fsm.READY
+    n.prereq_grace_s = 0.5
+    n._loc.state = NOT_READY
+    run_for(n, 0.3, torque=True, field=True)
+    assert n.fsm.state == fsm.READY  # the loaded mission is not thrown away for one gap
+    n._loc.state = LocalizationState.READY
+    run_for(n, 1.0, torque=True, field=True)
+    assert n.fsm.state == fsm.READY
+    n._loc.state = NOT_READY  # a real loss still unreadies it
+    run_for(n, 0.7, torque=True, field=True)
+    assert n.fsm.state == fsm.IDLE
+
+
+def test_losing_wheel_feedback_while_moving_is_not_debounced():
+    """The grace period is for faults. A wheel-feedback loss under way stops AT ONCE (a
+    recoverable `pending` hold), because waiting half a second to stop is the wrong way round."""
+    n = node()
+    n.prereq_grace_s = 5.0
+    run_for(n, 0.4, wheels=False, torque=True, field=True)
+    assert n.fsm.state == fsm.BLOCKED and n.hold_cause == "pending"
+
+
+def test_the_grace_timer_does_not_survive_into_the_next_mission():
+    """A run that faulted with a broken prerequisite must not hand its timer to the next
+    mission, or the first bad tick after loading would fault instantly."""
+    n = node()
+    n.prereq_grace_s = 0.5
+    n._loc.state = NOT_READY
+    run_for(n, 1.0, torque=True, field=True)
+    assert n.fsm.state == fsm.FAULT
+    run_for(n, 1.0, torque=True, field=True)  # ticks in FAULT clear the timer
+    assert n._prereq_since is None
+    assert n.fsm.ack() and n.fsm.load("m2", len(n.compiled.steps))
+    run_for(n, 0.3, torque=True, field=True)  # still not READY, but inside a fresh grace period
+    assert n.fsm.state == fsm.READY
+
+
+# -- the pre-move warning (2026-10-08): drives in standby until a Start --------------------
+
+def started(premove_s=2.0):
+    """A run started from READY by the physical Start, with the drives in standby."""
+    n = node(start=False)
+    n._pose = lambda: (0.0, 0.0, 0.0)  # at the route start
+    n.premove_s, n.premove_timeout_s = premove_s, 8.0
+    tick(n, torque=False, field=True)
+    assert n.fsm.state == fsm.READY and not n.drive_power()
+    n._start_edge()
+    return n
+
+
+def state_msg(n):
+    out = {}
+    n._state_pub = SimpleNamespace(publish=lambda m: out.setdefault("m", m))
+    n.manifest = None
+    if not hasattr(n.route, "route_id"):
+        n.route = SimpleNamespace(**vars(n.route), route_id="r", revision=1)
+    n._publish_state()
+    return out["m"]
+
+
+def test_a_start_warns_then_moves_once_the_drives_have_torque():
+    n = started()
+    assert n.fsm.state == fsm.EXECUTING and n.phase == ren.PHASE_PREMOVE
+    m = state_msg(n)
+    assert m.premove and m.drive_power
+    run_for(n, 1.0, torque=False, field=True)
+    assert n.phase == ren.PHASE_PREMOVE and n.fsm.state == fsm.EXECUTING, "torque off here is no stop"
+    assert n.sent == [], "no goal during the warning"
+    run_for(n, 0.5, torque=True, field=True)
+    assert n.phase == ren.PHASE_PREMOVE, "the warning runs its full time"
+    run_for(n, 0.8, torque=True, field=True)
+    assert n.sent == ["s1"] and not state_msg(n).premove
+
+
+def test_no_torque_within_the_timeout_holds_for_a_human():
+    n = started()
+    run_for(n, 8.2, torque=False, field=True)
+    assert n.fsm.state == fsm.BLOCKED and n.hold_cause == "estop" and "did not power up" in n.fsm.reason
+    assert not n.drive_power() and n.sent == []
+
+
+def test_holds_that_wait_for_start_drop_power_and_resume_through_the_warning():
+    n = node()
+    n.premove_s = 2.0
+    tick(n, torque=True, field=True)
+    tick(n, torque=False, wheels=False, field=True)          # the E-stop button
+    assert n.hold_cause == "estop" and not n.drive_power()
+    run_for(n, 1.0, torque=False, field=True)                # standby: torque off on purpose
+    n._start_edge()                                           # no "drives have no torque" refusal
+    assert n.fsm.state == fsm.EXECUTING and n.phase == ren.PHASE_PREMOVE and n.drive_power()
+
+
+def test_holds_that_resume_by_themselves_keep_power_and_skip_the_warning():
+    n = node()
+    n.premove_s = 2.0
+    tick(n, torque=True, field=True)
+    tick(n, field=False)
+    tick(n, torque=False, wheels=False)
+    assert n.hold_cause == "field" and n.drive_power()
+    run_for(n, 2.5, torque=True, field=True)
+    assert n.fsm.state == fsm.EXECUTING and n.phase != ren.PHASE_PREMOVE

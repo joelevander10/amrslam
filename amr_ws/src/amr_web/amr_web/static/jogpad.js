@@ -11,10 +11,10 @@
 function jogpad(root, opts) {
   const o = Object.assign({ compact: false }, opts || {});
   const owner = (crypto.randomUUID ? crypto.randomUUID() : String(Math.random())).slice(0, 32);
-  const speeds = [0.10, 0.20, 0.30, 0.40];  // jog.V_MAX 0.40 (2026-09-19)
-  // Diagonals drive like the pendant: the FAST wheel at the selected speed, the slow one at
-  // TURN_RATIO of it (no wheel above the selection). Spins: +30 % on the 2026-09-18 rule.
-  const TRACK_M = 0.487, TURN_RATIO = 0.75, SPIN_MAX = 0.39, SPIN_PER_V = 1.95;
+  // ONE manual speed (2026-10-02), the pendant's: jog.V_MAX 0.50 m/s = mux pendant_v_m_s.
+  // Diagonals drive like the pendant: the FAST wheel at V, the slow one at TURN_RATIO of it
+  // (= pendant_turn_ratio), the side set by the turn direction. Spins at the pendant's rate.
+  const V = 0.50, TRACK_M = 0.487, TURN_RATIO = 0.66, SPIN = 0.39;
   const CELLS = [
     ['fl', '↖', 'Fwd-L', ''], ['f', '▲', 'Fwd', '↑ / W'], ['fr', '↗', 'Fwd-R', ''],
     ['l', '◀', 'Left', '← / A'], ['stop', '■', 'Stop', 'Space'], ['r', '▶', 'Right', '→ / D'],
@@ -27,7 +27,7 @@ function jogpad(root, opts) {
           <span class="glyph">${glyph}</span><span class="name">${name}</span><span class="key">${key || '&nbsp;'}</span></button>`).join('')}
       </div>
       <div class="jog-foot">
-        <label class="field">Speed <select class="jog-speed">${speeds.map(s => `<option value="${s}" ${s === 0.2 ? 'selected' : ''}>${s.toFixed(2)} m/s</option>`).join('')}</select></label>
+        <div class="tel"><span>Speed</span><b>${V.toFixed(2)}</b><i>m/s · corners ${Math.round(TURN_RATIO * 100)} % inner wheel</i></div>
         <div class="tel"><span>Jog</span><b class="jog-status">not held</b><i>held, not latched · release = stop</i></div>
       </div>
       <p class="legend keys">Hold a button or <kbd>↑</kbd> <kbd>↓</kbd> <kbd>←</kbd> <kbd>→</kbd> (<kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd>); <kbd>Space</kbd> stops.
@@ -38,16 +38,15 @@ function jogpad(root, opts) {
   const lit = dir => cells.forEach(b => b.classList.toggle('active', b.dataset.dir === dir));
   const flashStop = () => { lit('stop'); setTimeout(() => { if (!held && !pending) lit(null); }, 150); };
   const status = root.querySelector('.jog-status');
-  const speedSel = root.querySelector('.jog-speed');
   const DIRS = { f: [1, 0], b: [-1, 0], l: [0, 1], r: [0, -1], fl: [1, 1], fr: [1, -1], bl: [-1, -1], br: [-1, 1] };
   let held = null;     // {dir, session, ticket, seq, timer}
   let pending = null;  // {dir} while /press is in flight; a release clears it (review R01)
   let releasing = false;
 
   function body(dir) {
-    const v = parseFloat(speedSel.value);
+    const v = V;
     const [a, b] = DIRS[dir];
-    if (a === 0) return { v: 0, w: b * Math.min(SPIN_MAX, v * SPIN_PER_V) };
+    if (a === 0) return { v: 0, w: b * SPIN };
     if (b === 0) return { v: a * v, w: 0 };
     const slow = v * TURN_RATIO;
     return { v: a * (v + slow) / 2, w: b * (v - slow) / TRACK_M };

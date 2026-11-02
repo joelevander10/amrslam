@@ -1,0 +1,59 @@
+/* Shared page chrome for JIS-style electrical sheets. The drawing itself is SVG in mm (A4 portrait). */
+:root {
+  --paper: #e6e8ec;
+  --surface: #ffffff;
+  --ink: #111111;
+  --ink-2: #3d4553;
+  --rule: #c9ced6;
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 14px/1.4 "IBM Plex Sans", Arial, sans-serif;
+}
+
+.toolbar {
+  position: sticky; top: 0; z-index: 10;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  padding: 10px 16px;
+  background: var(--surface);
+  border-bottom: 2px solid var(--ink);
+}
+.toolbar strong { margin-right: 8px; font-weight: 600; }
+.toolbar button {
+  border: 1.5px solid var(--ink); background: var(--surface); color: var(--ink);
+  padding: 6px 12px; cursor: pointer;
+  font: 600 11px "IBM Plex Mono", monospace; letter-spacing: .06em; text-transform: uppercase;
+}
+.toolbar button.primary { background: var(--ink); color: #fff; }
+.toolbar button:disabled { opacity: .6; cursor: progress; }
+.toolbar button:focus-visible { outline: 2px solid #2f6fa8; outline-offset: 2px; }
+.toolbar .status { margin-left: auto; color: var(--ink-2); font: 500 11px "IBM Plex Mono", monospace; text-transform: uppercase; }
+
+.wrap { padding: 20px 16px 40px; }
+.sheet {
+  width: min(100%, 820px);
+  aspect-ratio: 210 / 297;
+  margin: 0 auto;
+  background: #fff;
+  box-shadow: 0 1px 0 var(--rule), 0 10px 30px rgba(20, 30, 50, .15);
+}
+.sheet svg { display: block; width: 100%; height: 100%; }
+
+/* #bare: sheet only, fixed 1240x1754 px (A4 at 150 dpi) for headless screenshots */
+body.bare { background: #fff; }
+body.bare .toolbar { display: none; }
+body.bare .wrap { padding: 0; }
+body.bare .sheet { width: 1240px; height: 1754px; box-shadow: none; }
+
+@page { size: A4 portrait; margin: 0; }
+@media print {
+  body { background: #fff; }
+  .toolbar { display: none; }
+  .wrap { padding: 0; }
+  .sheet { width: 210mm; height: 297mm; box-shadow: none; }
+}

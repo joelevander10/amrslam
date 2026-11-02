@@ -10,6 +10,9 @@ const INK = {
   preview: cssVar('--hazard'), stop: cssVar('--stop'),
 };
 // hex token + alpha 0..1 -> #rrggbbaa (tokens are #RRGGBB)
+// Canvas text follows the display size knob (amr.css): 11px at the laptop size.
+const uiScale = () => (parseFloat(getComputedStyle(document.documentElement).fontSize) || 10) / 10;
+const monoFont = (weight, px) => `${weight} ${Math.round(px * uiScale())}px "IBM Plex Mono", monospace`;
 const alpha = (hex, a) => hex + Math.round(a * 255).toString(16).padStart(2, '0');
 
 class MapView {
@@ -17,18 +20,26 @@ class MapView {
     this.canvas = canvas; this.ctx = canvas.getContext('2d');
     this.meta = null; this.img = null; this.scale = 1; this.ox = 0; this.oy = 0;
     this.overlays = []; this._drag = null; this.onClick = null; this.onDrag = null; this.onHover = null;
+    // Pointer events, not mouse events: the vehicle HMI is a touch panel, and a finger
+    // drag must pan (or draw, with a tool) exactly like a mouse drag. touch-action:none on
+    // the canvas (amr.css) keeps the page from scrolling instead.
     canvas.addEventListener('wheel', e => { e.preventDefault(); this.zoomAt(e.offsetX, e.offsetY, e.deltaY < 0 ? 1.15 : 1/1.15); });
-    canvas.addEventListener('mousedown', e => { this._drag = { x: e.offsetX, y: e.offsetY, moved: false, btn: e.button, t0: Date.now() }; });
-    canvas.addEventListener('mousemove', e => {
+    canvas.addEventListener('pointerdown', e => {
+      if (this._drag) return;  // a second finger while dragging: ignored
+      this._drag = { id: e.pointerId, x: e.offsetX, y: e.offsetY, moved: false, btn: e.button, t0: Date.now() };
+      try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* synthetic pointer: no capture */ }
+    });
+    canvas.addEventListener('pointermove', e => {
       // a plain move with a tool active previews what a click would do (world point, or null)
       if (!this._drag) { if (this.tool && this.onHover) { this.onHover(this.screenToWorld(e.offsetX, e.offsetY)); this.draw(); } return; }
+      if (e.pointerId !== this._drag.id) return;
       const dx = e.offsetX - this._drag.x, dy = e.offsetY - this._drag.y;
       if (Math.abs(dx) + Math.abs(dy) > 3) this._drag.moved = true;
       if (this.onDrag && this._drag.btn === 0 && this.tool) { this.onDrag(this.screenToWorld(this._drag.x, this._drag.y), this.screenToWorld(e.offsetX, e.offsetY), false); this.draw(); return; }
       this.ox += dx; this.oy += dy; this._drag.x = e.offsetX; this._drag.y = e.offsetY; this._keepVisible(); this.draw();
     });
     const up = e => {
-      if (!this._drag) return;
+      if (!this._drag || e.pointerId !== this._drag.id) return;
       const d = this._drag; this._drag = null;
       const w = this.screenToWorld(e.offsetX, e.offsetY);
       if (this.tool && d.btn === 0) {
@@ -37,13 +48,27 @@ class MapView {
       }
       this.draw();
     };
-    canvas.addEventListener('mouseup', up);
-    canvas.addEventListener('mouseleave', () => { this._drag = null; if (this.onHover) { this.onHover(null); this.draw(); } });
+    canvas.addEventListener('pointerup', up);
+    canvas.addEventListener('pointercancel', () => { this._drag = null; this.draw(); });
+    canvas.addEventListener('pointerleave', () => { this._drag = null; if (this.onHover) { this.onHover(null); this.draw(); } });
     canvas.addEventListener('dblclick', e => { e.preventDefault(); this.fit(); this.draw(); });
     canvas.addEventListener('contextmenu', e => e.preventDefault());
+    this._zoomButtons();
     this._resize(); window.addEventListener('resize', () => { this._resize(); this.draw(); });
     // labels are Plex Mono: redraw once the self-hosted face has loaded
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => this.draw());
+  }
+  // +, - and fit beside the map: a touch panel has neither a wheel nor a double-click.
+  _zoomButtons() {
+    const wrap = this.canvas.parentElement;
+    if (!wrap || !wrap.classList || !wrap.classList.contains('canvas-wrap') || wrap.querySelector('.canvas-zoom')) return;
+    const box = document.createElement('div'); box.className = 'canvas-zoom';
+    const mk = (text, cls, fn) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = text; if (cls) b.className = cls; b.onclick = fn; box.appendChild(b); };
+    const centre = f => this.zoomAt(this.canvas.width / 2, this.canvas.height / 2, f);
+    mk('+', '', () => centre(1.3));
+    mk('−', '', () => centre(1 / 1.3));
+    mk('fit', 'fit', () => { this.fit(); this.draw(); });
+    wrap.appendChild(box);
   }
   _resize() { const r = this.canvas.getBoundingClientRect(); this.canvas.width = Math.max(200, r.width); this.canvas.height = Math.max(200, r.height); }
   // Returns false when a later load() superseded this one while it was in flight: the
@@ -137,17 +162,17 @@ class MapView {
     c.beginPath(); c.arc(p[0], p[1], r, 0, 2 * Math.PI); c.stroke();
     c.setLineDash([]);
     c.beginPath(); c.moveTo(p[0], p[1]); c.lineTo(p[0] + 2.2 * r * Math.cos(yaw), p[1] - 2.2 * r * Math.sin(yaw)); c.stroke();
-    c.font = '600 11px "IBM Plex Mono", monospace'; c.fillStyle = INK.accent;
+    c.font = monoFont(600, 11); c.fillStyle = INK.accent;
     c.fillText('SURVEY START', p[0] + r + 4, p[1] + r + 10);
     c.restore();
   }
   // helpers for overlays
   line(x1, y1, x2, y2, color, width) { const c = this.ctx, a = this.worldToScreen(x1, y1), b = this.worldToScreen(x2, y2); c.strokeStyle = color; c.lineWidth = width || 2; c.beginPath(); c.moveTo(a[0], a[1]); c.lineTo(b[0], b[1]); c.stroke(); }
   dot(x, y, color, r) { const c = this.ctx, p = this.worldToScreen(x, y); c.fillStyle = color; c.beginPath(); c.arc(p[0], p[1], r || 4, 0, 2 * Math.PI); c.fill(); }
-  text(x, y, s, color) { const c = this.ctx, p = this.worldToScreen(x, y); c.fillStyle = color || INK.ink3; c.font = '500 11px "IBM Plex Mono", monospace'; c.fillText(s, p[0] + 6, p[1] - 6); }
+  text(x, y, s, color) { const c = this.ctx, p = this.worldToScreen(x, y); c.fillStyle = color || INK.ink3; c.font = monoFont(500, 11); c.fillText(s, p[0] + 6, p[1] - 6); }
   // A fixed caption in the top-left corner (screen space), e.g. STALE SCAN: stale must never look clear.
-  label(text, color, row) { const c = this.ctx; c.font = '600 11px "IBM Plex Mono", monospace'; const y = 10 + (row || 0) * 22, w = c.measureText(text).width + 12;
-    c.fillStyle = INK.paper; c.fillRect(8, y, w, 18); c.strokeStyle = color; c.lineWidth = 1; c.strokeRect(8.5, y + 0.5, w - 1, 17); c.fillStyle = color; c.fillText(text, 14, y + 13); }
+  label(text, color, row) { const c = this.ctx, k = uiScale(); c.font = monoFont(600, 11); const y = 10 + (row || 0) * 22 * k, h = 18 * k, w = c.measureText(text).width + 12 * k;
+    c.fillStyle = INK.paper; c.fillRect(8, y, w, h); c.strokeStyle = color; c.lineWidth = 1; c.strokeRect(8.5, y + 0.5, w - 1, h - 1); c.fillStyle = color; c.fillText(text, 8 + 6 * k, y + 13 * k); }
   arrow(x, y, yaw, len, color) { this.line(x, y, x + len * Math.cos(yaw), y + len * Math.sin(yaw), color, 3); this.dot(x, y, color, 5); }
   points(pts, color) { const c = this.ctx; c.fillStyle = color; pts.forEach(p => { const q = this.worldToScreen(p[0], p[1]); c.fillRect(q[0] - 1, q[1] - 1, 2, 2); }); }
   polyline(pts, color, width) { const c = this.ctx; c.strokeStyle = color; c.lineWidth = width || 2; c.beginPath(); pts.forEach((p, i) => { const s = this.worldToScreen(p[0], p[1]); i ? c.lineTo(s[0], s[1]) : c.moveTo(s[0], s[1]); }); c.stroke(); }

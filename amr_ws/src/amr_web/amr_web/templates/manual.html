@@ -1,29 +1,37 @@
 {% extends "base.html" %}
 {% block title %}AMR — manual{% endblock %}
 {% block body %}
-<div class="warn-box">This page cannot clear a drive alarm or change the operating mode. <b>Push mode</b> below releases the brakes so the vehicle can be pushed by hand (for example to survey a map); the motors get no voltage while it is on.</div>
-<section>
-  <h2>Vehicle <small>supervisor · mux</small></h2>
-  <div id="manual-state" class="tel-grid"></div>
-  <p id="manual-reason" class="note"></p>
-</section>
-<section>
-  <h2>Push mode <small>brakes · /drives/disarm, /drives/arm</small></h2>
-  <div id="push-state" class="tel-grid"></div>
-  <p class="note">Brakes off: motors at 0 V, direction outputs low, <b>the vehicle rolls freely</b> - do not use on a slope. The jog pad does nothing until the brakes are on again. The E-stop still applies the brakes.</p>
-  <div class="bar">
-    <button id="btn-brakes-release" class="big">Brakes OFF (push)</button>
-    <button id="btn-brakes-engage" class="big">Brakes ON (drive)</button>
+{# Built for the HMI's height: the line reading and the pad (a square sized by the viewport)
+   on the left, and everything else - vehicle state as one-line rows, speed, jog status, the
+   arming note - is a column on the right. Nothing sits below, so the page never scrolls. #}
+<section class="manual grow">
+  <div class="manual-left">
+    {% include "_line_track.html" %}
+    <div id="jog"></div>
+  </div>
+  <div class="side" id="manual-side">
+    <h2>Vehicle <small>supervisor · mux</small></h2>
+    <div id="manual-state" class="tel-grid rows"></div>
+    <p id="manual-reason" class="note"></p>
+    {% if qr %}
+    <h2>Push mode <small>brakes</small></h2>
+    <div id="push-state" class="tel-grid rows"></div>
+    <div class="bar">
+      <button id="btn-brakes-release">Brakes OFF (push)</button>
+      <button id="btn-brakes-engage">Brakes ON (drive)</button>
+    </div>
+    <p class="note">Brakes off: 0 V, direction outputs low, <b>the vehicle rolls freely</b> - level floor only. The jog pad does nothing until the brakes are on again; the E-stop still brakes.</p>
+    {% else %}
+    <p class="note"><b>Arming is the physical panel's job</b>: the selector resting in MANUAL energises the drives at zero. This page cannot arm, clear a drive alarm or change the mode.</p>
+    {% endif %}
   </div>
 </section>
-<section>
-  <h2>Manual jog <small>/amr/manual_command · held</small></h2>
-  <div id="jog"></div>
-</section>
 {% endblock %}
-{% block scripts %}<script src="/static/jogpad.js"></script>
+{% block scripts %}<script src="/static/linetrack.js"></script>
+<script src="/static/jogpad.js"></script>
 <script>
 jogpad(document.getElementById('jog'));
+{% if qr %}
 async function brakes(path, what) {
   const { status, data } = await api(path);
   if (status === 200 && data && data.ok) log(`${what}: ${data.message}`);  // failures are logged by api()
@@ -33,18 +41,25 @@ document.getElementById('btn-brakes-release').onclick = () => {
   brakes('/api/brakes/release', 'brakes off');
 };
 document.getElementById('btn-brakes-engage').onclick = () => brakes('/api/brakes/engage', 'brakes on');
+{% endif %}
+// Speed + jog status go under the vehicle rows on the right; the pad keeps the whole left column.
+document.getElementById('manual-side').insertBefore(document.querySelector('#jog .jog-foot'), document.getElementById('manual-reason'));
 onState(st => {
   const m = st.mode, mx = st.mux, l = st.lease;
   tiles('manual-state', [
     ['Mode', m ? m.mode_name : '–', m ? (m.phase || '—') : 'no supervisor', m ? MODE_LEVEL[m.mode_name] : 'bad'],
-    ['Manual allowed', yesno(m && m.manual_available), 'by supervisor', m && m.manual_available ? '' : 'warn'],
-    ['Command source', mx ? mx.source : '–', mx ? (mx.inhibited ? 'inhibited' : '—') : 'no mux state', mx && mx.inhibited ? 'warn' : ''],
-    ['Generation', l ? String(l.generation) : '–', l ? 'lease' : 'no lease', l ? '' : 'warn'],
+    ['Manual', yesno(m && m.manual_available), 'allowed by supervisor', m && m.manual_available ? '' : 'warn'],
+    ['Command', mx ? mx.source : '–', mx ? (mx.inhibited ? 'inhibited' : '—') : 'no mux state', mx && mx.inhibited ? 'warn' : ''],
+    ['Gen.', l ? String(l.generation) : '–', l ? 'lease' : 'no lease', l ? '' : 'warn'],
   ]);
-  const d = st.drives, pushing = d && !d.operational && d.left === 'disarmed';
+  {% if qr %}
+  const d = st.drives, pushing = d && /push/.test(d.power_reason || '');
   tiles('push-state', [
-    ['Brakes', !d ? '–' : pushing ? 'OFF · push' : (d.operational ? 'ON · drive' : 'ON'), d ? `${d.left} · ${d.right}` : 'no drive status', !d ? 'bad' : pushing ? 'warn' : ''],
+    ['Brakes', !d ? '–' : pushing ? 'OFF · push' : (d.operational ? 'ON · drive' : 'ON'), d ? (d.power_reason || d.left) : 'no drive status', !d ? 'bad' : pushing ? 'warn' : ''],
   ]);
+  {% endif %}
+  lineTrack(st.line_track);
+  rfidTags(st.rfid);
   document.getElementById('manual-reason').textContent = [mx && mx.reason ? `mux: ${mx.reason}` : '', m && m.reason ? m.reason : ''].filter(Boolean).join(' · ');
 });
 </script>{% endblock %}

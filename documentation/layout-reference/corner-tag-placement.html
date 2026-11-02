@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Corner Tag Placement</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700&family=IBM+Plex+Mono:wght@600&family=IBM+Plex+Sans:wght@500&display=swap" rel="stylesheet">
+<style>
+  /* Drawing-only layout image, same language as simple-reference.html. Canvas 1920x1080;
+     the corner and the tag spacing are to scale (1 m = 250 px, R drawn at 0.75 m).
+     Source of the rules: manuals/tracked-speed-plan-1-no-slam.md section 3. */
+  :root {
+    --paper: #e9edf2;
+    --surface: #ffffff;
+    --ink: #14171d;
+    --ink-2: #3d4553;
+    --ink-3: #636b7c;
+    --rule: #cbd2de;
+    --route: #1f3f7a; --route-dark: #152c57; --route-wash: #dde6f5;
+    --slow: #e09a00;  --slow-wash: #fde9b8;  --slow-ink: #8a5e00;
+    --fast: #2f8a57;  --fast-wash: #d3eedd;  --fast-ink: #1e5c39;
+    --tag: #c8176b;
+    --agv: #23272f;
+    color-scheme: light;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding-block: 0 40px;
+    background: var(--paper);
+    color: var(--ink);
+    font: 16px/1.45 "IBM Plex Sans", Arial, Helvetica, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------------- toolbar (never captured) ---------------- */
+  .toolbar {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+    padding: 10px 16px;
+    background: var(--surface);
+    border-bottom: 2px solid var(--ink);
+  }
+  .toolbar strong { margin-right: 8px; font: 700 15px "Archivo", Arial, sans-serif; }
+  .seg { display: flex; border: 1.5px solid var(--ink); }
+  .seg button, .toolbar .go {
+    border: 0; border-left: 1px solid var(--rule);
+    background: var(--surface); color: var(--ink-2);
+    padding: 7px 12px; cursor: pointer;
+    font: 600 11px "IBM Plex Mono", ui-monospace, monospace;
+    letter-spacing: .07em; text-transform: uppercase;
+  }
+  .seg button:first-child { border-left: 0; }
+  .seg button[aria-pressed="true"] { background: var(--agv); color: #fff; }
+  .toolbar .go { border: 1.5px solid var(--route-dark); background: var(--route); color: #fff; }
+  .toolbar .go:disabled { opacity: .6; cursor: progress; }
+  .toolbar button:focus-visible { outline: 2px solid var(--tag); outline-offset: 2px; }
+  .toolbar .status {
+    margin-left: auto; color: var(--ink-3);
+    font: 600 11px "IBM Plex Mono", ui-monospace, monospace; letter-spacing: .05em; text-transform: uppercase;
+  }
+
+  .stage-wrap { padding: 20px 16px 0; }
+  .stage { position: relative; margin: 0 auto; box-shadow: 0 1px 0 var(--rule), 0 10px 30px rgba(20,30,50,.12); }
+
+  /* ---------------- canvas 1920 x 1080 ---------------- */
+  .slide {
+    position: absolute; top: 0; left: 0;
+    width: 1920px; height: 1080px;
+    transform-origin: top left;
+    overflow: hidden;
+    background: var(--surface);
+  }
+
+  .dwg { position: absolute; inset: 0; width: 1920px; height: 1080px; }
+  .dwg text { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+  .head { font: 700 36px "Archivo", Arial, sans-serif !important; text-transform: uppercase; }
+  .lbl { font-size: 28px; font-weight: 600; letter-spacing: .03em; }
+  .sm  { font-size: 26px; font-weight: 600; }
+  .tagno { font: 700 26px "Archivo", Arial, sans-serif !important; fill: #fff; }
+  .env { fill: none; stroke: var(--route-wash); stroke-width: 56; }
+  .normband { fill: none; stroke: var(--slow-wash); stroke-width: 56; }
+  .fastband { fill: none; stroke: var(--fast-wash); stroke-width: 56; }
+  .lane { fill: none; stroke: var(--route); stroke-width: 7; stroke-linejoin: round; }
+  .chev { fill: none; stroke: var(--route-dark); stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; }
+  .dim { stroke: var(--ink-2); stroke-width: 2.5; fill: none; }
+  .tick { stroke: var(--ink); stroke-width: 4; }
+
+  .legend {
+    position: absolute; left: 60px; top: 962px; width: 1800px; height: 76px;
+    display: flex; align-items: center; justify-content: space-between;
+    margin: 0; padding: 0; list-style: none;
+    color: var(--ink-2); font: 500 28px "IBM Plex Sans", Arial, sans-serif;
+  }
+  .legend li { display: flex; align-items: center; gap: 16px; white-space: nowrap; }
+  .legend svg { flex: none; width: 64px; height: 40px; }
+</style>
+</head>
+<body>
+
+<nav class="toolbar" aria-label="Export">
+  <strong>Corner Tag Placement</strong>
+  <div class="seg" role="group" aria-label="Resolution">
+    <button type="button" data-res="2" aria-pressed="false">2× · 3840</button>
+    <button type="button" data-res="3" aria-pressed="true">3× · 5760</button>
+  </div>
+  <div class="seg" role="group" aria-label="Background">
+    <button type="button" data-bg="white" aria-pressed="true">White</button>
+    <button type="button" data-bg="none" aria-pressed="false">Transparent</button>
+  </div>
+  <button type="button" class="go" id="download">Download PNG</button>
+  <span class="status" id="status">16:9 · 1920 × 1080 base</span>
+</nav>
+
+<div class="stage-wrap">
+<div class="stage" id="stage">
+<section class="slide" id="slide" aria-label="90 degree corner RFID tag placement">
+
+  <svg class="dwg" viewBox="0 0 1920 1080" role="img" aria-label="A 90 degree corner joining straight S1 (horizontal) and straight S2 (vertical). On each straight, outer tag 60 sits 0.5 m past the tangent point and inner tag 40 0.5 m further. HIGH speed ends at least 2.35 m before the inner tag; the corner and the tag pairs are NORMAL speed.">
+    <defs>
+      <path id="chev" d="M-9 -13 L9 0 L-9 13"/>
+      <marker id="arr" markerUnits="userSpaceOnUse" markerWidth="18" markerHeight="16" refX="17" refY="8" orient="auto-start-reverse"><path d="M0,0 L18,8 L0,16 Z" fill="#3d4553"/></marker>
+      <linearGradient id="ramp-h" gradientUnits="userSpaceOnUse" x1="312" y1="0" x2="900" y2="0">
+        <stop offset="0" stop-color="#d3eedd"/><stop offset="1" stop-color="#fde9b8"/>
+      </linearGradient>
+      <linearGradient id="ramp-v" gradientUnits="userSpaceOnUse" x1="0" y1="687.5" x2="0" y2="927">
+        <stop offset="0" stop-color="#fde9b8"/><stop offset="1" stop-color="#d3eedd"/>
+      </linearGradient>
+    </defs>
+
+    <rect x="60" y="40" width="1800" height="890" fill="#f5f6f8" stroke="#2a2f3a" stroke-width="6"/>
+
+    <!-- zones along the tape: HIGH | ramp down | NORMAL (pair, corner, pair) | ramp up -->
+    <path class="fastband" d="M63 250 H312"/>
+    <path d="M312 250 H900" fill="none" stroke="url(#ramp-h)" stroke-width="56"/>
+    <path class="normband" d="M900 250 H1150 A187.5 187.5 0 0 1 1337.5 437.5 V687.5"/>
+    <path d="M1337.5 687.5 V927" fill="none" stroke="url(#ramp-v)" stroke-width="56"/>
+    <path class="lane" d="M63 250 H1150 A187.5 187.5 0 0 1 1337.5 437.5 V927"/>
+    <g id="chevrons"></g>
+
+    <!-- zone labels -->
+    <text class="lbl" x="84" y="196" fill="#1e5c39">HIGH</text>
+    <text class="lbl" x="606" y="196" text-anchor="middle" fill="#3d4553">RAMP TO NORMAL · 2 s</text>
+    <text class="lbl" x="1420" y="300" fill="#8a5e00">NORMAL 0.5 m/s</text>
+    <text class="sm"  x="1420" y="338" fill="#8a5e00">pairs + corner</text>
+    <text class="lbl" x="1390" y="800" fill="#3d4553">RAMP TO HIGH · 2 s</text>
+    <text class="sm"  x="1390" y="838" fill="#3d4553">from 40, entering S2</text>
+    <text class="head" x="140" y="120" fill="#14171d">S1</text>
+    <text class="head" x="1390" y="905" fill="#14171d">S2</text>
+    <text class="sm" x="900" y="196" text-anchor="middle" fill="#c8176b">inner</text>
+    <text class="sm" x="1025" y="196" text-anchor="middle" fill="#c8176b">outer</text>
+    <text class="sm" x="1390" y="572" fill="#c8176b">outer</text>
+    <text class="sm" x="1390" y="697" fill="#c8176b">inner</text>
+
+    <!-- tangent points -->
+    <path class="tick" d="M1150 212 V288"/>
+    <text class="lbl" x="1150" y="196" text-anchor="middle" fill="#14171d">T1</text>
+    <path class="tick" d="M1299.5 437.5 H1375.5"/>
+    <text class="lbl" x="1390" y="447" fill="#14171d">T2</text>
+
+    <!-- radius -->
+    <path class="dim" d="M1150 437.5 L1281 306.5" marker-end="url(#arr)"/>
+    <circle cx="1150" cy="437.5" r="5" fill="#3d4553"/>
+    <text class="sm" x="1135" y="500" text-anchor="end" fill="#3d4553">R 0.5–1.0 m</text>
+
+    <!-- dimension chain along S1, below the tape -->
+    <path class="dim" d="M312 300 V350 M900 300 V350 M1025 300 V350 M1150 300 V350"/>
+    <path class="dim" d="M312 330 H900" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <path class="dim" d="M900 330 H1025" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <path class="dim" d="M1025 330 H1150" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <text class="sm" x="606" y="378" text-anchor="middle" fill="#3d4553">≥ 2.35 m · brake 1.35 + margin 1.0</text>
+    <text class="sm" x="962" y="378" text-anchor="middle" fill="#3d4553">0.5</text>
+    <text class="sm" x="1087" y="378" text-anchor="middle" fill="#3d4553">0.5</text>
+
+    <!-- late-exit backstops -->
+    <text class="sm" x="1130" y="420" text-anchor="end" fill="#8a5e00">40 still HIGH → 0.5 m/s²</text>
+    <text class="sm" x="1130" y="454" text-anchor="end" fill="#8a5e00">60 still HIGH → 1.0 m/s²</text>
+
+    <!-- dimension chain along S2, left of the tape -->
+    <path class="dim" d="M1262 437.5 H1302 M1262 562.5 H1302 M1262 687.5 H1302"/>
+    <path class="dim" d="M1277 437.5 V562.5" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <path class="dim" d="M1277 562.5 V687.5" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <text class="sm" x="1252" y="510" text-anchor="end" fill="#3d4553">0.5</text>
+    <text class="sm" x="1252" y="635" text-anchor="end" fill="#3d4553">0.5</text>
+
+    <g id="things"></g>
+
+    <!-- placement rules -->
+    <text class="head" x="110" y="550" fill="#14171d">Placement</text>
+    <text class="lbl" x="110" y="596" fill="#3d4553">60  outer tag, 0.5 m past T</text>
+    <text class="lbl" x="110" y="636" fill="#3d4553">40  inner tag, 0.5 m past 60</text>
+    <text class="lbl" x="110" y="676" fill="#3d4553">a pair at both ends of every HIGH straight</text>
+    <text class="head" x="110" y="740" fill="#14171d">Read order</text>
+    <text class="lbl" x="110" y="786" fill="#3d4553">60 → 40</text>
+    <text class="lbl" x="290" y="786" fill="#3d4553">entering the straight</text>
+    <text class="lbl" x="760" y="786" fill="#1e5c39">HIGH on</text>
+    <text class="lbl" x="110" y="826" fill="#3d4553">40 → 60</text>
+    <text class="lbl" x="290" y="826" fill="#3d4553">leaving the straight</text>
+    <text class="lbl" x="760" y="826" fill="#8a5e00">HIGH off</text>
+    <text class="lbl" x="110" y="866" fill="#3d4553">miss</text>
+    <text class="lbl" x="290" y="866" fill="#3d4553">any tag not read</text>
+    <text class="lbl" x="760" y="866" fill="#8a5e00">stays NORMAL</text>
+    <text class="sm"  x="110" y="912" fill="#636b7c">T = tangent point · HIGH budget ends ≥ 2.35 m before the far 40</text>
+  </svg>
+
+  <ul class="legend">
+    <li><svg viewBox="0 0 64 40"><path d="M2 20 H62" stroke="#d3eedd" stroke-width="30"/><path d="M2 20 H62" stroke="#1f3f7a" stroke-width="5"/></svg>HIGH 0.85 m/s</li>
+    <li><svg viewBox="0 0 64 40"><path d="M2 20 H62" stroke="#fde9b8" stroke-width="30"/><path d="M2 20 H62" stroke="#1f3f7a" stroke-width="5"/></svg>NORMAL 0.5 m/s</li>
+    <li><svg viewBox="0 0 64 40"><defs><linearGradient id="lg" gradientUnits="userSpaceOnUse" x1="2" y1="0" x2="62" y2="0"><stop offset="0" stop-color="#d3eedd"/><stop offset="1" stop-color="#fde9b8"/></linearGradient></defs><path d="M2 20 H62" stroke="url(#lg)" stroke-width="30"/><path d="M2 20 H62" stroke="#1f3f7a" stroke-width="5"/></svg>Speed ramp</li>
+    <li><svg viewBox="0 0 64 40"><rect x="19" y="7" width="26" height="26" transform="rotate(45 32 20)" fill="#c8176b" stroke="#fff" stroke-width="3"/></svg>RFID tag</li>
+    <li><svg viewBox="0 0 64 40"><path d="M32 4 V36" stroke="#14171d" stroke-width="4"/><path d="M2 20 H62" stroke="#1f3f7a" stroke-width="5"/></svg>Tangent point</li>
+    <li><svg viewBox="0 0 64 40"><polygon points="4,6 46,6 60,16 60,24 46,34 4,34" fill="#23272f"/><path d="M52 20 L34 11 V29 Z" fill="#fff"/></svg>AGV</li>
+  </ul>
+</section>
+</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/dist/html-to-image.js"></script>
+<script>
+  const FILE_NAME = 'corner-tag-placement';
+
+  /* ---------------- drawing ---------------- */
+  const NS = 'http://www.w3.org/2000/svg';
+  const el = (tag, attrs, parent) => {
+    const n = document.createElementNS(NS, tag);
+    for (const k in attrs) n.setAttribute(k, attrs[k]);
+    parent.appendChild(n);
+    return n;
+  };
+  const text = (str, attrs, parent) => { const t = el('text', attrs, parent); t.textContent = str; return t; };
+
+  const G = document.getElementById('things');
+  // AGV heading east (nose on the right)
+  function agvEast(front, cy) {
+    el('polygon', { points: `${front - 16},${cy - 22} ${front - 76},${cy - 22} ${front - 76},${cy + 22} ${front - 16},${cy + 22} ${front},${cy + 8} ${front},${cy - 8}`, fill: '#23272f' }, G);
+    el('path', { d: `M${front - 14} ${cy} L${front - 38} ${cy - 13} V${cy + 13} Z`, fill: '#fff' }, G);
+  }
+  function tag(letter, cx, cy) {
+    el('rect', { x: cx - 22, y: cy - 22, width: 44, height: 44, transform: `rotate(45 ${cx} ${cy})`, fill: '#c8176b', stroke: '#fff', 'stroke-width': 4 }, G);
+    text(letter, { x: cx, y: cy + 9, 'text-anchor': 'middle', class: 'tagno' }, G);
+  }
+
+  agvEast(250, 250);
+
+  // shared ids: every inner tag 40, every outer tag 60; 0.5 m = 125 px
+  [['40', 900, 250], ['60', 1025, 250], ['60', 1337.5, 562.5], ['40', 1337.5, 687.5]]
+    .forEach(([l, x, y]) => tag(l, x, y));
+
+  // the corner runs both ways: chevrons east on S1, south on S2, and their reverse
+  const C = document.getElementById('chevrons');
+  [
+    [480, 250, 0], [440, 250, 180],
+    [1337.5, 780, 90], [1337.5, 740, -90],
+  ].forEach(([x, y, a]) => el('use', { href: '#chev', class: 'chev', transform: `translate(${x} ${y}) rotate(${a})` }, C));
+
+  /* ---- fit the 1920x1080 canvas to the window ---- */
+  const stage = document.getElementById('stage');
+  const slide = document.getElementById('slide');
+  function fit() {
+    const avail = Math.min(document.documentElement.clientWidth - 32, 1920);
+    const s = avail / 1920;
+    stage.style.width = 1920 * s + 'px';
+    stage.style.height = 1080 * s + 'px';
+    slide.style.transform = `scale(${s})`;
+  }
+  addEventListener('resize', fit);
+  fit();
+
+  /* ---- export ---- */
+  let res = 3, bg = 'white';
+  document.querySelectorAll('[data-res]').forEach(b => b.addEventListener('click', () => {
+    res = +b.dataset.res;
+    document.querySelectorAll('[data-res]').forEach(x => x.setAttribute('aria-pressed', x === b));
+  }));
+  document.querySelectorAll('[data-bg]').forEach(b => b.addEventListener('click', () => {
+    bg = b.dataset.bg;
+    document.querySelectorAll('[data-bg]').forEach(x => x.setAttribute('aria-pressed', x === b));
+  }));
+
+  const status = document.getElementById('status');
+  const btn = document.getElementById('download');
+  btn.addEventListener('click', async () => {
+    if (!window.htmlToImage) { status.textContent = 'Export library did not load — check internet connection'; return; }
+    btn.disabled = true;
+    status.textContent = 'Rendering…';
+    try {
+      await document.fonts.ready;
+      const transparent = bg === 'none';
+      const url = await htmlToImage.toPng(slide, {
+        width: 1920, height: 1080, pixelRatio: res,
+        backgroundColor: transparent ? undefined : '#ffffff',
+        style: { transform: 'none', background: transparent ? 'transparent' : '#ffffff' },
+      });
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${FILE_NAME}@${res}x${transparent ? '-transparent' : ''}.png`;
+      document.body.appendChild(a); a.click(); a.remove();
+      status.textContent = `Saved ${1920 * res} × ${1080 * res} PNG`;
+    } catch (e) {
+      console.error(e);
+      status.textContent = 'Export failed — see console';
+    } finally {
+      btn.disabled = false;
+    }
+  });
+</script>
+</body>
+</html>
