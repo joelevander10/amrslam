@@ -179,9 +179,10 @@ Keep the vehicle in **MANUAL** until step 6.
    - **E-stop** puts the route in `BLOCKED`. Release the E-stop, then press **START** to
      continue from where it stopped.
    - **Pause** (web) keeps progress. To continue: **Prepare resume**, then **START**.
-   - Something in the path: Nav2's controller stops with **controller stop**
-     (`BLOCKED`) and continues by itself once clear, at most 3 times per step, then
-     FAULT. This is the ONLY obstacle stop on the AMR QR besides the E-stop - see §6.
+   - Something in front: the scanner's warning fields slow the vehicle and the
+     protective field stops it (**lidar stop**, `BLOCKED`); it continues by itself once
+     clear. Nav2's own collision check can also stop it (**controller stop**, `BLOCKED`,
+     continues by itself, at most 3 times per step, then FAULT) - see §6.
    - **Abort** (web) ends the run; the mission must be loaded again.
 8. **Finished**: run state `DONE`. For another run, **Load** again and press **START**
    (you are still in AUTO). To leave navigation, press **STOP** (MANUAL), **Abort** any
@@ -195,7 +196,8 @@ PAUSED or BLOCKED. Abort it first.
 | You see | Meaning | Do |
 |---|---|---|
 | Run `BLOCKED`, E-stop | E-stop pressed during a run | Release E-stop, press **START** |
-| Run `BLOCKED`, controller stop | Nav2 saw something in the path ("collision ahead"), from the filtered scan | Clear it; continues by itself (3 tries per step, then FAULT) |
+| Run `BLOCKED`, lidar stop | Something in the nanoScan3 protective field | Clear the area in front; continues by itself. Stops with nothing there: check the field set (§8) |
+| Run `BLOCKED`, controller stop | Nav2 saw something in the path ("collision ahead") | Clear it; continues by itself (3 tries per step, then FAULT) |
 | Run `FAULT`, "drives did not power up" | No torque within 8 s of START (E-stop, push mode, I/O lost) | Fix it, then START again |
 | Run `FAULT` | Sensor, drive, localisation or a tolerance exceeded | Read the reason. With the vehicle still, press **STOP** in MANUAL (= Reset) or **Acknowledge fault**. Then localise / reposition / load / START again |
 | Localisation `LOST` | Sensor stale, pose uncertain or jumped | Set the initial pose again and **Confirm** |
@@ -224,14 +226,14 @@ real stop.
 
 ## 8. What the AMR QR does not have (read once)
 
-- **No scanner field gating.** gvievo-01 stops AUTO from the nanoScan3's protective and
-  warning fields (`/output_paths`). The AMR QR's scanner configuration came from the old
-  controller and reported its field occupied with the area empty, so on this vehicle the
-  mux assumes the fields clear and the route ignores them. Obstacles in AUTO are stopped
-  only by **Nav2's collision check** (local costmap from the filtered scan; returns
-  closer than 0.5 m to the scanner are ignored because of the scratched window) and by
-  the **E-stop**. Keep route speeds low (0.15–0.20 m/s) and the E-stop in reach. To get
-  the field stop back: verify the field set in SICK Safety Designer, then ask for
-  `scanner_fields` to be set up for this profile.
+- **Scanner fields: same as gvievo-01** since the broken nanoScan3 was replaced
+  (2026-11-02). The warning fields slow or stop AUTO and the protective field stops it
+  ("lidar stop", resumes by itself). There are no scan filters any more: the noise of
+  September/October came from the broken unit. The new scanner's field set must match
+  `amr_bringup/config/scanner_fields.yaml` (protective = output path 0, warning 2 = path 1,
+  warning 1 = path 2). Check once: `ros2 topic echo /output_paths --field status` shows
+  all `True` with the area empty and index 0 `False` with a hand 0.3 m in front.
+  The analog drives have no torque feedback, so a stop the scanner's OSSD makes in
+  hardware is seen as a stall (see AMR_QR.md §5 no. 8).
 - **No Manual Arm switch, no horn, no pendant, no RFID, no tape mode** (profile
   `tracked: false`).

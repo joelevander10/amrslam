@@ -220,18 +220,20 @@ def test_real_base_composes_hardware_once(monkeypatch):
     assert "web_node" not in c["exes"]
 
 
-def test_qr_real_base_is_one_qr_base_node_with_the_scan_filters(monkeypatch):
+def test_qr_real_base_is_one_qr_base_node_gated_on_the_scanner_fields(monkeypatch):
     """AMR QR (platform qr_analog): qr_base_node owns drives, encoders, IMU and panel - no
-    drive_node, panel_node or rfid_node - and the mux does not gate on its scanner fields."""
+    drive_node, panel_node or rfid_node; the mux gates AUTO on the scanner fields like gvievo-01."""
     _use_profile(monkeypatch, "amr-qr-01")
     monkeypatch.setenv("ROS_DOMAIN_ID", str(domains.VEHICLE))
     c = compose("base.launch.py", real="true", panel="real")
     assert set(c["exes"]) == {"qr_base_node", "sick_safetyscanners2_node"} | BASE_EXES
     assert c["exes"].count("robot_state_publisher") == 1
     gate = [_param_dict(p) for p in c["params"]["scan_gate_node"] if isinstance(p, dict)]
-    assert any(p.get("despeckle") is True and p.get("robot_fixed") is True for p in gate)
+    # the broken-lidar scan filters are off since the scanner was replaced (2026-11-02)
+    off = {"despeckle": False, "robot_fixed": False, "mask_file": ""}
+    assert any(all(p.get(k) == v for k, v in off.items()) for p in gate)
     mux = [_param_dict(p) for p in c["params"]["cmd_mux_kinematics_node"] if isinstance(p, dict)]
-    assert any(p.get("field_source") == "assume_clear" for p in mux)
+    assert any(p.get("field_source") == "scanner" for p in mux)
 
 
 def test_wrappers_compose_base_web_and_exactly_one_layer(tmp_path):

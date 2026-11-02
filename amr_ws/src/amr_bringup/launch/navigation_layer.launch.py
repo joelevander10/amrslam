@@ -40,9 +40,6 @@ def spin_plugin(distro: str | None = None) -> str:
     return "nav2_behaviors/Spin" if distro in ("humble", "iron") else "nav2_behaviors::Spin"
 
 
-QR_OBSTACLE_MIN_RANGE_M = 0.5
-
-
 def executor_overrides() -> dict:
     """Per-vehicle route executor parameters ({} = the executor's defaults).
 
@@ -50,14 +47,13 @@ def executor_overrides() -> dict:
       * start gate 0.20 m / 10 deg (was 0.10 / 5): it is placed by hand-jog or pushing, where
         the default was hard to hit. 0.20 m is the most the executor tolerates anyway - within
         the first converge_m of a step the cross-track limit is 2 x cross_track_limit_m (0.10
-        by default), so a wider gate would only fault a moment after START;
-      * use_protective_field false: its nanoScan3 reported the protective field violated with
-        the area empty (runs held on "lidar stop"); the old QR controller never used the
-        scanner outputs either."""
+        by default), so a wider gate would only fault a moment after START.
+    The protective field is used again (use_protective_field false 2026-09-24..11-02, while
+    the QR ran on a broken nanoScan3)."""
     from agv_core import config  # noqa: PLC0415 - the vehicle profile (AGV_PROFILE)
 
     if config.PLATFORM == config.PLATFORM_QR:
-        return {"start_gate_m": 0.20, "start_gate_deg": 10.0, "use_protective_field": False}
+        return {"start_gate_m": 0.20, "start_gate_deg": 10.0}
     return {}
 
 
@@ -67,15 +63,6 @@ def _costmap_footprint_file(footprint: str, generation: int) -> str:
     os.makedirs(state_dir, exist_ok=True)
     path = os.path.join(state_dir, f"costmap_footprint_gen{generation}.yaml")
     params = {"footprint": footprint}
-    from agv_core import config  # noqa: PLC0415 - the vehicle profile (AGV_PROFILE)
-
-    if config.PLATFORM == config.PLATFORM_QR:
-        # The QR scanner's scratched window returns phantoms 0.1-0.45 m out that move with the
-        # vehicle (2026-09-24): in the costmap they sat in the path and RPP aborted every
-        # FollowPath ("controller stop"). Returns closer than this are not MARKED (clearing
-        # is unchanged); an obstacle approached from farther away was marked before it got
-        # this close and stays marked. Keep it above the phantom range, and slow.
-        params["obstacle_layer"] = {"scan": {"obstacle_min_range": QR_OBSTACLE_MIN_RANGE_M}}
     doc = {"local_costmap": {"local_costmap": {"ros__parameters": params}}}
     with open(path, "w") as fh:
         yaml.safe_dump(doc, fh)

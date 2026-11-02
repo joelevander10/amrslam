@@ -26,8 +26,8 @@ Instalasi langkah demi langkah (dan update dari kode lama, Part U):
 | Encoder | 6064h di drive | **Encoder CANopen absolut di as roda** (node 1/2, 0x6004, 8192/putaran), range wrap dipelajari dari data |
 | IMU | MLS di CAN | **WitMotion serial** `/dev/amr_imu`, 115200 baud, paket 0x52 |
 | Panel | Selector AUTO/MANUAL fisik + Start + Reset + pendant | **Selector virtual** dari START/STOP + E-stop DI0 |
-| Field scanner | Mux + executor berhenti dari `/output_paths` | **Tidak dipakai** (field terbaca "occupied" padahal kosong). Obstacle hanya lewat collision check Nav2 + E-stop |
-| Filter lidar | — | despeckle, mask goresan jendela (`scan_mask_learn`), filter "ikut berputar dengan robot" (`robot_fixed`), abaikan < 0.5 m di costmap & SLAM |
+| Field scanner | Mux + executor berhenti dari `/output_paths` | **Sama** sejak lidar diganti (2026-11-02). Field set di scanner harus cocok dengan `scanner_fields.yaml` (cek §5 no. 9) |
+| Filter lidar | — | **Tidak ada** (sama dengan gvievo). Noise 2026-09/10 ternyata dari lidar yang rusak; filter-nya dimatikan, kodenya masih ada |
 | Geometri | track 0.487, lidar 0.964 m | track **0.37652**, lidar **0.81 m**, body **1.18 × 0.675** |
 | Distro | Humble (Ubuntu 22.04) | **Jazzy** (Ubuntu 24.04). Script deploy auto-deteksi; slam_toolbox lifecycle & plugin Spin mengikuti distro |
 
@@ -42,10 +42,10 @@ Instalasi langkah demi langkah (dan update dari kode lama, Part U):
 | `amr_base/qr_motor.py` | Wheel loop: interlock arah, FF + PI, coast, rem, latch runaway/stall, standby/armed/push |
 | `amr_base/qr_encoders.py`, `wit_imu.py`, `qr_panel.py`, `qr_analog.py` | Encoder, IMU, selector virtual, output analog |
 | `amr_base/qr_calibrate.py`, `wasd_teleop.py` | Tool bench (`io`, `enc`, `imu`, `imu-setup`, `breakaway`, `ff`, `brake-off`) dan teleop WASD |
-| `amr_localization/speckle.py`, `scan_mask*.py`, `robot_fixed.py` | Filter scan di `scan_gate_node` |
+| `amr_localization/speckle.py`, `scan_mask*.py`, `robot_fixed.py` | Filter scan di `scan_gate_node` (mati; untuk lidar rusak) |
 | `amr_description/vehicle.py`, `config/*.amr-qr-01.yaml` | Geometri per kendaraan (URDF, footprint) |
-| `amr_bringup/config/nanoscan3.amr-qr-01.yaml`, `slam_mapping.amr-qr-01.yaml` | Scanner 192.168.1.2 (host_ip auto) dan override SLAM |
-| `base/scanner/mapping_layer/navigation_layer.launch.py` | Pilih hardware & config sesuai profil, lifecycle slam_toolbox di Jazzy, start gate 0.20 m / 10°, field scanner off |
+| `amr_bringup/config/nanoscan3.amr-qr-01.yaml` | Scanner 192.168.1.2 (host_ip auto) |
+| `base/scanner/mapping_layer/navigation_layer.launch.py` | Pilih hardware & config sesuai profil, lifecycle slam_toolbox di Jazzy, start gate 0.20 m / 10° |
 | `amr_web`: halaman Manual (push mode), Maps (cek Map id), log alasan run, live view `/scan_gated` | Web |
 | `deploy/*` (user `amrslam`, `AGV_PROFILE=amr-qr-01`), `deploy/qr/*` (udev, slcan `can0`) | Deploy |
 
@@ -118,11 +118,12 @@ Route yang meminta lebih cepat tetap jalan, tapi di-clamp oleh mux.
    hidup lagi sebelum FAULT, roda bisa tersentak. Kalau sinyal stop seperti itu ada,
    sambungkan ke DI kosong. Stack gvievo menangani "lidar stop → lanjut otomatis"
    lewat feedback torsi driver, dan fitur itu **tidak** tersedia di AMR QR.
-9. **Tanpa field scanner** (lihat §1): obstacle saat AUTO hanya dihentikan oleh collision
-   check Nav2 dari scan yang sudah difilter (return < 0.5 m dari scanner diabaikan karena
-   goresan jendela) dan oleh E-stop. Jalankan route pelan (0.15–0.20 m/s). Untuk memakai
-   field lagi: verifikasi field set di SICK Safety Designer, lalu buat `scanner_fields`
-   untuk profil ini dan set `field_source: scanner` di `base.launch.py`.
+9. **Field scanner dipakai** (sama dengan gvievo-01) sejak lidar yang rusak diganti.
+   `scanner_fields.yaml` adalah field set agv-01: protective = output path 0, warning 2 =
+   path 1, warning 1 = path 2, status `false` = terisi. Field set lidar baru di SICK Safety
+   Designer harus sama. Cek: `ros2 topic echo /output_paths --field status` → area kosong
+   semua `True`; tangan di depan scanner (≤ 0.5 m) → index 0 `False`. Kalau tidak cocok,
+   AUTO akan berhenti terus ("lidar stop") atau tidak berhenti sama sekali.
 
 ---
 

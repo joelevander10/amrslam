@@ -185,12 +185,10 @@ def _compose(context):
                     "teleop_enabled": not supervised,
                     # Scanner fields gate AUTO (2026-10-02). The sim has no scanner, so there
                     # and ONLY there the fields are assumed clear.
-                    # The AMR QR (2026-09-24): its nanoScan3 configuration came from the old
-                    # controller, which never used the output paths, and they read "occupied"
-                    # with the area empty - every run held on "lidar stop". Until the field set
-                    # is verified in Safety Designer and written to scanner_fields.yaml, the
-                    # QR runs on Nav2's own collision check from the (filtered) scan.
-                    "field_source": "scanner" if real and not qr else "assume_clear",
+                    # The AMR QR gates on them too since its broken nanoScan3 was replaced
+                    # (2026-11-02): the "occupied with the area empty" readings of 2026-09-24
+                    # came from the faulty unit. Its field set must match scanner_fields.yaml.
+                    "field_source": "scanner" if real else "assume_clear",
                     # path indices, polarity, the x0.5 factor and the warning-2 stop distance: config/scanner_fields.yaml
                     **scanner_fields.mux_params(scanner_fields.load()),
                     "a_max": 0.3,
@@ -224,15 +222,15 @@ def _compose(context):
             executable="scan_gate_node",
             name="scan_gate",
             output="screen",
-            # AMR QR scan filters (2026-09-24): lone returns, returns that turn with the vehicle
-            # (its body, a bracket, a window scratch - learnt, kept in robot_fixed.yaml) and
-            # the learnt scan mask of the scratched window (scan_mask_learn --write)
+            # Scan filters (despeckle, robot_fixed, mask_file) are OFF on every vehicle. The
+            # AMR QR used them 2026-09-24..11-02 against phantom returns that turned out to
+            # be a broken nanoScan3, since replaced; set them here to bring one back.
             parameters=[
                 {
-                    "despeckle": qr,
-                    "robot_fixed": qr,
+                    "despeckle": False,
+                    "robot_fixed": False,
                     "robot_fixed_file": os.path.join(state_dir, "robot_fixed.yaml"),
-                    "mask_file": os.path.join(state_dir, "scan_mask.yaml") if qr else "",
+                    "mask_file": "",
                 }
             ],
         ),

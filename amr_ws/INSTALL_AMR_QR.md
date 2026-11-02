@@ -330,7 +330,8 @@ the checkout and put it back in the repo.
 
 Then re-run Part G step 20 (the unit files changed: watchdog, sudoers, journald), and
 repeat the quick checks: step 14 (`qr_calibrate io / enc / imu`), step 17 on blocks
-(`drivers.launch.py lidar:=false` + `wasd_teleop`), step 18 (lidar). The learnt scan
-files `~/.amr/robot_fixed.yaml` and `~/.amr/scan_mask.yaml` keep working.
+(`drivers.launch.py lidar:=false` + `wasd_teleop`), step 18 (lidar). The scan filters
+are off since the lidar was replaced, so `~/.amr/robot_fixed.yaml` and
+`~/.amr/scan_mask.yaml` are no longer read and can be deleted.
 
 What behaves differently after the update: [OPERATE_AMR_QR.md](OPERATE_AMR_QR.md) §0.

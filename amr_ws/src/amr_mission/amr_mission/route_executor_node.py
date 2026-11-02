@@ -210,9 +210,9 @@ class RouteExecutor(Node):
         self.declare_parameter("safety_window_s", 1.0)
         self.declare_parameter("drives_age_limit_s", 0.5)
         self.declare_parameter("field_output_index", 0)  # /output_paths status[i]: protective field
-        # false: ignore the scanner's protective field (/output_paths). The AMR QR: its nanoScan3
-        # config came from the old controller and reported the field violated with nothing in
-        # it (2026-09-24); a drive dropout there counts as the E-stop.
+        # false: ignore the scanner's protective field (/output_paths); a drive dropout then
+        # counts as the E-stop. No vehicle uses it now (the AMR QR did 2026-09-24..11-02, on a
+        # broken nanoScan3).
         self.declare_parameter("use_protective_field", True)
         self.declare_parameter("controller_abort_retries", 3)
         # The pre-move warning after a Start (module docstring); the profile's timing block.
