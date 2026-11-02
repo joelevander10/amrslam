@@ -133,7 +133,7 @@ def _positive_int(x, what: str) -> int:
 
 
 def _op_kind(op) -> str:
-    """dynamic | undynamic | free | unknown | occupied, for an edits.json op."""
+    """dynamic | undynamic | free | unknown | occupied | despeckle, for an edits.json op."""
     if not isinstance(op, dict):
         return ""
     return str(op.get("value", "")) if op.get("op") == "paint" else str(op.get("op", ""))
@@ -157,7 +157,9 @@ def _edits_summary(e: dict | None) -> dict | None:
         "note": e.get("note", ""),
         "ops": len(ops),
         "counts": {
-            k: kinds.count(k) for k in ("dynamic", "undynamic", "free", "unknown", "occupied") if k in kinds
+            k: kinds.count(k)
+            for k in ("dynamic", "undynamic", "free", "unknown", "occupied", "despeckle")
+            if k in kinds
         },
     }
 

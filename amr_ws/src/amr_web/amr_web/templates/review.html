@@ -4,13 +4,17 @@
 {% block body %}
 <section class="editor">
   <aside class="tools">
-    <h2>Map review <small>dynamic areas · cleanup</small></h2>
+    <h2>Map review <small>noise · static · dynamic</small></h2>
     <label class="field">Map <select id="rv-map"></select></label>
     <div id="rv-info" class="tel-grid" style="margin-top:.6rem"></div>
     <p class="note">Saving creates a <b>new revision</b>; this one stays as it is. Routes are saved per revision: load them in Routes on the new revision and save them again.</p>
     <div class="sep"></div>
     <h3>Draw <small>drag a rectangle</small></h3>
     <div class="bar" style="margin-top:0">
+      <button id="tool-despeckle" class="tool" title="Removes lidar noise: inside the rectangle, every occupied dot or blob of up to 4 cells (about 10 x 10 cm) becomes free. Walls and racks stay.">Remove noise</button>
+      <button id="tool-occupied" class="tool" title="A STATIC obstacle: these cells become occupied (a wall). Routes are refused through it and localisation uses it.">Static obstacle</button>
+    </div>
+    <div class="bar">
       <button id="tool-dynamic" class="tool" title="The scan here may change: trolleys, parked forklifts, pallets. Routes may be validated across it - check it is clear before running.">Dynamic area</button>
       <button id="tool-undynamic" class="tool" title="Remove the dynamic mark from the cells in the rectangle">Clear dynamic</button>
     </div>

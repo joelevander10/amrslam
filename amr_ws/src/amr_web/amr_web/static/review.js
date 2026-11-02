@@ -8,17 +8,21 @@ let mapId = null, mapRev = null, ops = [], history = [], future = [], saving = f
 
 // op per tool, as amr_maps.edit expects it; colours per kind on the canvas and in the list
 const TOOLS = {
+  despeckle: { btn: $('tool-despeckle'), name: 'remove noise', note: 'Removes lidar noise: inside the rectangle, every occupied dot or blob of up to 4 cells (about 10 × 10 cm) becomes free floor. Walls, racks and anything bigger stay. Drag it over a whole room if you like.' },
+  occupied: { btn: $('tool-occupied'), name: 'static obstacle', note: 'A permanent obstacle (wall, fixed rack): the cells become occupied. Routes are refused through it and localisation matches against it. For things that move, use Dynamic area.' },
   dynamic: { btn: $('tool-dynamic'), name: 'dynamic area', note: 'The scan here may change: trolleys, parked forklifts, pallets. Routes may cross the mapped objects in it; any scan return there during a run stops the vehicle (BLOCKED) until you clear it and press Start.' },
   undynamic: { btn: $('tool-undynamic'), name: 'clear dynamic', note: 'Removes the dynamic mark from these cells: mapped objects there block routes again.' },
   unknown: { btn: $('tool-unknown'), name: 'erase to unknown', note: 'Safe erase: the cells become unknown. Unknown blocks routes unless it lies inside a dynamic area.' },
   free: { btn: $('tool-free'), name: 'paint free', note: 'Operator assertion: you state this is open floor (the object is gone for good). Routes may pass; a scan return there still stops a run, but localisation treats the area as open floor.' },
 };
 const kind = o => o.op === 'paint' ? o.value : o.op;
-const opFor = (tool, polygon) => (tool === 'dynamic' || tool === 'undynamic') ? { op: tool, polygon } : { op: 'paint', value: tool, polygon };
+const opFor = (tool, polygon) => (tool === 'dynamic' || tool === 'undynamic' || tool === 'despeckle') ? { op: tool, polygon } : { op: 'paint', value: tool, polygon };
 function style(k) {
   if (k === 'dynamic') return { fill: alpha(INK.preview, 0.35), stroke: INK.turn };
   if (k === 'undynamic') return { fill: null, stroke: INK.turn, dashed: true };
   if (k === 'unknown') return { fill: alpha(INK.ink3, 0.45), stroke: INK.ink3 };
+  if (k === 'occupied') return { fill: alpha(INK.stop, 0.35), stroke: INK.stop };
+  if (k === 'despeckle') return { fill: null, stroke: INK.pose, dashed: true };
   return { fill: alpha(INK.pose, 0.25), stroke: INK.pose };
 }
 // Same polygon as amr_maps.edit.rectangle: axis-aligned in the map frame, corners ccw.

@@ -109,8 +109,29 @@ On the **Manual**, **Maps** or **Run** page (selector must be MANUAL):
 6. Press **Save map revision**. The mode returns to `IDLE`, and the map appears as
    `<id> rev N`. A revision never changes; surveying the same id again creates `rev N+1`.
 
-Trolleys, pallets and other things that move: **Maps → Edit areas**, mark them as
-**Dynamic area**, then **Save as new revision** (RUNBOOK §A2).
+### 3a. Clean up the map: noise, static and dynamic obstacles
+
+Engineer view → **Maps** → **Edit areas** on the revision. Pick a tool, drag a rectangle
+on the map (right-drag pans, wheel zooms), repeat, then **Save as new revision**. The old
+revision never changes; the new one is `rev N+1`. Nothing moves the vehicle.
+
+| Tool | Use it for | What it does |
+|---|---|---|
+| **Remove noise** | Lidar dots / speckle in open floor | Inside the rectangle, every occupied dot or blob up to 4 cells (about 10 × 10 cm) becomes free. Walls, racks and bigger objects stay. You can drag it over the whole map |
+| **Static obstacle** | A permanent thing the survey missed or drew badly (wall, fixed rack, a no-go block) | Cells become occupied: routes are refused through it, localisation uses it |
+| **Dynamic area** | Things that move: trolleys, pallets, parked forklifts | The map keeps them, but routes may be validated through them (yellow "provisional"), and the scan check of localisation ignores them. **Check the area is clear before Start** |
+| **Clear dynamic** | Undo a dynamic mark (make it static again) | Removes the mark |
+| **Paint free** | A big object that is gone for good | Cells become free floor |
+| **Erase to unknown** | Safe erase when unsure | Cells become unknown (routes still refused unless dynamic) |
+
+Each rectangle is one edit; later ones win where they overlap; Undo / Redo / × remove
+edits. After saving: on **Routes**, open each route on the new revision, **Validate**,
+**Save revision**, create the mission again; on **Run**, activate the new revision.
+
+From a shell, the same, e.g. remove the noise of a whole map:
+```bash
+ros2 run amr_mission map_edit --map block_c --rev 1 --despeckle-rect -50 -50 50 50 --note "noise"
+```
 
 ## 4. Draw a route (Routes page) — nothing moves
 

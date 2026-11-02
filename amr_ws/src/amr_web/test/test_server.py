@@ -718,6 +718,42 @@ def test_edit_endpoint_derives_a_revision_and_validation_turns_provisional(env):
     )
 
 
+def test_edit_endpoint_static_obstacle_then_remove_noise(env):
+    """Review page tools: a static obstacle blocks the aisle; remove noise takes the dots a
+    scanner left in open floor and keeps walls and the obstacle."""
+    client, stub, maps, rev_dir, manifest = env
+    g = build()
+    dots = [g.world_to_cell(x, 0.0) for x in (6.0, 9.0)]
+    for r, c in dots:
+        g.data[r, c] = 100  # lidar speckle in the aisle
+    stage = mb.staging_dir(maps, "noisy", 1)
+    m = mb.Manifest(
+        "noisy", 1, mb.now_iso(), "map", 0.05, [-3.0, -10.0, 0.0], g.width, g.height,
+        {"x_m": 0, "y_m": 0, "yaw_rad": 0, "description": "mark"},
+        {"dx_m": 0, "dy_m": 0, "dyaw_rad": 0, "note": "t"},
+    )
+    mb.stage_bundle(stage, g, None, m, required_posegraph=False)
+    mb.publish(stage, maps, "noisy", 1)
+    r = client.post("/api/maps/noisy/1/routes/validate", json=route_payload([S("s1", 12.0, 0.0)]))
+    assert r.status_code == 422  # the dots block the straight
+    body = {"ops": [{"op": "despeckle", "polygon": _rect(4.0, -1.0, 11.0, 1.0)}], "note": "noise"}
+    r = client.post("/api/maps/noisy/1/edit", json=body)
+    assert r.status_code == 200 and r.json["revision"] == 2, r.json
+    r = client.post("/api/maps/noisy/2/routes/validate", json=route_payload([S("s1", 12.0, 0.0)]))
+    assert r.status_code == 200 and r.json["ok"], r.json
+    _, g2 = mb.load(maps, "noisy", 2)
+    assert all(g2.data[rc] == 0 for rc in dots)
+    assert (g2.data >= 65).sum() == (g.data >= 65).sum() - len(dots)  # nothing else removed
+    idx = {x["map_id"]: x for x in client.get("/api/maps").json}["noisy"]["revisions"]
+    assert idx[1]["edits"]["counts"] == {"despeckle": 1}
+    # a static obstacle painted on rev2 blocks the same straight again
+    body = {"ops": [{"op": "paint", "value": "occupied", "polygon": _rect(7.8, -0.2, 8.2, 0.2)}]}
+    r = client.post("/api/maps/noisy/2/edit", json=body)
+    assert r.status_code == 200 and r.json["revision"] == 3, r.json
+    r = client.post("/api/maps/noisy/3/routes/validate", json=route_payload([S("s1", 12.0, 0.0)]))
+    assert r.status_code == 422
+
+
 def test_edit_endpoint_refuses_bad_or_empty_edits(env):
     client, stub, maps, rev_dir, manifest = env
     for body, code in (

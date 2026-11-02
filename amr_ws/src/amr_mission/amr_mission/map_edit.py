@@ -9,7 +9,10 @@ for scripted setups (dynamic-mapping plan §"Order of work"). Rectangles are map
 
 `--ops` takes a JSON list in the amr_maps.edit format (or an edits.json, whose "ops" are
 replayed). Rectangle options are applied after it, in the order given per kind:
---dynamic-rect, --undynamic-rect, --unknown-rect, --free-rect.
+--dynamic-rect, --undynamic-rect, --unknown-rect, --free-rect, --occupied-rect,
+--despeckle-rect. Remove the lidar noise of a whole map in one go:
+
+    ros2 run amr_mission map_edit --map block_c --rev 1 --despeckle-rect -50 -50 50 50
 """
 
 from __future__ import annotations
@@ -34,6 +37,8 @@ def build_ops(args: argparse.Namespace) -> list[dict]:
         ("undynamic_rect", lambda p: {"op": "undynamic", "polygon": p}),
         ("unknown_rect", lambda p: {"op": "paint", "value": "unknown", "polygon": p}),
         ("free_rect", lambda p: {"op": "paint", "value": "free", "polygon": p}),
+        ("occupied_rect", lambda p: {"op": "paint", "value": "occupied", "polygon": p}),
+        ("despeckle_rect", lambda p: {"op": "despeckle", "polygon": p, "max_cells": args.despeckle_cells}),
     ):
         for x0, y0, x1, y1 in getattr(args, flag) or []:
             ops.append(make(edit.rectangle(x0, y0, x1, y1)))
@@ -51,6 +56,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--undynamic-rect", help="clear a dynamic mark", **rect)
     ap.add_argument("--unknown-rect", help="paint unknown (safe erase)", **rect)
     ap.add_argument("--free-rect", help="paint free (operator assertion)", **rect)
+    ap.add_argument("--occupied-rect", help="paint occupied: a static obstacle", **rect)
+    ap.add_argument("--despeckle-rect", help="remove noise: small occupied blobs become free", **rect)
+    ap.add_argument(
+        "--despeckle-cells",
+        type=int,
+        default=edit.DESPECKLE_DEFAULT_CELLS,
+        help="largest blob --despeckle-rect removes, in cells (default %(default)s)",
+    )
     ap.add_argument("--note", default="")
     args = ap.parse_args(argv)
     try:

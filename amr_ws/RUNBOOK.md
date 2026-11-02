@@ -327,6 +327,12 @@ Increment 1). Nothing on this page moves the vehicle, and the mode can stay
      they lie inside a dynamic area.
    - **Paint free**: you state that this is open floor (the object is gone for
      good). Use it rarely.
+   - **Remove noise** (2026-11-02): inside the rectangle, every occupied blob of up
+     to 4 cells (8-connected, about 10 × 10 cm at 5 cm) becomes free. Walls and
+     racks are long connected runs and stay. CLI: `--despeckle-rect`
+     (`--despeckle-cells N` for a larger limit).
+   - **Static obstacle** (2026-11-02): the cells become occupied - a wall the
+     survey missed, or a block routes must never cross. CLI: `--occupied-rect`.
    Each rectangle is one edit. Edits apply in order, so a later one wins where
    rectangles overlap. Undo, Redo and × remove edits.
 3. Add a note and press **Save as new revision**. The robot writes `rev N+1`.

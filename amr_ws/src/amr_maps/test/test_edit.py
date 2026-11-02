@@ -94,3 +94,40 @@ def test_mask_grid_round_trips_through_pgm(tmp_path):
     back = gridio.read(str(tmp_path / "dynamic.yaml"))
     assert gridio.mask_misalignment(g, back) is None
     assert np.array_equal(back.data >= 65, res.dynamic)
+
+
+def test_despeckle_removes_small_blobs_and_keeps_walls():
+    # 2 m x 2 m at 0.05 m, origin (0, 0): row r, col c has its centre at (0.025 + 0.05 c, 0.025 + 0.05 r)
+    d = np.zeros((40, 40), dtype=np.int8)
+    d[10, 2:38] = 100  # a wall, 36 cells
+    d[20, 20] = 100  # a lone dot
+    d[25, 25:27] = 100  # a 2-cell blob
+    d[30:33, 30:33] = 100  # a 9-cell block: bigger than the default 4
+    g = gridio.Grid(d, gridio.GridMeta(0.05, 0.0, 0.0))
+    whole = edit.rectangle(0.0, 0.0, 2.0, 2.0)
+    res = edit.apply(g, None, edit.normalize_ops([{"op": "despeckle", "polygon": whole}]))
+    out = res.grid.data
+    assert out[20, 20] == 0 and (out[25, 25:27] == 0).all()
+    assert (out[10, 2:38] == 100).all() and (out[30:33, 30:33] == 100).all()
+    assert g.data[20, 20] == 100  # the parent grid is never modified
+    # only inside the polygon: the dot at (1.025, 1.025) is outside this corner
+    corner = edit.rectangle(0.0, 0.0, 0.5, 0.5)
+    res = edit.apply(g, None, edit.normalize_ops([{"op": "despeckle", "polygon": corner}]))
+    assert res.grid.data[20, 20] == 100
+    # a bigger max_cells takes the block too, never the wall
+    res = edit.apply(g, None, edit.normalize_ops([{"op": "despeckle", "polygon": whole, "max_cells": 9}]))
+    assert (res.grid.data[30:33, 30:33] == 0).all() and (res.grid.data[10, 2:38] == 100).all()
+
+
+def test_despeckle_max_cells_is_checked_and_defaults():
+    poly = edit.rectangle(0, 0, 1, 1)
+    assert (
+        edit.normalize_ops([{"op": "despeckle", "polygon": poly}])[0]["max_cells"]
+        == edit.DESPECKLE_DEFAULT_CELLS
+    )
+    for bad in (0, 51, 2.5, True, "4"):
+        try:
+            edit.normalize_ops([{"op": "despeckle", "polygon": poly, "max_cells": bad}])
+        except edit.EditError:
+            continue
+        raise AssertionError(f"max_cells {bad!r} accepted")
