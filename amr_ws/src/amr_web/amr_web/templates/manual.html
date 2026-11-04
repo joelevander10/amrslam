@@ -1,12 +1,11 @@
 {% extends "base.html" %}
 {% block title %}AMR — manual{% endblock %}
 {% block body %}
-{# Built for the HMI's height: the line reading and the pad (a square sized by the viewport)
-   on the left, and everything else - vehicle state as one-line rows, speed, jog status, the
-   arming note - is a column on the right. Nothing sits below, so the page never scrolls. #}
+{# Built for the HMI's height: the pad (a square sized by the viewport) on the left, and
+   everything else - vehicle state as one-line rows, speed, jog status, the arming note -
+   is a column on the right. Nothing sits below, so the page never scrolls. #}
 <section class="manual grow">
   <div class="manual-left">
-    {% include "_line_track.html" %}
     <div id="jog"></div>
   </div>
   <div class="side" id="manual-side">
@@ -27,8 +26,7 @@
   </div>
 </section>
 {% endblock %}
-{% block scripts %}<script src="/static/linetrack.js"></script>
-<script src="/static/jogpad.js"></script>
+{% block scripts %}<script src="/static/jogpad.js"></script>
 <script>
 jogpad(document.getElementById('jog'));
 {% if qr %}
@@ -58,8 +56,6 @@ onState(st => {
     ['Brakes', !d ? '–' : pushing ? 'OFF · push' : (d.operational ? 'ON · drive' : 'ON'), d ? (d.power_reason || d.left) : 'no drive status', !d ? 'bad' : pushing ? 'warn' : ''],
   ]);
   {% endif %}
-  lineTrack(st.line_track);
-  rfidTags(st.rfid);
   document.getElementById('manual-reason').textContent = [mx && mx.reason ? `mux: ${mx.reason}` : '', m && m.reason ? m.reason : ''].filter(Boolean).join(' · ');
 });
 </script>{% endblock %}

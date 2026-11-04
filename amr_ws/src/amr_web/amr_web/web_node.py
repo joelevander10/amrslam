@@ -17,7 +17,8 @@ def main(args=None) -> None:
     adapter.declare_parameter("host", "0.0.0.0")
     adapter.declare_parameter("port", 5001)
     adapter.declare_parameter("wifi_iface", "wlp1s0")
-    # the commissioning node's evidence directory: same source as base.launch.py uses for it
+    # role secret/PIN, reports and the blind-run evidence (<state_dir>/commissioning) live here
+    # (AMR_STATE_DIR, default ~/.amr): the same source base.launch.py gives the commissioning node
     adapter.declare_parameter("state_dir", os.environ.get("AMR_STATE_DIR", os.path.expanduser("~/.amr")))
     maps_dir = adapter.get_parameter("maps_dir").value
     host, port = adapter.get_parameter("host").value, int(adapter.get_parameter("port").value)

@@ -45,7 +45,6 @@ from amr_interfaces.msg import (
     ControlLease,
     DriveStatus,
     Event,
-    LineState,
     ManualCommand,
     ModeState,
     MotionPermit,
@@ -53,9 +52,6 @@ from amr_interfaces.msg import (
     PanelState,
     WheelVelocities,
 )
-
-# /amr/line_state arrives on change and at 1 Hz: older than this, no U-turn exemption.
-LINE_STATE_FRESH_S = 2.5
 
 # Sources a person drives by hand: switching between these is not operator history.
 HAND_SOURCES = {"none", "manual", "pendant", "teleop"}
@@ -75,24 +71,20 @@ WHEEL_RAD_S_PER_MOTOR_RPM = 2.0 * math.pi / 60.0 / config.GEAR_RATIO
 
 
 class CmdMuxKinematics(Node):
-    # A class-level default, not only an __init__ assignment: several tests
+    # Class-level defaults, not only __init__ assignments: several tests
     # build this node with __new__ and set the attributes they care about by
-    # hand, and the 50 Hz tick reads self._line unconditionally. Without this
+    # hand, and the 50 Hz tick reads these unconditionally. Without them
     # a new cache attribute turns every one of those into an AttributeError
     # from inside the tick, which is a poor way to learn about it.
-    _line: gating.Stamped | None = None
-    # Same reason: the field state the tick reads (2026-10-02). Assume-clear by default
+    # The field state the tick reads (2026-10-02). Assume-clear by default
     # so a test built with __new__ that never sets fp keeps its old behaviour.
     _field: gating.Field | None = None
     fp = gating.FieldParams(assume_clear=True)
     _view = gating.FieldView(True, True, False)
     _scale = 1.0
     _speed_ramp: gating.SpeedRamp | None = None
-    line_alpha_max = 0.0  # 0 here = use alpha_max (tests built with __new__)
-    line_d_max = 0.0  # 0 here = use d_max (tests built with __new__)
-    line_uturn_exempt_mps = 0.0  # 0 here = no U-turn warning-1 exemption (tests built with __new__)
-    _line_uturn: tuple[float, str] | None = None
     _target = 1.0
+    _repress: gating.RepressGuard | None = None
 
     def __init__(self) -> None:
         super().__init__("cmd_mux_kinematics")
@@ -116,25 +108,20 @@ class CmdMuxKinematics(Node):
         self.declare_parameter("delta_max", 0.0)  # 0 = same as alpha_max
         # Manual sources (pendant, browser jog) follow a jerk-limited S-curve instead of the
         # autonomous ramp (2026-09-18): the acceleration builds at manual_jerk to manual_a_max
-        # (0.3 m/s^2 asked by the operator), stops still use d_max/delta_max.
+        # (0.3 m/s^2 asked by the operator), stops at manual_d_max / delta_max.
         self.declare_parameter("manual_a_max", 0.3)
+        self.declare_parameter("manual_d_max", 0.0)  # 0 = same as d_max
         self.declare_parameter("manual_jerk", 1.0)  # m/s^3: 0.3 s to full acceleration
         self.declare_parameter("manual_alpha_max", 0.0)  # 0 = same as alpha_max
         self.declare_parameter("manual_jerk_w", 2.0)  # rad/s^3
-        # LINE steering slews its yaw rate at the drive's own limit, not at the gentle Nav2
-        # alpha_max (2026-10-02): at the 0.85 m/s tape cruise the follower's corrections
-        # need ~27 rad/s^2 per metre of wobble, so 0.4 rad/s^2 rate-limited any wobble over
-        # ~15 mm and the loop oscillated. gy-demo drove the wheels with only the drive ramp.
-        self.declare_parameter("line_alpha_max", 0.0)  # 0 = the hardware yaw limit
-        # LINE deceleration at the follower's own rate (tracked-speed-plan-1, 2026-10-08):
-        # a measured 0.5 m stop from 0.85 m/s needs 0.72 m/s^2 and a late high-zone exit
-        # up to ~0.95 m/s^2; at the Nav2 d_max 0.5 the mux would carry the vehicle past
-        # the mark. The follower already shapes every stop and speed change; this only
-        # stops the mux reshaping them. Acceleration is unchanged (a_max).
-        self.declare_parameter("line_d_max", 0.0)  # 0 = the drive's deceleration (6084h)
-        # Warning 1 does not slow a LINE U-turn at or below this body speed (the 0.1 m/s
-        # creep, the pivot); warning 2 still stops it. 0 = off (gating.line_uturn_exempt).
-        self.declare_parameter("line_uturn_exempt_mps", 0.12)
+        # Autonomous speed changes follow the same jerk-limited S-curve (owner 2026-11-03: the
+        # taper before an arc stepped the deceleration 0 -> 0.5 m/s^2 at once). Linear speed
+        # only: the yaw rate keeps its plain slew so path tracking is unchanged. Field slowdowns
+        # are NOT softened: while a warning field is in force the plain slew brakes at
+        # field_d_max (warning 1, the pre-2026-11-03 0.5 m/s^2) or the drive's ramp (warning 2
+        # stop); loss of authority is still zero at once.
+        self.declare_parameter("auto_jerk", 0.4)  # m/s^3 (base.launch sets it)
+        self.declare_parameter("field_d_max", 0.5)  # m/s^2, warning-field slowdowns
         self.declare_parameter("teleop_timeout_s", 0.5)
         self.declare_parameter("cmd_timeout_s", 0.2)
         self.declare_parameter("permit_timeout_s", 0.3)
@@ -170,13 +157,12 @@ class CmdMuxKinematics(Node):
         self.d_max = min(p("d_max").value or self.a_max, hw_a_max)
         self.delta_max = min(p("delta_max").value or self.alpha_max, hw_alpha_max)
         self.manual_a_max = min(p("manual_a_max").value, hw_a_max)
+        self.manual_d_max = min(p("manual_d_max").value or self.d_max, hw_a_max)
         self.manual_alpha_max = min(p("manual_alpha_max").value or self.alpha_max, hw_alpha_max)
-        self.line_alpha_max = min(p("line_alpha_max").value or hw_alpha_max, hw_alpha_max)
-        hw_d_max = config.DECEL_RPM_S * config.MPS_PER_RPM
-        self.line_d_max = min(p("line_d_max").value or hw_d_max, hw_d_max)
-        self.line_uturn_exempt_mps = max(0.0, self._finite_or(float(p("line_uturn_exempt_mps").value), 0.0))
         self.manual_jerk = max(1e-3, float(p("manual_jerk").value))
         self.manual_jerk_w = max(1e-3, float(p("manual_jerk_w").value))
+        self.auto_jerk = max(1e-3, float(p("auto_jerk").value))
+        self.field_d_max = min(float(p("field_d_max").value), hw_a_max)
         if self.a_max < p("a_max").value or self.alpha_max < p("alpha_max").value:
             self.get_logger().warn(
                 f"accel limits clamped to hardware: a_max={self.a_max:.3f} "
@@ -221,12 +207,12 @@ class CmdMuxKinematics(Node):
         self._manual = gating.ManualIntake()
         self._drives: gating.Drives | None = None
         self._commissioning: gating.Wheels | None = None
-        self._line: gating.Stamped | None = None
         self._field: gating.Field | None = None
         self._view = gating.FieldView(False, False, False)
         self._scale = 1.0
         self._speed_ramp = gating.SpeedRamp()  # the ramped warning factor actually applied to AUTO
         self._target = 1.0
+        self._repress = gating.RepressGuard()  # a hand held through an E-stop must let go first
         self._wl = self._wr = 0.0  # per-wheel slew state for the COMMISSIONING source
         self._applied_gen = 0  # the lease generation the subscriptions/caches belong to
         self._applied_instance = ""
@@ -242,8 +228,6 @@ class CmdMuxKinematics(Node):
         self._subscribe_nav(0)
         self.create_subscription(MotionPermit, "/amr/motion_permit", self._on_permit, RELIABLE_1)
         self.create_subscription(PanelState, "/amr/panel_state", self._on_panel, 10)
-        # The U-turn phase, for the warning-1 exemption. On change + 1 Hz, latched.
-        self.create_subscription(LineState, "/amr/line_state", self._on_line_state, LATCHED)
         self.create_subscription(ControlLease, "/amr/control_lease", self._on_lease, RELIABLE_1)
         self.create_subscription(ManualCommand, "/amr/manual_command", self._on_manual, RELIABLE_1)
         self.create_subscription(DriveStatus, "/drives/status", self._on_drives, RELIABLE_1)
@@ -316,6 +300,7 @@ class CmdMuxKinematics(Node):
             bool(msg.pendant_rvs),
             bool(msg.pendant_left),
             bool(msg.pendant_right),
+            int(msg.emergency),
         )
 
     def _on_commissioning(self, msg: WheelVelocities) -> None:
@@ -361,7 +346,6 @@ class CmdMuxKinematics(Node):
         self._permit = None
         self._manual.clear()
         self._commissioning = None
-        self._line = None
         self._v = self._wz = self._a = self._alpha = 0.0
         self._wl = self._wr = 0.0
         self._subscribe_nav(gen)
@@ -374,21 +358,7 @@ class CmdMuxKinematics(Node):
             self.create_subscription(
                 Twist, gating.nav_topic("/cmd_vel_rotate", gen), self._on_rotate, RELIABLE_1
             ),
-            # The line follower publishes a body twist and holds no permit, so
-            # it joins the generation-private set rather than carrying its own
-            # generation field: a replaced layer's stream lands on a topic this
-            # mux is no longer subscribed to and cannot look fresh.
-            self.create_subscription(
-                Twist, gating.nav_topic("/amr/line_cmd", gen), self._on_line, RELIABLE_1
-            ),
         ]
-
-    def _on_line_state(self, msg: LineState) -> None:
-        phase = msg.uturn_phase if msg.state == LineState.RUNNING else ""
-        self._line_uturn = (self._now(), phase)
-
-    def _on_line(self, msg: Twist) -> None:
-        self._line = gating.finite_or_zero(self._now(), msg.linear.x, msg.angular.z)
 
     def _on_mode(self, msg: ModeState) -> None:
         surveying = msg.mode == ModeState.MAPPING
@@ -423,13 +393,10 @@ class CmdMuxKinematics(Node):
             manual=self._manual.current,
             drives=self._drives,
             commissioning=self._commissioning,
-            line=self._line,
         )
+        sel = self._repress_gate(sel)
         self._view = gating.field_view(self._now(), self._field, self.fp)
-        exempt = gating.line_uturn_exempt(
-            sel, self._line_uturn, self._now(), LINE_STATE_FRESH_S, self.line_uturn_exempt_mps
-        )
-        sel, target = gating.field_limit(sel, self._view, self.gp, self.fp, slow_exempt=exempt)
+        sel, target = gating.field_limit(sel, self._view, self.gp, self.fp)
         if self._speed_ramp is None:
             self._speed_ramp = gating.SpeedRamp()
         if sel.source in gating.AUTO_SOURCES:
@@ -497,9 +464,9 @@ class CmdMuxKinematics(Node):
             self._v = self._wz = 0.0
             wl, wr = clamp_wheels(self._wl, self._wr, self.w_max)
         elif sel.source in (gating.PENDANT, gating.MANUAL):
-            # manual: jerk-limited S-curve (trapezoidal acceleration), stops at d_max/delta_max
+            # manual: jerk-limited S-curve (trapezoidal acceleration), stops at manual_d_max/delta_max
             self._v, self._a = scurve(
-                self._v, self._a, sel.v, self.manual_a_max, self.d_max, self.manual_jerk, self.dt
+                self._v, self._a, sel.v, self.manual_a_max, self.manual_d_max, self.manual_jerk, self.dt
             )
             self._wz, self._alpha = scurve(
                 self._wz,
@@ -516,18 +483,24 @@ class CmdMuxKinematics(Node):
             # the warning-field stop sets its own deceleration through the factor ramp;
             # the slew must not stretch it, so only the drive's ramp bounds it then
             stopping = self._speed_ramp.stopping
-            d_max = max(self.d_max, getattr(self, "stop_d_max", 0.0)) if stopping else self.d_max
-            if sel.source == gating.LINE and self.line_d_max:
-                d_max = max(d_max, self.line_d_max)
-            self._v = slew_asym(self._v, sel.v, self.a_max, d_max, self.dt)
-            if sel.source == gating.LINE and self.line_alpha_max:
-                yaw_up = yaw_down = self.line_alpha_max
+            field = self._speed_ramp.target < 1.0  # a warning field is slowing or stopping the run
+            if stopping:
+                d_max = max(self.d_max, getattr(self, "stop_d_max", 0.0))
+                self._v, self._a = slew_asym(self._v, sel.v, self.a_max, d_max, self.dt), 0.0
+            elif field:
+                d_max = max(self.d_max, getattr(self, "field_d_max", 0.5))
+                self._v, self._a = slew_asym(self._v, sel.v, self.a_max, d_max, self.dt), 0.0
             else:
-                yaw_up, yaw_down = self.alpha_max, self.delta_max
+                # jerk-limited: speed changes (start, taper, approach) build their acceleration
+                self._v, self._a = scurve(
+                    self._v, self._a, sel.v, self.a_max, self.d_max,
+                    getattr(self, "auto_jerk", 1.0), self.dt,
+                )
+            yaw_up, yaw_down = self.alpha_max, self.delta_max
             if stopping:
                 yaw_down = max(yaw_down, getattr(self, "stop_delta_max", 0.0))
             self._wz = slew_asym(self._wz, sel.w, yaw_up, yaw_down, self.dt)
-            self._a = self._alpha = 0.0
+            self._alpha = 0.0
             self._wl = self._wr = 0.0
             wl, wr = clamp_wheels(*inverse(self.geom, self._v, self._wz), self.w_max)
         if not (math.isfinite(wl) and math.isfinite(wr)):
@@ -545,6 +518,31 @@ class CmdMuxKinematics(Node):
         self._pub.publish(out)
 
     _out = (0.0, 0.0)
+
+    def _repress_gate(self, sel: gating.Selection) -> gating.Selection:
+        """After an emergency, no hand source until every hand input has read released once.
+        The ESTOP selection itself (NONE) already zeroed the ramps; this keeps them at zero."""
+        if self._repress is None:
+            self._repress = gating.RepressGuard()
+        panel, now, gp = self._panel, self._now(), self.gp
+        if panel is None:
+            return sel
+        man, tel = self._manual.current, self._teleop
+        held = (
+            panel.fwd or panel.rvs or panel.left or panel.right
+            or (man is not None and now - man.t <= gp.cmd_timeout_s and (man.v, man.w) != (0.0, 0.0))
+            or (tel is not None and now - tel.t <= gp.cmd_timeout_s and (tel.v, tel.w) != (0.0, 0.0))
+        )
+        was = self._repress.blocked
+        blocked = self._repress.update(panel.emergency, held)
+        if was and not blocked:
+            self.get_logger().info("after the E-stop: hand inputs released, manual motion allowed again")
+        if blocked and sel.source in (gating.PENDANT, gating.MANUAL, gating.TELEOP):
+            return gating.Selection(
+                gating.NONE, 0.0, 0.0, "after the E-stop: release the pendant / jog once", sel.generation,
+                code="NO_SOURCE",
+            )
+        return sel
 
     def _publish_state(self) -> None:
         m = MuxState()

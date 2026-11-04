@@ -59,8 +59,9 @@ class Limits:
     # takes only yaw rate from it, so a gap this short is not a loss; the scan check stays strict.
     imu_grace_s: float = 0.6
     # AMCL computes variance as E[x^2]-E[x]^2: a collapsed particle cloud can come out a hair
-    # below zero (fix plan 001 B5, sim: cov_xx -0.0000). Down to this much it is rounding and
-    # reads as 0; anything more negative is still not evidence (Q07). m^2 / rad^2, sigma 1 mm.
+    # below zero (manuals/obsolete/0910-fix-plan-001.md B5, sim: cov_xx -0.0000). Down to this
+    # much it is rounding and reads as 0; anything more negative is still not evidence (Q07).
+    # m^2 / rad^2, sigma 1 mm.
     cov_neg_tol: float = 1e-6
 
 

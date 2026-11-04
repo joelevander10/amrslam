@@ -16,7 +16,13 @@ action result alone:
              /odometry/filtered verifies direction and travel, centre drift is
              bounded, final map heading within tolerance; a paused turn resumes
              the REMAINING signed angle only;
-  always     localisation READY, fresh sensors and panel, no /initialpose.
+  wait       stop at the previous step's end until PB Continue or Start (trolley hitch /
+             release points, gls-wait-coding-plan §A.4): WAITING, drives disarmed, no
+             permit. The press re-checks localisation READY, AUTO, still wheels and the
+             wait pose, then runs the pre-move warning. A wait is a step boundary, so an
+             /initialpose while WAITING is accepted, and nothing that guards a moving run
+             (prerequisite faults, MANUAL takeover, the emergency hold) applies to it;
+  always     localisation READY, fresh sensors and panel, no /initialpose while moving.
 
 OBSTACLES ARE NOT THE EXECUTOR'S JOB (operator decision 2026-09-20). The scan-vs-envelope
 check that used to stop a run was removed: stopping for something in the way is the safety
@@ -34,8 +40,10 @@ itself is a BLOCKED hold with a cause, not a FAULT:
              field was violated (/output_paths): resumes by itself;
   estop      the same drive dropout with the field clear (the E-stop button): waits for a
              physical Start (no Resume click), unless auto_resume_estop;
-  controller the FollowPath/Spin goal ABORTED (RPP "collision ahead"): resumes by itself, at
-             most controller_abort_retries times per step, then FAULT;
+  controller the FollowPath/Spin goal ABORTED (RPP "collision ahead"): resumes by itself, and
+             keeps retrying for as long as the path stays blocked - never a FAULT (owner
+             2026-11-03: three retries in 8 s faulted a 116 m straight while someone crossed
+             the aisle; "continue moving after the obstacle is clear");
   pending    wheel feedback vanished while executing: stopped at once, and classified as a
              safety stop when the drive report says torque off within safety_window_s, else FAULT.
 
@@ -50,6 +58,15 @@ passed AND the drives report torque. Without torque within premove_timeout_s the
 (estop: Start again once the safety chain is reset). Auto-resumed holds keep their power and
 skip the warning: nobody pressed anything.
 
+Emergency (owner policy 2026-10-30, replacing the earlier abort): an emergency is a PHYSICAL
+stop, like the safety chain's - it never ends the run or any program. A fresh PanelState whose
+`emergency` is not NORMAL puts a moving run (EXECUTING, the pre-move warning included) into the
+`estop` hold above, and re-labels any other hold `estop`, so nothing resumes by itself; READY
+and PAUSED runs (and a waiting step) keep their state untouched. After release + Reset the
+operator presses Start: the pre-move warning runs and the route continues where it stopped.
+Load and Start are refused while it is not NORMAL. While the panel is stale, the torque
+inference above still classifies the stop.
+
 Prerequisites are debounced (operator decision 2026-09-20): a prerequisite must FAIL
 CONTINUOUSLY for prereq_grace_s before it faults a run or unreadies a loaded mission, so one
 dropped frame is not a fault. This does not extend motion authority - the mux enforces panel,
@@ -58,6 +75,7 @@ drive, lease and permit freshness itself and stops the vehicle whatever the exec
 
 from __future__ import annotations
 
+import collections
 import math
 import os
 import threading
@@ -65,12 +83,14 @@ import threading
 import rclpy
 from agv_core import alarms
 from agv_core import config as vehicle_config
-from amr_navigation.compiler import ARC, ROTATE, CompiledStep, wrap
+from amr_navigation.compiler import ARC, HOME, ROTATE, WAIT, CompiledStep, wrap
 from amr_navigation.route import VEHICLE_ARC_W_MAX
+from amr_navigation.scurve import along_cross as path_along_cross
 from amr_navigation.validate import load_dynamic, load_keepout, validate
 from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
 from nav2_msgs.action import FollowPath, Spin
 from nav2_msgs.msg import SpeedLimit
+from nav2_msgs.srv import ClearEntireCostmap
 from nav_msgs.msg import Odometry, Path
 from rclpy.action import ActionClient
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
@@ -86,19 +106,21 @@ from amr_interfaces.msg import (
     ControlLease,
     DriveStatus,
     Event,
+    GlsReading,
     LocalizationState,
     MotionPermit,
     PanelState,
     RunState,
     WheelStates,
 )
-from amr_interfaces.srv import RunMission
+from amr_interfaces.srv import RecordLabel, RunMission
 
 try:  # the nanoScan3 driver's output paths (OSSD state); absent in sim and on the laptop
     from sick_safetyscanners2_interfaces.msg import OutputPaths
 except ImportError:  # pragma: no cover - depends on the installed driver
     OutputPaths = None
 from amr_mission import goal_attempts as ga
+from amr_mission import label_record
 from amr_mission import map_bundle as mb
 from amr_mission import run_fsm as fsm
 from amr_navigation import footprint as fpmod
@@ -140,6 +162,9 @@ def mission_matches_active_map(mission: dict, active: tuple[str, int, str]) -> s
 
 
 class RouteExecutor(Node):
+    _abort_code = ""  # catalogue code for the next IDLE event, if an abort names one
+    _still_since: float | None = None  # wheels at rest since ("Record label here")
+
     def __init__(self) -> None:
         super().__init__("route_executor")
         self.declare_parameter("maps_dir", os.path.expanduser("~/amr_maps"))
@@ -156,7 +181,9 @@ class RouteExecutor(Node):
             int(self.get_parameter("active_map_revision").value),
             str(self.get_parameter("active_map_sha256").value),
         )
-        self.declare_parameter("start_gate_m", 0.10)
+        # 0.10 -> 0.15 m on 2026-11-03 (owner): ITG presses refused at 0.10x m from HOME. The
+        # start may now sit further outside the validated footprint margin (load-time warning).
+        self.declare_parameter("start_gate_m", 0.15)
         self.declare_parameter("start_gate_deg", 5.0)
         self.declare_parameter("settle_s", 0.3)
         self.declare_parameter("stationary_wheel_rad_s", 0.02)
@@ -176,6 +203,11 @@ class RouteExecutor(Node):
         self.declare_parameter("verify_position_m", 0.15)
         self.declare_parameter("verify_heading_deg", 8.0)
         self.declare_parameter("converge_m", 1.0)  # cross-track grace distance after a step starts
+        # How far off the line a held run may be and still resume (owner 2026-11-03: a trolley
+        # bumped the vehicle 0.13 m off an arc after a protective stop and the 0.10 m route
+        # corridor kept it held). After a resume the same width is allowed for converge_m of
+        # travel while the controller steers back onto the line.
+        self.declare_parameter("resume_corridor_m", 0.30)
         self.declare_parameter("entry_correction_deg", 10.0)  # max entry-heading error folded into a turn
         # Vehicle 2026-09-17: Spin at 10 Hz with min 0.05 rad/s stops 0-2.2 deg past the commanded
         # angle (turns of 45.0 and 46.6 for 44.4 asked). The overshoot is folded into the next
@@ -199,10 +231,13 @@ class RouteExecutor(Node):
         self.declare_parameter("loc_age_limit_s", 2.5)
         # Speed tapers between chained steps (a boosted straight into a normal one, a straight
         # into an arc at its arc speed) and at the end of a boosted straight: the lower speed is asked
-        # early enough that the mux decel (d_max 0.5) reaches it before the boundary, from
-        # (v^2 - v_next^2) / (2 taper_decel) plus taper_lead_s of travel.
-        self.declare_parameter("taper_decel", 0.4)
+        # early enough that the mux's auto S-curve reaches it before the boundary: the time of a
+        # jerk-limited slowdown at taper_decel / taper_jerk (= mux d_max 0.125 / auto_jerk 0.1,
+        # 2026-11-03, twice-as-long slopes) times the mean speed, plus taper_lead_s of travel.
+        # 0.60 -> 0.30 m/s: 1.82 m.
+        self.declare_parameter("taper_decel", 0.125)
         self.declare_parameter("taper_lead_s", 0.3)
+        self.declare_parameter("taper_jerk", 0.1)
         # auto-resume after a stop whose cause clears by itself (see the module docstring)
         self.declare_parameter("auto_resume_enabled", True)
         self.declare_parameter("auto_resume_clear_s", 2.0)
@@ -214,7 +249,26 @@ class RouteExecutor(Node):
         # counts as the E-stop. No vehicle uses it now (the AMR QR did 2026-09-24..11-02, on a
         # broken nanoScan3).
         self.declare_parameter("use_protective_field", True)
-        self.declare_parameter("controller_abort_retries", 3)
+        # true: /amr/continue (the web page's Continue) releases a route wait step, exactly as
+        # PB Continue or Start does - every wait-gate check, then the pre-move warning. Only a
+        # WAITING run: it never starts, resumes or un-holds anything else. Off by default, as
+        # motion starts only from the panel; on for the AMR QR, whose panel has no Continue
+        # button (navigation_layer.executor_overrides).
+        self.declare_parameter("web_continue", False)
+        # A controller abort (path blocked) is retried until the path clears, with no limit
+        # (owner 2026-11-03, replaced 3 retries then FAULT). Travelling this far since a
+        # blockage began ends it, for the "blocked N s" the operator reads.
+        self.declare_parameter("controller_clear_m", 1.0)
+        # Stale marks in the controller's local costmap (owner 2026-11-03). The obstacle layer
+        # clears a cell only by ray-tracing through it, and the scanner sees +-96 deg from the
+        # front: whatever was marked while ahead (someone walking round the vehicle at a wait)
+        # stays for good once it is beside or behind. An arc then swings the footprint into
+        # those phantoms and the controller aborts forever (route-itg-02 s12 after ITG-RELEASE).
+        # The map is cleared at a Continue that releases a wait, and once a blocked-path hold
+        # has lasted costmap_clear_after_s; a real obstacle in view is re-marked within one
+        # update (5 Hz), long before the hold's auto_resume_clear_s countdown sends a goal.
+        self.declare_parameter("costmap_clear_service", "/local_costmap/clear_entirely_local_costmap")
+        self.declare_parameter("costmap_clear_after_s", 10.0)
         # The pre-move warning after a Start (module docstring); the profile's timing block.
         self.declare_parameter("premove_s", float(vehicle_config.AUTO_START_DELAY_S))
         self.declare_parameter("premove_timeout_s", float(vehicle_config.PREMOVE_TIMEOUT_S))
@@ -235,6 +289,7 @@ class RouteExecutor(Node):
         self.verify_pos = p("verify_position_m").value
         self.verify_yaw = math.radians(p("verify_heading_deg").value)
         self.converge_m = p("converge_m").value
+        self.resume_corridor_m = float(p("resume_corridor_m").value)
         self.entry_corr_max = math.radians(p("entry_correction_deg").value)
         self.turn_tol = math.radians(p("turn_travel_tolerance_deg").value)
         self.wrong_way = math.radians(p("wrong_way_deg").value)
@@ -248,16 +303,21 @@ class RouteExecutor(Node):
         self.goal_overshoot_m = float(p("goal_overshoot_m").value)
         self.taper_decel = max(0.05, float(p("taper_decel").value))
         self.taper_lead_s = float(p("taper_lead_s").value)
+        self.taper_jerk = max(0.05, float(p("taper_jerk").value))
         self.auto_resume_enabled = bool(p("auto_resume_enabled").value)
         self.auto_clear_s = float(p("auto_resume_clear_s").value)
         self.auto_resume_estop = bool(p("auto_resume_estop").value)
         self.safety_window = float(p("safety_window_s").value)
         self.drives_age = float(p("drives_age_limit_s").value)
         self.premove_s = max(0.0, float(p("premove_s").value))
+        self.web_continue = bool(p("web_continue").value)
         self.premove_timeout_s = max(self.premove_s, float(p("premove_timeout_s").value))
         self._premove_since: float | None = None
         self.field_index = int(p("field_output_index").value)
-        self.abort_retries = int(p("controller_abort_retries").value)
+        self.blocked_clear_m = max(0.0, float(p("controller_clear_m").value))
+        self.costmap_clear_after_s = max(1.0, float(p("costmap_clear_after_s").value))
+        self._costmap_cleared_t: float | None = None
+        self._costmap_warned = False
         self._init_hold_state()
         self.goal_accept_timeout = p("goal_accept_timeout_s").value
         self.goal_cancel_timeout = p("goal_cancel_timeout_s").value
@@ -274,6 +334,8 @@ class RouteExecutor(Node):
             self._lock, self._now, self._on_goal_error, lambda msg: self.get_logger().warn(msg)
         )
         self._reset_step_state()
+        self.wait_since: float | None = None  # WAITING since (RunState.waiting_s)
+        self.continue_refused = ""  # why the last Continue/Start at a wait was refused
         self.last_initialpose_t: float | None = None
         self.paused_t: float | None = None
         self.odom_gap = False
@@ -285,6 +347,8 @@ class RouteExecutor(Node):
         self._wheels_t = 0.0
         self._wheels_valid = False
         self._wheels_still = False
+        self._still_since = None
+        self._gls: collections.deque = collections.deque(maxlen=64)  # label_record.Sample
         self._odom_t = 0.0
         self._odom_yaw_prev: float | None = None
         self._odom_yaw_acc = 0.0
@@ -310,6 +374,7 @@ class RouteExecutor(Node):
             WheelStates, "/wheel_states", self._on_wheels, SENSOR_DATA, callback_group=io
         )
         self.create_subscription(Odometry, "/odometry/filtered", self._on_odom, 10, callback_group=io)
+        self.create_subscription(GlsReading, "/gls/reading", self._on_gls, 10, callback_group=io)
         self.create_subscription(DriveStatus, "/drives/status", self._on_drives, 10, callback_group=io)
         if not self.get_parameter("use_protective_field").value:
             self.get_logger().warn(
@@ -345,11 +410,16 @@ class RouteExecutor(Node):
         self._run_started: float | None = None
         self._run_holds: dict[str, int] = {}
         self._run_peak_cross = 0.0
+        self._clear_cli = self.create_client(
+            ClearEntireCostmap, str(p("costmap_clear_service").value), callback_group=io
+        )
         self.create_service(RunMission, "/amr/run_mission", self._srv_run, callback_group=srv)
         self.create_service(Trigger, "/amr/pause", self._srv_pause, callback_group=srv)
         self.create_service(Trigger, "/amr/abort", self._srv_abort, callback_group=srv)
         self.create_service(Trigger, "/amr/resume", self._srv_resume, callback_group=srv)
         self.create_service(Trigger, "/amr/ack_fault", self._srv_ack, callback_group=srv)
+        self.create_service(Trigger, "/amr/continue", self._srv_continue, callback_group=srv)
+        self.create_service(RecordLabel, "/amr/labels/record", self._srv_record_label, callback_group=srv)
         self.create_timer(0.1, self._tick, callback_group=srv)
         self.create_timer(0.5, self._publish_state, callback_group=io)
         self.get_logger().info(f"IDLE; maps_dir {self.maps_dir}; footprint reach {self.fp.reach_m:.2f} m")
@@ -368,12 +438,35 @@ class RouteExecutor(Node):
 
     def _on_panel(self, m: PanelState) -> None:
         self._panel, self._panel_t = m, self._now()
-        if m.start_edge:
+        if self._emergency(self._panel_t):
             with self._lock:
-                self._start_edge()
+                self._emergency_hold()
+        # PB Continue does what Start does to a held run, and Start what Continue does to a
+        # wait (owner, 2026-10-30); only a new run needs Start itself. One press, one call.
+        if m.start_edge or m.continue_edge:
+            with self._lock:
+                self._start_edge("Start" if m.start_edge else "Continue")
+        if m.dest_edge:
+            with self._lock:
+                self._dest_edge(int(m.dest_edge))
         if m.reset_edge:
             with self._lock:
                 self._reset_edge()
+
+    def _emergency(self, now: float) -> bool:
+        """The panel says E-stop (PanelState.emergency != EMG_NORMAL) on a fresh image. A stale
+        panel says nothing here: the torque inference and the prerequisites cover it."""
+        m = self._panel
+        fresh = m is not None and now - self._panel_t <= self.panel_age
+        return fresh and int(m.emergency) != PanelState.EMG_NORMAL
+
+    def _emergency_hold(self) -> None:
+        """A physical stop, never the end of the run (owner policy, 2026-10-30): a moving run
+        holds as `estop` (Start once NORMAL), any other hold becomes `estop` so it cannot
+        resume by itself, and READY / PAUSED keep their state."""
+        state = self.fsm.state
+        if state == fsm.EXECUTING or (state == fsm.BLOCKED and self.hold_cause != "estop"):
+            self._hold("estop", "emergency stop")
 
     def _reset_edge(self) -> None:
         """Physical Reset (review Q19): acknowledges THIS executor's FAULT, exactly like the
@@ -395,6 +488,16 @@ class RouteExecutor(Node):
         self._wheels_still = (
             self._wheels_valid and abs(m.left_vel_rad_s) < self.w_eps and abs(m.right_vel_rad_s) < self.w_eps
         )
+        if not self._wheels_still:
+            self._still_since = None
+        elif self._still_since is None:
+            self._still_since = self._wheels_t
+
+    def _on_gls(self, m: GlsReading) -> None:
+        """Buffered with the map pose at receipt, for "Record label here" only: P3 records,
+        it never corrects (gls-wait-coding-plan §10)."""
+        if m.valid:
+            self._gls.append(label_record.Sample(self._now(), m, self._pose()))
 
     def _init_hold_state(self) -> None:
         self.hold_cause = ""  # why the run is BLOCKED (module docstring), "" otherwise
@@ -403,6 +506,8 @@ class RouteExecutor(Node):
         self._pending_since: float | None = None
         self._prereq_since: float | None = None  # a prerequisite has been failing since
         self._aborts = 0  # controller aborts auto-resumed on this step
+        self._blocked_since: float | None = None  # this path blockage began (first abort)
+        self._blocked_xy: tuple[float, float] | None = None  # map xy where it began
         self._drives_t: float | None = None
         self._torque_off_msg = False
         self._last_off_t: float | None = None  # last time the drive report said torque off
@@ -476,6 +581,11 @@ class RouteExecutor(Node):
                     "initial pose changed; progress-based resume is invalid, abort the run"
                 )
                 self.odom_gap = True
+            elif self.fsm.state == fsm.WAITING:
+                # a wait is a step boundary: nothing half-done to invalidate. The next straight
+                # drives to its absolute end point from wherever the corrected pose is, and
+                # the Continue gate checks the vehicle is still on the wait pose (plan §A.4)
+                self.get_logger().info("initial pose while WAITING: accepted (a step boundary)")
 
     def _on_scan(self, m: LaserScan) -> None:
         self._scan, self._scan_t = m, self._now()
@@ -491,8 +601,18 @@ class RouteExecutor(Node):
 
     def _srv_run(self, req: RunMission.Request, res: RunMission.Response):
         with self._lock:
+            if self._emergency(self._now()):
+                res.accepted, res.message = False, "refused: E-stop active - release it and press Reset first"
+                return res
+            res.accepted, res.message = self._load_mission(req.mission_id)
+            return res
+
+    def _load_mission(self, mission_id: str) -> tuple[bool, str]:
+        """Load and validate a mission into READY (the web's Load, and a destination button).
+        (accepted, message); the caller holds the lock and has checked the emergency."""
+        with self._lock:
             try:
-                mission = store.load_mission(self.maps_dir, req.mission_id)
+                mission = store.load_mission(self.maps_dir, mission_id)
                 why = mission_matches_active_map(mission, self.active_map)
                 if why:
                     raise store.StoreError(why)
@@ -507,9 +627,10 @@ class RouteExecutor(Node):
                 )
                 if sha != mission["route"]["sha256"]:
                     raise store.StoreError("route file hash differs from the mission manifest")
+                labels = store.mission_labels(self.maps_dir, mission)
                 rev_dir = mb.revision_dir(self.maps_dir, manifest.map_id, manifest.revision)
                 dynamic = load_dynamic(rev_dir)
-                v = validate(route, manifest, grid, self.fp, load_keepout(rev_dir), dynamic)
+                v = validate(route, manifest, grid, self.fp, load_keepout(rev_dir), dynamic, labels)
                 if not v.ok:
                     raise store.StoreError(
                         "route invalid on this map: "
@@ -528,19 +649,18 @@ class RouteExecutor(Node):
                 # Q05 relaxed 2026-09-17 (operator request, footprint margin 0.05 m): the
                 # lateral envelope execution permits may exceed what validation cleared.
                 # Said once per load so the log records the gap.
-                lateral = max(route.limits.cross_track_limit_m, self.start_gate_m)
+                lateral = max(route.limits.cross_track_limit_m, self.start_gate_m, self.resume_corridor_m)
                 if lateral > self.fp.margin_m + 1e-9:
                     self.get_logger().warn(
-                        f"permitted lateral error {lateral:.2f} m (cross-track limit / start gate) "
+                        f"permitted lateral error {lateral:.2f} m "
+                        "(cross-track limit / start gate / resume corridor) "
                         f"exceeds the validated footprint margin {self.fp.margin_m:.2f} m"
                     )
             except (store.StoreError, mb.BundleError, KeyError, ValueError) as e:
-                res.accepted, res.message = False, f"refused: {e}"
-                return res
-            ok = self.fsm.load(req.mission_id, len(v.compiled.steps), route.repeat_count)
+                return False, f"refused: {e}"
+            ok = self.fsm.load(mission_id, len(v.compiled.steps), route.repeat_count)
             if not ok:
-                res.accepted, res.message = False, self.fsm.reason
-                return res
+                return False, self.fsm.reason
             self.mission, self.manifest, self.grid, self.route, self.compiled = (
                 mission,
                 manifest,
@@ -550,8 +670,7 @@ class RouteExecutor(Node):
             )
             self._reset_step_state()
             self._log_state()
-            res.accepted, res.message = True, self.fsm.reason
-            return res
+            return True, self.fsm.reason
 
     def _srv_pause(self, _req, res: Trigger.Response):
         with self._lock:
@@ -559,6 +678,21 @@ class RouteExecutor(Node):
             if ok:
                 self._interrupt("paused by operator")
             res.success, res.message = ok, self.fsm.reason
+            return res
+
+    def _srv_continue(self, _req, res: Trigger.Response):
+        """The web Continue (web_continue): releases a WAITING run, nothing else."""
+        with self._lock:
+            if not self.web_continue:
+                res.success = False
+                res.message = "web Continue is off on this vehicle: press Continue or Start on the panel"
+                return res
+            if self.fsm.state != fsm.WAITING:
+                res.success, res.message = False, "nothing is waiting: Continue only releases a wait step"
+                return res
+            self._start_edge("web Continue")
+            res.success = self.fsm.state != fsm.WAITING
+            res.message = self.fsm.reason
             return res
 
     def _srv_abort(self, _req, res: Trigger.Response):
@@ -582,6 +716,42 @@ class RouteExecutor(Node):
             res.success, res.message = self.fsm.ack(), self.fsm.reason
             self._log_state()
             return res
+
+    def _srv_record_label(self, req: RecordLabel.Request, res: RecordLabel.Response):
+        """"Record label here" (gls-wait-coding-plan §C.2): the label under the camera into
+        a new label-set revision of the ACTIVE map. Only localised, stationary and not
+        driving a step; writes a file, never moves anything."""
+        now = self._now()
+        why = None
+        if not self.active_map[0] or not self.active_map[2]:
+            why = "no active map (unsupervised stack): nothing to record against"
+        elif self.fsm.state == fsm.EXECUTING:
+            why = "a run is driving: record when it is stopped"
+        elif self._loc is None or now - self._loc_t > self.loc_age:
+            why = "no localisation state"
+        elif self._loc.state != LocalizationState.READY:
+            why = "localisation is not READY: confirm the pose first"
+        elif now - self._wheels_t > self.wheels_age or not self._wheels_valid:
+            why = "no wheel feedback"
+        if why is None:
+            obs, why = label_record.observe(list(self._gls), self._still_since, now)
+        if why is None:
+            try:
+                rev, text, gone = label_record.record(
+                    self.maps_dir, self.active_map, obs, req.role, req.name, "amcl", req.note
+                )
+            except store.StoreError as e:
+                why = str(e)
+        if why is not None:
+            res.ok, res.message = False, f"label not recorded: {why}"
+            self.get_logger().warn(res.message)
+            return res
+        res.ok, res.label_id, res.revision = True, obs.label_id, rev
+        res.x_m, res.y_m, res.yaw_rad = obs.t_ml
+        res.message = f"recorded {text} (label set rev{rev})" + (f"; replaces {gone}" if gone else "")
+        self.get_logger().info(res.message)
+        self._note(Event.INFO, "LABEL_RECORDED", res.message)
+        return res
 
     # ---- readiness ------------------------------------------------------------------------
 
@@ -632,19 +802,33 @@ class RouteExecutor(Node):
         d = math.hypot(pose[0] - s.x_m, pose[1] - s.y_m)
         a = abs(wrap(pose[2] - s.yaw_rad))
         if d > self.start_gate_m or a > self.start_gate_rad:
-            return False, f"{d:.2f} m / {math.degrees(a):.1f} deg from the route start; reposition manually"
+            # mm resolution and the limits (vehicle 2026-11-03: "0.10 m" read as inside 0.10 m)
+            return False, (
+                f"{d:.3f} m / {math.degrees(a):.1f} deg from the route start "
+                f"(allowed {self.start_gate_m:.2f} m / {math.degrees(self.start_gate_rad):.1f} deg); "
+                "reposition manually"
+            )
         return True, ""
 
-    def _start_edge(self) -> None:
-        if self.fsm.state == fsm.READY:
-            gate_ok, why = self._start_gate()
-            pre = self._prereqs()
-            if pre:
-                gate_ok, why = False, pre
-            if self.fsm.start(self._auto(), gate_ok, why):
-                self._reset_step_state()
-                self._begin_premove()
+    def _start_edge(self, button: str = "Start") -> None:
+        """A physical Start or Continue edge. Refused, never queued, during an emergency: only
+        a fresh press after NORMAL counts (emergency plan; the same rule for both buttons)."""
+        if self._emergency(self._now()):
+            # at once: no pre-move lamp/horn, no wait (emergency plan §4.4)
+            self.fsm.reason = f"{button} refused: E-stop active - release it and press Reset first"
+            if self.fsm.state == fsm.WAITING:
+                self.continue_refused = "E-stop active - release it and press Reset first"
             self._log_state()
+            return
+        if self.fsm.state == fsm.WAITING:
+            self._continue_wait(button)
+            return
+        if self.fsm.state == fsm.READY and button != "Start":
+            self.fsm.reason = "Continue ignored: a new run needs Start"
+            self._log_state()
+            return
+        if self.fsm.state == fsm.READY:
+            self._start_ready()
         elif self.fsm.state in (fsm.PAUSED, fsm.BLOCKED):
             if self.fsm.state == fsm.BLOCKED and not self.fsm.resume_prepared and self._auto():
                 # a hold continues on Start alone (operator decision 2026-09-19: after the E-stop
@@ -666,8 +850,139 @@ class RouteExecutor(Node):
                     return
             if self.fsm.start(self._auto(), True):
                 self.hold_cause, self._auto_since = "", None
+                self._mark_resume()
                 self._begin_premove()
             self._log_state()
+
+    def _start_ready(self, prefix: str = "") -> None:
+        """Start the READY mission: the start gate and the prerequisites, then the pre-move
+        warning. `prefix` names the destination button that asked, for the operator."""
+        gate_ok, why = self._start_gate()
+        pre = self._prereqs()
+        if pre:
+            gate_ok, why = False, pre
+        if self.fsm.start(self._auto(), gate_ok, why):
+            self._reset_step_state()
+            self._begin_premove()
+        if prefix:
+            self.fsm.reason = f"{prefix}: {self.fsm.reason}"
+        self._log_state()
+
+    def _dest_edge(self, k: int) -> None:
+        """A destination button (panel.destinations[k-1], DI10-12 on MCQ4-4; owner 2026-11-03).
+        Momentary, AUTO only, and only with no run under way: loads the newest saved mission
+        for the button's route on the active map and starts it as Start would (start gate,
+        prerequisites, pre-move warning). During a run it changes nothing, not even the run's
+        reason: Continue is the button at a wait. Refused, never queued, during an emergency."""
+        dests = vehicle_config.PANEL_DESTINATIONS
+        if not 1 <= k <= len(dests):
+            self._dest_refused(f"destination button {k} is not in panel.destinations", touch_fsm=False)
+            return
+        name, _ch, route_id = dests[k - 1]
+        state = self.fsm.state
+        if self._emergency(self._now()):
+            self._dest_refused(f"{name} refused: E-stop active - release it and press Reset first",
+                               touch_fsm=state in (fsm.IDLE, fsm.READY, fsm.DONE))
+            return
+        if state in (*fsm.ACTIVE, fsm.WAITING):
+            self._dest_refused(f"{name} ignored: a run is {fsm.NAMES[state]}", touch_fsm=False)
+            return
+        if state == fsm.FAULT:
+            self._dest_refused(f"{name} ignored: acknowledge the fault first", touch_fsm=False)
+            return
+        if not self._auto():
+            self._dest_refused(f"{name} ignored: selector is not AUTO")
+            return
+        if not route_id:
+            self._dest_refused(f"{name}: no route assigned (panel.destinations in the profile)")
+            return
+        mission_id, why = self._dest_mission(route_id)
+        if not mission_id:
+            self._dest_refused(f"{name}: {why}")
+            return
+        # Already READY with this mission (an earlier press refused at the start gate): start it
+        # as it is. A reload validates the route again, ~3 s on the N97 (vehicle 2026-11-03), and
+        # a mission file, its route revision and its map revision never change once saved.
+        if not (state == fsm.READY and self.fsm.mission_id == mission_id and self.route is not None):
+            ok, msg = self._load_mission(mission_id)
+            if not ok:
+                self._dest_refused(f"{name}: {msg}")
+                return
+            self.get_logger().info(f"destination {name}: mission {mission_id} loaded")
+        self._start_ready(name)
+        if self.fsm.state != fsm.EXECUTING:
+            self._note(Event.WARN, "DEST_REFUSED", self.fsm.reason)
+
+    def _dest_mission(self, route_id: str) -> tuple[str, str]:
+        """(mission_id, "") of the newest saved mission for `route_id` on the active map
+        (highest route revision, then label-set revision, then creation time), or ("", why)."""
+        found = []
+        for m in store.list_missions(self.maps_dir):
+            try:
+                if m["route"]["id"] != route_id or mission_matches_active_map(m, self.active_map):
+                    continue
+                lab = m.get("labels") or {}
+                key = (int(m["route"]["revision"]), int(lab.get("revision", 0)), str(m.get("created", "")))
+                found.append((key, str(m["mission_id"])))
+            except (KeyError, TypeError, ValueError, AttributeError):
+                continue  # a malformed file is skipped here; load_mission names its fault
+        if not found:
+            aid, arev, _ = self.active_map
+            where = f"map {aid} rev{arev}" if aid else "any map"
+            return "", (
+                f"no saved mission for route {route_id} on {where} - save it as a mission in the editor"
+            )
+        return max(found)[1], ""
+
+    def _dest_refused(self, why: str, touch_fsm: bool = True) -> None:
+        """A destination press that started nothing. Shown as the run reason only when no run
+        is under way; always logged and reported as an operator event."""
+        self.get_logger().warn(why)
+        if touch_fsm:
+            self.fsm.reason = why
+            self._log_state()
+        self._note(Event.WARN, "DEST_REFUSED", why)
+
+    def _wait_gate(self, st: CompiledStep | None) -> str | None:
+        """Why a wait may not be released now, or None. Everything is re-checked at the press:
+        the vehicle sat disarmed, possibly through an emergency, possibly nudged in MANUAL."""
+        pre = self._prereqs()
+        if pre:
+            return pre
+        if not self._auto():
+            return "selector is not AUTO"
+        if not self._wheels_still:
+            return "vehicle is moving"
+        if st is None or st.type != WAIT:
+            return "no wait step"
+        pose = self._pose()
+        if pose is None:
+            return "no pose"
+        d = math.hypot(pose[0] - st.start[0], pose[1] - st.start[1])
+        a = abs(wrap(pose[2] - st.start[2]))
+        if d > self.verify_pos or a > self.verify_yaw:
+            return f"{d:.2f} m / {math.degrees(a):.1f} deg off the wait pose; reposition or abort"
+        return None
+
+    def _enter_wait(self, st: CompiledStep, now: float) -> None:
+        if self.fsm.wait(st.name):
+            self.wait_since, self.continue_refused = now, ""
+            self._log_state(f"wait {st.id}")
+
+    def _continue_wait(self, button: str) -> None:
+        st = self._step()
+        why = self._wait_gate(st)
+        if why:
+            self.continue_refused = why
+            self.fsm.reason = f"{button} refused at {st.name if st is not None else 'the wait'}: {why}"
+            self._log_state()
+            return
+        self.continue_refused = ""
+        if self.fsm.continue_():
+            self._reset_step_state()
+            self._clear_costmap(f"{button} at {st.name or 'a wait'}")  # before the pre-move warning
+            self._begin_premove()
+        self._log_state(f"{button} at a wait")
 
     def _begin_premove(self) -> None:
         self.phase, self._premove_since = PHASE_PREMOVE, self._now()
@@ -716,10 +1031,15 @@ class RouteExecutor(Node):
         pose = self._pose()
         if pose is None:
             return False, "no pose"
-        if st.type != ROTATE:
+        if st.type == WAIT:  # held at a wait step before WAITING was entered: the wait pose
+            d = math.hypot(pose[0] - st.start[0], pose[1] - st.start[1])
+            if d > self.verify_pos or abs(wrap(pose[2] - st.start[2])) > self.verify_yaw:
+                return False, f"{d:.2f} m off the wait pose; abort and reposition"
+        elif st.type != ROTATE:
             along, cross = self._along_cross(st, pose)
-            if abs(cross) > self.route.limits.cross_track_limit_m:
-                return False, f"outside the corridor ({cross:+.2f} m cross-track)"
+            corridor = self._resume_corridor()
+            if abs(cross) > corridor:
+                return False, f"outside the corridor ({cross:+.2f} m cross-track, allowed {corridor:.2f} m)"
             if (
                 along < -self.route.limits.position_tolerance_m
                 or along > st.length_m + self.route.limits.position_tolerance_m
@@ -752,7 +1072,10 @@ class RouteExecutor(Node):
         """Progress along the step's TRAVEL direction (positive = the way the step goes, so a
         reverse step counts up while backing) and the signed lateral offset (positive =
         left of travel). An arc measures both from its centre: progress is the swept angle
-        times the radius, the offset is how far inside (left, for a left arc) the circle."""
+        times the radius, the offset is how far inside (left, for a left arc) the circle.
+        The home leg measures both against its own samples (scurve.along_cross)."""
+        if st.type == HOME:
+            return path_along_cross(st.samples, pose)
         if st.type == ARC:
             sign = 1.0 if st.signed_angle_rad >= 0 else -1.0
             cx, cy = st.centre
@@ -779,7 +1102,39 @@ class RouteExecutor(Node):
         self.turn_target: float | None = None  # signed angle to travel: drawn magnitude + entry correction
         self.turn_feedback = 0.0
         self.cross_track = 0.0
+        self._resumed_at: tuple[str, float] | None = None  # (step id, along) of the last resume
         self._aborts = 0
+        self._blocked_since, self._blocked_xy = None, None  # a new step is progress
+
+    def _clear_costmap(self, why: str) -> bool:
+        """Drop every mark in the controller's local costmap (stale phantoms beside the vehicle,
+        see costmap_clear_service). Asynchronous; False when the service is not up."""
+        cli = getattr(self, "_clear_cli", None)
+        if cli is None or not cli.service_is_ready():
+            if not getattr(self, "_costmap_warned", False):
+                self._costmap_warned = True
+                self.get_logger().warn("local costmap clear service not available: not cleared")
+            return False
+        cli.call_async(ClearEntireCostmap.Request())
+        self._costmap_cleared_t = self._now()
+        text = f"local costmap cleared ({why}): stale obstacle marks beside the vehicle dropped"
+        self.get_logger().info(text)
+        self._note(Event.INFO, "COSTMAP_CLEARED", text)
+        return True
+
+    def _blocked_for(self, now: float, pose) -> float:
+        """Seconds the path has been blocked, for the operator. A blockage begins at the first
+        controller abort and ends once the vehicle has travelled controller_clear_m from where
+        it began, or at the next step."""
+        xy = (pose[0], pose[1]) if pose is not None else None
+        moved = (
+            self._blocked_xy is not None
+            and xy is not None
+            and math.hypot(xy[0] - self._blocked_xy[0], xy[1] - self._blocked_xy[1]) >= self.blocked_clear_m
+        )
+        if self._blocked_since is None or moved:
+            self._blocked_since, self._blocked_xy = now, xy
+        return now - self._blocked_since
 
     def _turn_travel(self) -> float:
         """Measured travel of the current turn. Counting is NOT frozen at a pause: rotation
@@ -793,7 +1148,25 @@ class RouteExecutor(Node):
 
     def _cross_track_allowed(self, along: float) -> float:
         limit = self.route.limits.cross_track_limit_m
-        return limit if along > self.converge_m else 2.0 * limit
+        if along <= self.converge_m:
+            return 2.0 * limit
+        st = self._step()
+        r = self._resumed_at
+        if r is not None and st is not None and r[0] == st.id and along - r[1] <= self.converge_m:
+            return max(2.0 * limit, self._resume_corridor())  # steering back after a resume
+        return limit
+
+    def _resume_corridor(self) -> float:
+        return max(self.route.limits.cross_track_limit_m, self.resume_corridor_m)
+
+    def _mark_resume(self) -> None:
+        """Where on the step a held run resumed: the wider corridor applies from here for
+        converge_m of travel (_cross_track_allowed)."""
+        st, pose = self._step(), self._pose()
+        if st is None or pose is None or st.type in (ROTATE, WAIT):
+            self._resumed_at = None
+            return
+        self._resumed_at = (st.id, self._along_cross(st, pose)[0])
 
     # ---- goals ---------------------------------------------------------------------------------
 
@@ -828,9 +1201,10 @@ class RouteExecutor(Node):
             last = nxt
         over = max(0.0, min(self.goal_overshoot_m, self.route.limits.position_tolerance_m))
         if over > 0.0 and path.poses:
-            # past the end along the travel direction there: the end tangent for an arc, the
-            # (possibly reversed) heading for a line; poses keep the forward heading
-            end_dir = last.end[2] if last.type == ARC else last.travel_yaw
+            # past the end along the travel direction there: the end tangent for an arc or the
+            # home leg (HOME's heading), the (possibly reversed) heading for a line; poses keep
+            # the forward heading
+            end_dir = last.end[2] if last.type in (ARC, HOME) else last.travel_yaw
             add(last.end[0] + math.cos(end_dir) * over, last.end[1] + math.sin(end_dir) * over, last.end[2])
         return path
 
@@ -839,7 +1213,7 @@ class RouteExecutor(Node):
 
     @staticmethod
     def _chainable(st: CompiledStep) -> bool:
-        return st.type != ROTATE and not st.reverse
+        return st.type not in (ROTATE, WAIT) and not st.reverse
 
     def _chain(self, index: int) -> list[CompiledStep]:
         """The steps driven together from `index`: it and every chainable step after it."""
@@ -855,9 +1229,10 @@ class RouteExecutor(Node):
 
     def _step_w_max(self, st: CompiledStep) -> float:
         """The permit's turn cap: the route's spin cap, or the arc ceiling for the WHOLE of a
-        chain that holds an arc - RPP's carrot starts curving a lookahead before the arc
-        begins, so the straight leading into it needs the arc's yaw rate too."""
-        if st.type != ROTATE and any(s.type == ARC for s in self._chain(self.fsm.step_index)):
+        chain that holds an arc or a curved home leg - RPP's carrot starts curving a lookahead
+        before the curve begins, so the straight leading into it needs the curve's yaw rate too."""
+        chain = self._chain(self.fsm.step_index) if st.type != ROTATE else []
+        if any(s.type == ARC or (s.type == HOME and s.leg is not None and not s.leg.straight) for s in chain):
             return max(float(self.route.limits.w_mps), VEHICLE_ARC_W_MAX)
         return float(self.route.limits.w_mps)
 
@@ -868,7 +1243,11 @@ class RouteExecutor(Node):
     def _taper_dist(self, v: float, v_next: float) -> float:
         if v_next >= v:
             return 0.0
-        return (v * v - v_next * v_next) / (2.0 * self.taper_decel) + v * self.taper_lead_s
+        # duration of a jerk-limited slowdown by dv: triangular acceleration while dv is small,
+        # trapezoidal (a cruise at taper_decel) above d^2 / j
+        dv, d, j = v - v_next, self.taper_decel, getattr(self, "taper_jerk", 1.0)
+        t = 2.0 * math.sqrt(dv / j) if dv <= d * d / j else dv / d + d / j
+        return 0.5 * (v + v_next) * t + v * self.taper_lead_s
 
     def _step_speed(self, st: CompiledStep, pose) -> float:
         """The speed the vehicle may run at HERE on a forward step: its compiled speed, tapered
@@ -974,6 +1353,9 @@ class RouteExecutor(Node):
             now = self._now()
             if state != fsm.BLOCKED:
                 self.hold_cause, self._pending_since = "", None  # a hold ends with its BLOCKED
+            if self._emergency(now):
+                self._emergency_hold()
+                state = self.fsm.state
             if state in fsm.ACTIVE or state == fsm.READY:
                 pre = self._prereqs()
                 held = self._prereq_held(now, pre)
@@ -1022,7 +1404,8 @@ class RouteExecutor(Node):
                     self.fsm.abort("manual takeover: selector left AUTO")
                     self._interrupt("manual takeover")
             else:
-                # IDLE / DONE / FAULT: nothing is waiting on a prerequisite, so the grace timer
+                # IDLE / DONE / FAULT / WAITING: nothing is waiting on a prerequisite (a wait
+                # re-checks everything at the Continue press), so the grace timer
                 # must not survive into the next mission and fire on its first tick
                 self._prereq_since = None
             if self.fsm.state == fsm.EXECUTING:
@@ -1056,6 +1439,13 @@ class RouteExecutor(Node):
         if not self.auto_resume_enabled or self.hold_cause not in self._auto_causes():
             self._auto_since = None
             return
+        if self.hold_cause == "controller" and self._blocked_since is not None:
+            since = max(self._blocked_since, self._costmap_cleared_t or self._blocked_since)
+            if now - since >= self.costmap_clear_after_s and self._clear_costmap(
+                f"path blocked {now - self._blocked_since:.0f} s"
+            ):
+                self._auto_since = None  # the all-clear countdown restarts on the fresh costmap
+                return
         ok, why = self._resume_checks()
         if ok and self._torque_off(now):
             ok, why = False, "drives have no torque"
@@ -1077,6 +1467,7 @@ class RouteExecutor(Node):
             self._aborts += 1
         if self.fsm.auto_resume(f"auto-resumed after {cause}"):
             self.hold_cause, self._auto_since = "", None
+            self._mark_resume()
             self.phase = PHASE_INIT
             self._log_state("auto-resume")
 
@@ -1099,6 +1490,9 @@ class RouteExecutor(Node):
                         f"previous action goal not terminated within {self.goal_cancel_timeout:.1f} s",
                         "EXEC_ACTION_FAILED",
                     )
+                return
+            if st.type == WAIT:
+                self._enter_wait(st, now)
                 return
             if st.type != ROTATE:
                 if not self._send_follow(st, pose):
@@ -1200,9 +1594,13 @@ class RouteExecutor(Node):
                     if self._torque_off(now) or self._field_tripped(now):
                         self._hold(self._safety_cause(now), f"{st.type} action aborted during a safety stop")
                         return
-                    if self._aborts < self.abort_retries:
-                        self._hold("controller", f"controller aborted the {st.type} (collision ahead?)")
-                        return
+                    blocked = self._blocked_for(now, pose)
+                    self._hold(
+                        "controller",
+                        f"path blocked ahead: controller aborted the {st.type} "
+                        f"(blocked {blocked:.0f} s; continues by itself once clear)",
+                    )
+                    return
                 self._fault(f"action {self.goals.result}", "EXEC_ACTION_FAILED")
                 return
             # the chain's goal ends at its LAST step: if it finished while the bookkeeping was
@@ -1313,8 +1711,11 @@ class RouteExecutor(Node):
             if self.fsm.state == fsm.BLOCKED
             else (self.fault_code or "EXEC_ACTION_FAILED")
             if self.fsm.state == fsm.FAULT
-            else "MODE_CHANGE"
+            else "RUN_WAITING"
+            if self.fsm.state == fsm.WAITING
+            else self._abort_code or "MODE_CHANGE"
         )
+        self._abort_code = ""
         row = alarms.get(code)
         m = Event()
         m.header.stamp = self.get_clock().now().to_msg()
@@ -1322,6 +1723,15 @@ class RouteExecutor(Node):
         m.level = {alarms.ERROR: Event.ERROR, alarms.WARN: Event.WARN}.get(row.severity, Event.INFO)
         m.code = code
         m.text = f"run {fsm.NAMES[self.fsm.state]} {self.fsm.progress()}: {self.fsm.reason}"
+        self._event_seq += 1
+        m.seq = self._event_seq
+        self._event_pub.publish(m)
+
+    def _note(self, level: int, code: str, text: str) -> None:
+        """A one-off operator event that is not a run-state change."""
+        m = Event()
+        m.header.stamp = self.get_clock().now().to_msg()
+        m.source, m.level, m.code, m.text = "route_executor", level, code, text
         self._event_seq += 1
         m.seq = self._event_seq
         self._event_pub.publish(m)
@@ -1386,6 +1796,10 @@ class RouteExecutor(Node):
         m.auto_resume = blocked and self.auto_resume_enabled and self.hold_cause in self._auto_causes()
         m.drive_power = self.drive_power()
         m.premove = self.fsm.state == fsm.EXECUTING and self.phase == PHASE_PREMOVE
+        if self.fsm.state == fsm.WAITING and st is not None:
+            m.wait_name, m.wait_label_id = st.name, st.label_id or ""
+            m.waiting_s = self._now() - self.wait_since if self.wait_since is not None else 0.0
+            m.continue_refused = self.continue_refused
         pose = self._pose()
         if pose is not None:
             m.pose_valid, m.pose_x, m.pose_y, m.pose_yaw = True, pose[0], pose[1], pose[2]

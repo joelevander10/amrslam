@@ -1,10 +1,10 @@
-"""Blind-run evidence history and the operator's tape measurement, for /commissioning.
+"""Blind-run evidence history and the operator's tape measurement, for /blindrun.
 
 The commissioning node writes one evidence JSON per job into
 <state_dir>/commissioning/ (commissioning_node.write_evidence). This module only
 READS those, and writes one sidecar per run: <evidence stem>.measured.json, the
-position the operator measured on the floor. Commanded vs measured is then a table,
-per backend - which is the whole point of the PV-vs-PP comparison.
+position the operator measured on the floor. Commanded vs measured is then a table.
+Evidence written before 2026-10-30 may name the pp backend; it still lists, marked.
 
 Path safety: a run is named by its evidence file NAME only (no directories), the
 name must match the evidence pattern, the resolved path must stay inside the
@@ -78,7 +78,6 @@ def _row(name: str, ev: dict, measured: dict | None) -> dict:
         "speed_mps": plan.get("speed_mps"),
         "commanded": cmd,
         "gyro_heading_deg": ev.get("gyro_heading_deg"),
-        "pp_error_counts": (ev.get("pp_result") or {}).get("error_counts"),
         "measured": measured,
         "error": None,
     }

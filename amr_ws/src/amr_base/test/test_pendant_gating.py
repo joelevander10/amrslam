@@ -110,3 +110,14 @@ def test_commissioning_substate_excludes_the_pendant():
         10.0, None, None, None, None, panel(fwd=True), SUP, lease(LEASE_COMMISSIONING), None, DRIVES, wheels
     )
     assert s.source != PENDANT and s.wheels
+
+
+def test_commissioning_without_a_fresh_wheel_command_moves_nothing():
+    """The COMMISSIONING class is not MANUAL: no wheels of this generation, no motion (a held plan)."""
+    s = select(10.0, None, None, None, None, panel(fwd=True), SUP, lease(LEASE_COMMISSIONING), None, DRIVES)
+    assert s.source == NONE and s.code == "SOURCE_TIMED_OUT"
+    stale = Wheels(1.0, 1.0, 1.0, generation=3)
+    s = select(
+        10.0, None, None, None, None, panel(fwd=True), SUP, lease(LEASE_COMMISSIONING), None, DRIVES, stale
+    )
+    assert s.source == NONE

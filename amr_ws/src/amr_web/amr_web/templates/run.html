@@ -37,8 +37,23 @@
       </div>
       <div class="bar">
         <button id="btn-loc-confirm" class="big run">Confirm: scans align</button>
-        <button id="btn-loc-reset" class="big">Reset</button>
+        <button id="btn-loc-reset" class="big" title="Forget the localisation and start again from step 2">Reset localisation</button>
       </div>
+      {# Floor label under the GLS camera (gls-wait-coding-plan §C.2): engineer-only, since
+         recording writes the map's label set that every new mission binds. Only with a
+         camera (gls.enabled). #}
+      {% if gls %}
+      <div class="sep"></div>
+      <h3>Floor label <small>GLS camera</small></h3>
+      <div id="gls-state" class="tel-grid"></div>
+      {% if role == ENGINEER %}
+      <div class="bar">
+        <select id="gls-role" title="HOME is recorded once per map; destinations by name"><option value="dest">Destination</option><option value="home">HOME</option></select>
+        <input id="gls-name" type="text" maxlength="40" placeholder="UBC" title="the destination's name (HOME needs none)">
+        <button id="btn-gls-record" class="tool" title="Localised, stationary, over the label: writes a new label-set revision of the active map">Record label here</button>
+      </div>
+      {% endif %}
+      {% endif %}
       <div class="sep"></div>
       <h3>Jog <small>selector MANUAL</small></h3>
       <div id="jog-run"></div>
@@ -47,12 +62,17 @@
       <h2>Mission <small>route executor</small></h2>
       <label class="field">Mission <select id="run-mission"></select></label>
       <div class="bar"><button id="btn-run-load" class="big run">Load (READY)</button></div>
+      <p id="run-emg" class="note bad" hidden></p>
       <div id="run-state" class="tel-grid" style="margin-top:1rem"></div>
       <p id="run-reason" class="note"></p>
       <div class="warn-box" style="margin-top:1rem"><b>Motion starts only from the physical panel</b>: selector AUTO, then Start. Pause / abort / prepare-resume below; Start confirms a prepared resume.</div>
       <div class="bar"><button id="btn-run-resume" class="big">Prepare resume</button></div>
     </div>
     <div class="tools-foot">
+      {# AMR QR (web_continue): its panel has no Continue button. Releases a route wait step
+         only - every wait check again, then the pre-move warning. START does the same.
+         Always in the markup (run.js finds it); hidden on other vehicles. #}
+      <div class="bar"{% if not qr %} hidden{% endif %}><button id="btn-run-continue" class="big run" disabled title="Releases a route wait step (WAITING). START on the panel does the same.">Continue</button></div>
       <div class="bar three">
         <button id="btn-run-pause" class="big">Pause</button>
         <button id="btn-run-abort" class="danger">Abort</button>

@@ -1,0 +1,15 @@
+# LAN2 (enp2s0) -> SICK nanoScan3 at 192.168.3.10
+# Host 192.168.3.1 receives the UDP scan stream on :6060 (sick_safetyscanners2)
+# and opens CoLa2 on the scanner's TCP 2122. No gateway, no DNS: link-local peer.
+# enp1s0 = DIO/maintenance (192.168.1.0/24), enp3s0 = GLS621 QR camera (own /24);
+# each wired port gets its own /24 so no two ports ever route the same subnet.
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    enp2s0:
+      dhcp4: no
+      dhcp6: no
+      addresses:
+        - 192.168.3.1/24
+      optional: true

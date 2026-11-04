@@ -1,9 +1,11 @@
 # AMR QR di stack gvievo-01 — profil `amr-qr-01`
 
-Repo ini = **kode gvievo-01 terbaru (gvievo-01-gvievo-main, 2026-10-23)** + platform AMR QR.
+Repo ini = **kode gvievo-01 terbaru (gvievo-01-kyb-trackless, 2026-11-03)** + platform AMR QR.
 Supervisor, slam_toolbox, AMCL, Nav2 RPP/Spin, route executor, web `:5001` (view operator /
-engineer), model daya drive (standby/armed), pre-move warning, "continue survey", dan semua
-perbaikan gvievo ikut. Yang diganti hanya layer hardware: semua node di atas
+engineer, layout baru: Home menggantikan Status), model daya drive (standby/armed),
+pre-move warning, **wait step + Continue**, step **Go home**, perubahan kecepatan
+**S-curve**, tool **Measure** di editor route, dan semua perbaikan gvievo ikut. Mode tape
+(LINE), RFID dan profile position sudah dihapus dari kode (KYB trackless). Yang diganti hanya layer hardware: semua node di atas
 `/cmd_wheel_vel` / `/wheel_states` / `/imu/data_raw` / `/amr/panel_state` /
 `/drives/status` tetap sama.
 
@@ -19,13 +21,17 @@ Instalasi langkah demi langkah (dan update dari kode lama, Part U):
 
 | Area | gvievo-01 (`agv-01`) | AMR QR (`amr-qr-01`) |
 |---|---|---|
-| Produk | `tracked: null` (tape + SLAM) | `tracked: false`: **SLAM saja** (tanpa tape, MLS, RFID) |
-| Node hardware | `drive_node` (CAN) + `panel_node` (DIO) + `rfid_node` | **`qr_base_node`**: satu owner untuk semuanya |
+| Produk | Trackless (SLAM) saja | Sama |
+| Node hardware | `drive_node` (CAN) + `panel_node` (DIO) + `gls_node` | **`qr_base_node`**: satu owner untuk semuanya |
 | Motor | BLV-R CiA 402, velocity loop di driver | Driver BLDC analog: **CKDA08ETH** 0–10 V + coil FWD/REV/BRK di **CK5162E**. Feedforward terukur (970 rpm/V) + trim PI pelan di software, coast saat perintah ~0 |
 | Daya drive | Standby/armed lewat `arm_policy`, Manual Arm DI08 | Sama (`arm_policy`), dibaca QR: MANUAL selalu armed (tidak ada saklar Manual Arm); AUTO standby (0 V, **rem ditahan**) sampai run minta daya. `/drives/disarm` = **push mode** (rem dilepas) |
 | Encoder | 6064h di drive | **Encoder CANopen absolut di as roda** (node 1/2, 0x6004, 8192/putaran), range wrap dipelajari dari data |
 | IMU | MLS di CAN | **WitMotion serial** `/dev/amr_imu`, 115200 baud, paket 0x52 |
-| Panel | Selector AUTO/MANUAL fisik + Start + Reset + pendant | **Selector virtual** dari START/STOP + E-stop DI0 |
+| Panel | Selector AUTO/MANUAL fisik + Start + Reset + Continue + 3 tombol tujuan + pendant | **Selector virtual** dari START/STOP + E-stop DI0. Tanpa Reset/Continue/tombol tujuan (`panel.destinations: []`) |
+| Emergency | Flexi Soft Q3 (DI08) → STO; setelah lepas E-stop harus **Reset** | E-stop DI0 (`panel.di_estop_ok` = `qr_base.di_estop`). **Tanpa Reset**: lepas E-stop → NORMAL, run yang ditahan lanjut dengan START. Teks web "press Reset" bisa diabaikan |
+| Wait step | Lanjut dengan PB Continue (DI13) atau Start | Lanjut dengan **START** atau tombol **Continue** di halaman Run (`web_continue`, hanya untuk run yang WAITING) |
+| Kecepatan route | Straight 0.60, arc 0.30 m/s | **0.27 m/s** straight dan arc (95 % top speed dari `motor_max_rpm`), supaya S-curve tidak terpotong limit roda |
+| Kamera GLS621 | Dipakai (read-only, rekam label lantai) | **Tidak terpasang**: `gls.enabled: false`, node tidak jalan, bagian label di halaman Run disembunyikan |
 | Field scanner | Mux + executor berhenti dari `/output_paths` | **Sama** sejak lidar diganti (2026-11-02). Field set di scanner harus cocok dengan `scanner_fields.yaml` (cek §5 no. 9) |
 | Filter lidar | — | **Tidak ada** (sama dengan gvievo). Noise 2026-09/10 ternyata dari lidar yang rusak; filter-nya dimatikan, kodenya masih ada |
 | Geometri | track 0.487, lidar 0.964 m | track **0.37652**, lidar **0.81 m**, body **1.18 × 0.675** |
@@ -107,10 +113,11 @@ Route yang meminta lebih cepat tetap jalan, tapi di-clamp oleh mux.
    masih placeholder (1e-5 (rad/s)²) sampai diukur saat parkir.
 5. **Encoder dibaca SDO** kalau TPDO tidak aktif (mode `auto` fallback). Jitter
    timestamp lebih besar, tapi tetap jalan.
-6. **Profile position (pp)** dan **monitor BLV-R** tidak tersedia di platform ini
-   (divalidasi di loader).
-7. **GLS621** tidak dipakai di stack ini (sesuai keputusan). Hardware-nya tetap
-   terpasang.
+6. **Monitor BLV-R** tidak tersedia di platform ini (divalidasi di loader). Profile
+   position sudah dihapus dari kode di KYB trackless.
+7. **GLS621** tidak terpasang (`gls.enabled: false`). Kalau nanti dipasang: set
+   `gls.enabled: true`, kalibrasi `gls.*`, dan tambahkan `gls_node` ke cabang QR di
+   `base.launch.py` (sekarang hanya cabang drive_node yang menjalankannya).
 8. Driver analog tidak mengirim alarm. Driver yang trip atau di-disable dari luar
    (alarm, E-stop/OSSD scanner yang di-wire ke enable driver, power motor mati)
    terlihat sebagai **stall**: roda diperintah jalan tapi diam 2 s → FAULT. Selama 2 s
@@ -129,12 +136,13 @@ Route yang meminta lebih cepat tetap jalan, tapi di-clamp oleh mux.
 
 ## 5. Test offline
 
-| Suite | Hasil (2026-11-02) |
+| Suite | Hasil (2026-11-04) |
 |---|---|
-| `tests/run_all.py` | 782 check, semua lulus (752 gvievo + 30 profil QR). Runner mem-pin `AGV_PROFILE=agv-01` |
-| `amr_base/test/test_qr_*.py`, `test_wasd_teleop.py` | 53 lulus, termasuk `qr_base_node` end-to-end dengan hardware simulasi: standby di AUTO, armed saat run minta daya, push mode |
-| `amr_localization/test` (filter scan), `amr_description/test/test_vehicle.py` | lulus |
-| Test paket lain | Sama dengan baseline gvievo-main di mesin tanpa ROS |
+| `tests/run_all.py` | 762 check, semua lulus (731 KYB trackless + 31 profil QR). Runner mem-pin `AGV_PROFILE=agv-01` |
+| `amr_base/test/test_qr_*.py` | 48 lulus, plus `qr_base_node` end-to-end dengan hardware simulasi: standby di AUTO, armed saat run minta daya, push mode, emergency ACTIVE/NORMAL tanpa Reset |
+| `amr_mission/test/test_wait_step.py` | lulus, termasuk Continue dari web (hanya WAITING, ditolak saat E-stop / di luar titik wait) |
+| `amr_web/test` | lulus: tombol Continue hanya di QR, bagian GLS tersembunyi tanpa kamera, push mode, edit peta |
+| Test paket lain | Sama persis dengan baseline KYB trackless di mesin tanpa ROS |
 
 Yang **belum** teruji: build `colcon` dan launch di Jazzy sungguhan, dan semua perilaku
 di hardware. Ulangi langkah §2 setelah update (INSTALL Part U).

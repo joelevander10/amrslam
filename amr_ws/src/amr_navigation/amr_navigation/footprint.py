@@ -154,6 +154,34 @@ def swept_poses(grid: Grid, fp: Footprint, poses) -> np.ndarray:
     return dilate(mask, margin_cells(fp, grid.meta.resolution))
 
 
+def path_poses(poses, spacing: float) -> list[tuple[float, float, float]]:
+    """`poses` (x, y, yaw) with poses inserted between neighbours farther apart than `spacing`,
+    position and heading interpolated: a sampled path made dense enough for swept_poses."""
+    out = [tuple(poses[0])]
+    for a, b in zip(poses, poses[1:], strict=False):
+        n = max(1, int(math.ceil(math.hypot(b[0] - a[0], b[1] - a[1]) / spacing)))
+        dyaw = math.atan2(math.sin(b[2] - a[2]), math.cos(b[2] - a[2]))
+        out.extend(
+            (a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n, a[2] + dyaw * k / n)
+            for k in range(1, n + 1)
+        )
+    return out
+
+
+def poses_outside(grid: Grid, fp: Footprint, poses) -> bool:
+    """True if the footprint plus margin leaves the map at any of `poses` (conservative
+    through the padded vertices, like line_outside)."""
+    x0, y0, x1, y1 = _map_extent(grid)
+    pad = _pad(grid, fp) - 1e-9
+    pts = np.vstack([_polygon_world(fp, *p) for p in poses])
+    return bool(
+        (pts[:, 0].min() - pad < x0)
+        or (pts[:, 0].max() + pad > x1)
+        or (pts[:, 1].min() - pad < y0)
+        or (pts[:, 1].max() + pad > y1)
+    )
+
+
 def swept_line(
     grid: Grid, fp: Footprint, start: tuple[float, float, float], end: tuple[float, float, float]
 ) -> np.ndarray:

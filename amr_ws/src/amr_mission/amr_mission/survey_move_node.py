@@ -1,6 +1,6 @@
 """survey_move_node: preset moves while surveying (mapping layer only), press once.
 
-    /amr/survey/move       SurveyMove   "straight" X m (+ fwd / - rev) or "rotate" 20..180 deg
+    /amr/survey/move       SurveyMove   "straight" X m (+ fwd / - rev) or "rotate" 45..180 deg
     /amr/survey/move_stop  Trigger      stop the running move
     /amr/survey_move_state SurveyMoveState, latched
 
@@ -65,7 +65,7 @@ class SurveyMoveNode(Node):
         dp("settle_s", 1.5)
         dp("input_age_s", 0.5)
         dp("max_correction_deg", 2.0)
-        dp("v_mps", 0.30)
+        dp("v_mps", 0.40)
         dp("w_rad_s", 0.20)
         p = self.get_parameter
         self.cmd_valid = float(p("cmd_valid_s").value)
@@ -128,7 +128,9 @@ class SurveyMoveNode(Node):
     def _on_panel(self, m: PanelState) -> None:
         self._panel, self._panel_t = m, self._now()
         with self._lock:
-            if self.state == SurveyMoveState.MOVING and self._pendant(m):
+            if self.state == SurveyMoveState.MOVING and m.emergency != PanelState.EMG_NORMAL:
+                self._abort("emergency stop")  # never resumed: the operator starts it again
+            elif self.state == SurveyMoveState.MOVING and self._pendant(m):
                 self._abort("pendant button pressed")
 
     def _on_drives(self, m: DriveStatus) -> None:
@@ -163,6 +165,8 @@ class SurveyMoveNode(Node):
         pn = self._panel
         if pn is None or now - self._panel_t > self.input_age or not pn.valid:
             return "panel stale or invalid"
+        if pn.emergency != PanelState.EMG_NORMAL:
+            return "emergency stop"
         if pn.mode_auto:
             return "selector is not MANUAL"
         if self._pendant(pn):
@@ -171,7 +175,7 @@ class SurveyMoveNode(Node):
         if ls is None or now - self._lease_t > self.input_age or not (ls.allowed & LEASE_MANUAL):
             return "no manual lease from the supervisor"
         if now - self._drives_t > self.input_age or not self._drives_ok:
-            return "drives have no torque (Manual Arm DI08 off, or E-stop)"
+            return "drives have no torque (pendant enable DI09 off, or E-stop)"
         if self._odom is None or now - self._odom_t > self.input_age:
             return "no odometry"
         return ""

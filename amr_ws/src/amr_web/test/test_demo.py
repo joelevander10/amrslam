@@ -21,14 +21,13 @@ WEB = os.path.join(os.path.dirname(__file__), "..", "amr_web")
 OK_DRIVES = {"operational": True, "left": "Operation enabled", "right": "Operation enabled", "age_s": 0.05}
 
 
-def st(run=None, line=None, mode="NAVIGATION", drives=OK_DRIVES, mux=None, **extra):
+def st(run=None, mode="NAVIGATION", drives=OK_DRIVES, mux=None, **extra):
     s = {
         "mode": {"mode_name": mode, "fault_code": "", "reason": "", "generation": 1} if mode else None,
         "drives": drives,
         "mux": mux or {"left_rad_s": 0.0, "right_rad_s": 0.0, "age_s": 0.05, "code": "NO_SOURCE"},
         "run": run,
         "run_stale": False,
-        "line": line,
     }
     s.update(extra)
     return s
@@ -40,18 +39,6 @@ def run(name, cause="", **kw):
         "hold_cause": cause,
         "reason": "cross-track +0.14 m exceeds 0.10 m",
         "fault_code": "PATH_BLOCKED",
-        "age_s": 0.1,
-    }
-    d.update(kw)
-    return d
-
-
-def line(name, cause="", **kw):
-    d = {
-        "state_name": name,
-        "hold_cause": cause,
-        "message": "0x8130 heartbeat",
-        "code": "DRIVE_ALARM",
         "age_s": 0.1,
     }
     d.update(kw)
@@ -175,7 +162,6 @@ def test_no_fault_vocabulary_ever_reaches_the_page(tmp_path):
     codes = set(cat.CATALOGUE)
     faults = [
         st(run=run("FAULT")),
-        st(line=line("FAULT"), mode="LINE"),
         st(run=run("BLOCKED", "estop")),
         st(mode="FAULT"),
         st(drives={"operational": False, "left": "Fault", "right": "Fault", "age_s": 0.1}),
@@ -200,7 +186,7 @@ def test_deprecated_page_has_no_link_but_still_serves(tmp_path):
     assert cl.get("/demo").status_code == 200
     assert cl.get("/api/demo").get_json()["status"] == demo.WATCHING
     assert cl.post("/api/role", json={"role": "engineer", "pin": role.DEFAULT_PIN}).status_code == 200
-    assert 'href="/demo"' not in cl.get("/status").get_data(as_text=True)
+    assert 'href="/demo"' not in cl.get("/monitor").get_data(as_text=True)
     assert cl.get("/demo").status_code == 200
 
 

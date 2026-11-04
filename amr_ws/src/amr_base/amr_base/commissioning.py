@@ -1,6 +1,6 @@
-"""Commissioning job state machine (unified plan §7.2). Pure, clock-fed.
+"""Commissioning (blind-run) job state machine (unified plan §7.2). Pure, clock-fed.
 
-Wraps the repo's blind-run library (core/blindrun.py: plan + BlindRun, the
+Wraps the repo's blind-run library (agv_core/blindrun.py: plan + BlindRun, the
 straight/arc/pivot/pulses semantics, bounds, settling, per-segment records)
 in the ROS-side authority rules:
 
@@ -20,25 +20,20 @@ in the ROS-side authority rules:
     Start can do anything.
   * Every tick of a running job re-checks the authority it started with:
     panel valid + MANUAL, supervisor lease with the COMMISSIONING class,
-    fresh raw counts, the same lease identity and encoder scale. Loss of any
-    -> ABORTED with the reason, output zero.
+    fresh raw counts, the same lease identity and encoder scale, and no
+    emergency. Loss of any -> ABORTED with the reason, output zero.
+  * An EMERGENCY aborts a running job, never to resume: a new plan and Start
+    are needed. A blind run is a single measured move, like a survey move
+    (emergency-suite plan §4.6), and a move cut by an E-stop measures the stop,
+    not the move (owner, 2026-11-02; the "never ends a program" rule of
+    2026-10-30 is for runs, waits and the mapping session).
   * Output is per-wheel motor rpm in driver terms from the library, converted
     here to VEHICLE-terms wheel rad/s (undoing the invert flags the drive
     owner will apply again).
 
-Two backends, chosen per plan ("backend": "pv" | "pp"):
-
-  pv  (default) the library's software position loop in profile velocity: this
-      job computes wheel speeds every tick, through the mux, as before.
-  pp  profile position, executed INSIDE the drives (amr_base/pp.py): one segment
-      per plan; this job holds a run id at the drive owner (PpMove, re-sent every
-      tick) and follows /drives/pp_status. Admitted and started only while the
-      drive owner reports pp available - it is locked by the profile until the
-      decision to run pp on this motor is recorded (pp.vendor_ref). An abort or clear sends hold=false
-      for a few ticks, so the drive halts at once rather than on the stale timeout.
-
-Both: the centre-path speed is capped by blind_run.max_speed_mps (and pp by
-pp.max_speed_mps).
+Profile velocity only on this vehicle: the profile-position (pp) backend was
+removed on 2026-10-30 and is not part of this. The centre-path speed is capped
+by blind_run.max_speed_mps.
 """
 
 from __future__ import annotations
@@ -49,12 +44,11 @@ import re
 from dataclasses import dataclass, field
 
 from agv_core import (
-    blindrun,  # repo module: core/blindrun.py
+    blindrun,  # repo module: agv_core/blindrun.py
     config,
 )
 
-from amr_base import pp
-
+# CommissioningState.phase. APPEND ONLY.
 IDLE, PREPARED, RUNNING, SETTLING, DONE, ABORTED = range(6)
 PHASE_NAMES = {
     IDLE: "IDLE",
@@ -64,28 +58,12 @@ PHASE_NAMES = {
     DONE: "DONE",
     ABORTED: "ABORTED",
 }
+# A job exists (the supervisor grants COMMISSIONING instead of MANUAL, mode changes refused).
+ACTIVE = (PREPARED, RUNNING, SETTLING)
 LEASE_AUTONOMOUS, LEASE_COMMISSIONING = 2, 4
-BACKENDS = ("pv", "pp")
-PP_STATUS_FRESH_S = 0.5  # /drives/pp_status is 10 Hz
-PP_TAKE_S = 1.0  # the drive owner must report our run id this soon after Start
-PP_RELEASE_TICKS = 10  # hold=false repeats after an abort/clear
 # A plain file-name stem: no path separators, no leading dot.
 PLAN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
 WHEEL_RAD_S_PER_MOTOR_RPM = 2.0 * math.pi / 60.0 / config.GEAR_RATIO
-
-
-@dataclass
-class PpView:
-    """The drive owner's latest PpStatus, with its receive time."""
-
-    t: float
-    available: bool
-    reason: str = ""
-    state: str = "idle"
-    run_id: str = ""
-    outcome: str = ""
-    targets: tuple[int, int] = (0, 0)
-    actuals: tuple[int, int] = (0, 0)
 
 
 @dataclass
@@ -104,7 +82,7 @@ class Inputs:
     gyro_yaw_rad_s: float | None = None  # corrected yaw rate, for evidence; None if stale
     authority: tuple[str, int] | None = None  # fresh lease (instance, generation), None if stale/none
     start_edge_t: float | None = None  # when the Start edge was received (same clock as `now`)
-    pp_status: PpView | None = None  # latest /drives/pp_status (pp backend only)
+    emergency: bool = False  # a fresh PanelState.emergency != EMG_NORMAL: abort, never resume
 
 
 @dataclass
@@ -122,11 +100,6 @@ class Job:
     accepted_t: float | None = None
     aborted_segment: dict | None = None  # library state of the segment a loss interrupted
     gyro_gaps: list = field(default_factory=list)  # [start_s, end_s] since Start without a fresh gyro
-    backend: str = "pv"
-    pp_spec: pp.MoveSpec | None = None
-    run_id: str = ""  # pp: the id held at the drive owner for this Start
-    pp_result: dict | None = None  # pp: what the drive owner reported at the end
-    _release_ticks: int = 0  # pp: hold=false still to send after an abort/clear
     _started_t: float | None = None
     _gyro_gap_open: bool = False
 
@@ -142,7 +115,6 @@ class Job:
         lease_allowed: int,
         stopped: bool | None,
         mode: tuple[str, int, str] | None = None,
-        pp_status: PpView | None = None,
     ) -> str:
         """Admit a plan. `counts_per_rev` must come from fresh, valid wheel feedback (0 otherwise).
         `mode` is a fresh supervisor ModeState snapshot (instance, generation, mode name): a
@@ -154,13 +126,13 @@ class Job:
         if authority is None:
             raise ValueError("no fresh supervisor lease: cannot bind a plan")
         if lease_allowed & LEASE_AUTONOMOUS:
-            raise ValueError("supervisor is in NAVIGATION: commissioning plans need IDLE")
+            raise ValueError("supervisor is in NAVIGATION: blind runs need IDLE")
         if mode is None:
-            raise ValueError("no fresh supervisor mode: commissioning plans need IDLE")
+            raise ValueError("no fresh supervisor mode: blind runs need IDLE")
         if (mode[0], int(mode[1])) != (authority[0], int(authority[1])):
             raise ValueError("supervisor mode and lease disagree (transition in progress): try again")
         if mode[2] != "IDLE":
-            raise ValueError(f"supervisor is in {mode[2]}: commissioning plans need IDLE")
+            raise ValueError(f"supervisor is in {mode[2]}: blind runs need IDLE")
         if stopped is not True:
             raise ValueError("wheels not known to be at rest")
         if not (math.isfinite(counts_per_rev) and counts_per_rev > 0.0):
@@ -171,25 +143,13 @@ class Job:
         except (ValueError, TypeError, AttributeError) as e:
             raise ValueError(str(e)) from None
         backend = spec.get("backend", "pv")
-        if backend not in BACKENDS:
-            raise ValueError(f"backend must be one of {', '.join(BACKENDS)}")
+        if backend != "pv":
+            raise ValueError("backend must be pv (profile position was removed on this vehicle)")
         speed = float(planned["speed_mps"])
         if speed > config.BLIND_MAX_SPEED_MPS + 1e-9:
             raise ValueError(
                 f"speed {speed:.2f} m/s exceeds blind_run.max_speed_mps ({config.BLIND_MAX_SPEED_MPS:g})"
             )
-        pp_spec = None
-        if backend == "pp":
-            if speed > config.PP_MAX_SPEED_MPS + 1e-9:
-                raise ValueError(
-                    f"speed {speed:.2f} m/s exceeds pp.max_speed_mps ({config.PP_MAX_SPEED_MPS:g})"
-                )
-            if len(planned["segments"]) != 1:
-                raise ValueError("a pp plan is exactly one segment (one move per Start)")
-            why = pp_unavailable(pp_status, now)
-            if why:
-                raise ValueError(f"pp not available: {why}")
-            pp_spec = pp.move_spec(planned["segments"][0], config.BLIND_ACCEL_RPM_S, config.BLIND_ACCEL_RPM_S)
         plan_id = spec.get("id")
         if plan_id is None or plan_id == "":
             plan_id = f"plan{len(planned['segments'])}"
@@ -200,11 +160,7 @@ class Job:
         self.phase, self.reason, self.results, self.gyro_heading = PREPARED, "", [], 0.0
         self.started_counts, self.aborted_segment, self.gyro_gaps = None, None, []
         self._started_t, self._gyro_gap_open = None, False
-        self.backend, self.pp_spec, self.run_id, self.pp_result = backend, pp_spec, "", None
-        out = dict(planned, backend=backend)
-        if pp_spec is not None:
-            out["pp"] = pp_spec_dict(pp_spec)
-        return json.dumps(out)
+        return json.dumps(dict(planned, backend="pv"))
 
     def clear(self, reason: str = "cleared by operator") -> dict | None:
         """Drop the plan; a running job is aborted (output zero next tick).
@@ -225,6 +181,8 @@ class Job:
     # -- the tick --
 
     def _authority(self, i: Inputs) -> str | None:
+        if i.emergency:
+            return "emergency stop"
         if not (i.panel_valid and i.panel_manual):
             return "panel not valid MANUAL"
         if not (i.lease_allowed & LEASE_COMMISSIONING):
@@ -248,25 +206,9 @@ class Job:
     def _abort(self, why: str) -> None:
         self.phase, self.reason = ABORTED, why
         self._gyro_gap_open = False
-        if self.backend == "pp":
-            self._release_ticks = PP_RELEASE_TICKS
-            return
         self.run.abort(why)
         self.results = list(self.run.results)
         self.aborted_segment = dict(self.run.snapshot(), elapsed_s=self.run.seg_elapsed)
-
-    def pp_hold(self) -> tuple[str, bool] | None:
-        """What the node publishes on /amr/commissioning_pp this tick: (run id, hold)
-        while a pp job runs, (run id, False) for a few ticks after it ended early,
-        else None (nothing to say)."""
-        if self.backend != "pp" or not self.run_id:
-            return None
-        if self.phase == RUNNING:
-            return self.run_id, True
-        if self._release_ticks > 0:
-            self._release_ticks -= 1
-            return self.run_id, False
-        return None
 
     def tick(self, i: Inputs) -> tuple[float, float]:
         """-> (left, right) wheel rad/s in vehicle terms; (0, 0) unless RUNNING/SETTLING."""
@@ -288,16 +230,6 @@ class Job:
             if i.stopped is not True:
                 self.reason = "Start ignored: wheels not known to be at rest"
                 return 0.0, 0.0
-            if self.backend == "pp":
-                why = pp_unavailable(i.pp_status, i.now)
-                if why:
-                    self.reason = f"Start ignored: pp not available: {why}"
-                    return 0.0, 0.0
-                self.run_id = f"{self.plan_id}-{int(i.now * 1000) % 100_000_000}"
-                self.started_counts = tuple(i.counts)
-                self._started_t = i.now
-                self.phase, self.reason = RUNNING, ""
-                return 0.0, 0.0
             self.run = blindrun.BlindRun(self.planned, i.counts)
             self.started_counts = tuple(i.counts)
             self._started_t = i.now
@@ -318,9 +250,6 @@ class Job:
         else:
             self.gyro_gaps.append([max(0.0, rel - i.dt), rel])
             self._gyro_gap_open = True
-        if self.backend == "pp":
-            self._pp_follow(i)
-            return 0.0, 0.0
         left_rpm, right_rpm = self.run.update(i.counts, i.dt, i.stopped)
         lib = self.run.phase
         if lib == blindrun.DONE:
@@ -339,55 +268,12 @@ class Job:
         sr = -1.0 if config.INVERT_RIGHT else 1.0
         return sl * left_rpm * WHEEL_RAD_S_PER_MOTOR_RPM, sr * right_rpm * WHEEL_RAD_S_PER_MOTOR_RPM
 
-    def _pp_follow(self, i: Inputs) -> None:
-        """RUNNING, pp: the drive owner does the move; this watches it end."""
-        v = i.pp_status
-        if v is None or i.now - v.t > PP_STATUS_FRESH_S:
-            self._abort("drive pp status stale")
-            return
-        if v.run_id != self.run_id:
-            if self._started_t is not None and i.now - self._started_t > PP_TAKE_S:
-                self._abort(f"the drive owner did not take the pp move ({v.reason or v.state})")
-            return
-        if v.outcome == "":
-            return  # moving / halting
-        self.pp_result = {
-            "outcome": v.outcome,
-            "reason": v.reason,
-            "targets": list(v.targets),
-            "actuals": list(v.actuals),
-            "error_counts": [a - t for a, t in zip(v.actuals, v.targets, strict=True)],
-            "end_counts": list(i.counts) if i.counts else None,
-            "duration_s": i.now - (self._started_t or i.now),
-        }
-        self.results = [dict(self.pp_result, segment=1, kind=self.planned["segments"][0]["kind"])]
-        if v.outcome == pp.DONE:
-            self.phase, self.reason = DONE, ""
-        else:
-            self.phase, self.reason = ABORTED, f"pp {v.outcome}: {v.reason}"
-            self._release_ticks = PP_RELEASE_TICKS
-
-    def pp_progress(self, counts: tuple[int, int] | None) -> list[float]:
-        if counts is None or self.started_counts is None or not self.counts_per_rev:
-            return [0.0, 0.0]
-        m = math.pi * config.WHEEL_DIA_M / self.counts_per_rev
-        return [blindrun.counts_delta(c, s) * m for c, s in zip(counts, self.started_counts, strict=True)]
-
     def snapshot(self) -> dict:
         d = {}
         if self.run is not None:
             d.update(self.run.snapshot())  # library detail (its own lower-case phase is overridden below)
         elif self.planned is not None:
             d.update({"segment": 0, "segments": len(self.planned["segments"]), "completed": 0})
-            if self.backend == "pp" and self.phase in (RUNNING, SETTLING, DONE, ABORTED) and self.run_id:
-                d.update(
-                    {
-                        "segment": 1,
-                        "kind": self.planned["segments"][0]["kind"],
-                        "speed_mps": self.planned.get("speed_mps", 0.0),
-                        "completed": 1 if self.phase == DONE else 0,
-                    }
-                )
         d.update(
             {
                 "phase": PHASE_NAMES[self.phase],
@@ -395,8 +281,6 @@ class Job:
                 "reason": self.reason,
                 "gyro_heading_deg": math.degrees(self.gyro_heading),
                 "results": self.results,
-                "backend": self.backend,
-                "run_id": self.run_id,
             }
         )
         return d
@@ -419,33 +303,6 @@ class Job:
             "invert": [config.INVERT_LEFT, config.INVERT_RIGHT],
             "track_m": config.TRACK_M,
             "wheel_dia_m": config.WHEEL_DIA_M,
-            "backend": self.backend,
-            "run_id": self.run_id,
-            "pp_move": pp_spec_dict(self.pp_spec) if self.pp_spec else None,
-            "pp_result": self.pp_result,
-            "pp_config": {"expect": dict(config.PP_EXPECT), "vendor_ref": config.PP_VENDOR_REF}
-            if self.backend == "pp"
-            else None,
+            "backend": "pv",
             **(extra or {}),
         }
-
-
-def pp_unavailable(v: PpView | None, now: float) -> str | None:
-    """None when the drive owner freshly reports pp available, else why not."""
-    if v is None or now - v.t > PP_STATUS_FRESH_S:
-        return "no fresh pp status from the drive owner"
-    if not v.available:
-        return v.reason or "drive owner reports pp unavailable"
-    return None
-
-
-def pp_spec_dict(s: pp.MoveSpec) -> dict:
-    def w(m: pp.WheelMove) -> dict:
-        return {
-            "delta_counts": m.delta_counts,
-            "velocity_rpm": m.velocity_rpm,
-            "accel_rpm_s": m.accel_rpm_s,
-            "decel_rpm_s": m.decel_rpm_s,
-        }
-
-    return {"left": w(s.left), "right": w(s.right), "duration_s": s.duration_s, "ratio_error": s.ratio_error}

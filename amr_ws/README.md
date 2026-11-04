@@ -1,7 +1,7 @@
 # amr_ws — ROS 2 Humble workspace for the SLAM AMR
 
-Plans: `manuals/slam-generalized-plan/amr_implementation_spec.md` and
-`manuals/slam-generalized-plan/unified_amr_service_plan.md`. The unified stack
+Plans (archived): `manuals/obsolete/slam-generalized-plan/amr_implementation_spec.md` and
+`manuals/obsolete/slam-generalized-plan/unified_amr_service_plan.md`. The unified stack
 boots hardware and web in IDLE, then changes mapping/navigation layers under one
 supervisor. Software integration through commissioning parity is implemented;
 the compact vehicle acceptance and witnessed service cutover remain. Operator
@@ -31,39 +31,40 @@ sequential on the N97. Their pinned `ROS_DOMAIN_ID`s keep them isolated.
 `~/.bashrc` sources `/opt/ros/humble` and this overlay, with
 `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp`. A shell started before a package was
 added does not see it: `PackageNotFoundError` means re-source, not a bug.
-Anything long-lived (`foxglove_bridge`, later systemd units) must be started
+Anything long-lived (systemd units, bench tools) must be started
 from the same overlay, or custom `amr_interfaces` messages will not decode.
 
 | Launch | What |
 |---|---|
-| `python3 -m amr_bringup.supervisor_node --ros-args -p real:=true` | **production topology behind `amr.service`**: persistent base/web/optional Foxglove, IDLE at boot, at most one replaceable mapping/navigation layer, generation leases and bounded process-group cleanup |
-| `amr_bringup base.launch.py real:=true\|false [...]` | **the persistent base layer** (unified plan U1): one URDF publisher, mux, odom, imu_bias, EKF; `real:=true` adds drive_node (can0), panel_node (DIO) and the nanoScan3 (`scanner.launch.py`); `real:=false` adds fake base/IMU/panel and optional `scan_synth:=true`. No web, no Foxglove, no SLAM/AMCL. Required nodes end the launch when they exit |
+| `python3 -m amr_bringup.supervisor_node --ros-args -p real:=true` | **production topology behind `amr.service`**: persistent base/web, IDLE at boot, at most one replaceable mapping/navigation layer, generation leases and bounded process-group cleanup |
+| `amr_bringup base.launch.py real:=true\|false [...]` | **the persistent base layer** (unified plan U1): one URDF publisher, mux, odom, imu_bias, EKF; `real:=true` adds drive_node (can0), panel_node (DIO) and the nanoScan3 (`scanner.launch.py`); `real:=false` adds fake base/IMU/panel and optional `scan_synth:=true`. No web, no SLAM/AMCL. Required nodes end the launch when they exit |
 | `amr_bringup mapping_layer.launch.py [maps_dir] [generation:=N] [internal:=true]` | **mode layer**: slam_toolbox + mapping_session only. One survey = one fresh instance |
 | `amr_bringup navigation_layer.launch.py map_id:=… revision:=N [generation:=N] [autostart:=false]` | **mode layer**: verified bundle → map_server, AMCL, localization_monitor, controller, behaviors, lifecycle managers, route_executor. One map = one instance |
-| `amr_bringup drivers.launch.py [lidar] [pc_loss_ms] [feedback_hz] [gyro_sign] [panel:=real\|fake]` | bench wrapper = `base real:=true` (+ Foxglove). `sudo systemctl stop agv_controller` first; drive_node/panel_node refuse otherwise |
-| `amr_bringup sim.launch.py [slip_noise_std] [scan_synth] [foxglove]` | wrapper = `base real:=false` (+ Foxglove); touches no hardware |
-| `amr_bringup mapping.launch.py [sim:=true] [maps_dir] [clutter_count] [foxglove]` | **diagnostics / sim tests only**: base + web + mapping_layer without the supervisor. The web pages need the supervisor's lease and mode (jog, survey start, initial pose and mission controls are refused here); drive with the ROS services and teleop shown below |
-| `amr_bringup nav.launch.py [sim:=true] [map_id] [revision] [maps_dir] [clutter_count] [web] [foxglove]` | **diagnostics / sim tests only**: base + web + navigation_layer without the supervisor, same limits. Mutually exclusive with mapping. Interactive operation is `amr.service` (the supervisor) only |
-| `amr_bringup lidar.launch.py` | scanner commissioning: `scanner.launch.py` + URDF (+ Foxglove) |
+| `amr_bringup drivers.launch.py [lidar] [pc_loss_ms] [feedback_hz] [gyro_sign] [panel:=real\|fake]` | bench wrapper = `base real:=true`. `sudo systemctl stop agv_controller` first; drive_node/panel_node refuse otherwise |
+| `amr_bringup sim.launch.py [slip_noise_std] [scan_synth]` | wrapper = `base real:=false`; touches no hardware |
+| `amr_bringup mapping.launch.py [sim:=true] [maps_dir] [clutter_count]` | **diagnostics / sim tests only**: base + web + mapping_layer without the supervisor. The web pages need the supervisor's lease and mode (jog, survey start, initial pose and mission controls are refused here); drive with the ROS services and teleop shown below |
+| `amr_bringup nav.launch.py [sim:=true] [map_id] [revision] [maps_dir] [clutter_count] [web]` | **diagnostics / sim tests only**: base + web + navigation_layer without the supervisor, same limits. Mutually exclusive with mapping. Interactive operation is `amr.service` (the supervisor) only |
+| `amr_bringup lidar.launch.py` | scanner commissioning: `scanner.launch.py` + URDF |
 | `amr_description description.launch.py [laser_x:=…]` | robot_state_publisher only |
 
 Survey in sim (spec §6.1), from three terminals:
 ```bash
-ros2 launch amr_bringup mapping.launch.py foxglove:=true
+ros2 launch amr_bringup mapping.launch.py
 ros2 service call /amr/survey/start amr_interfaces/srv/StartSurvey "{map_id: line_section, description: 'floor mark A'}"
 ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -r cmd_vel:=/cmd_vel_teleop   # drive a loop, come back
 ros2 service call /amr/survey/returned std_srvs/srv/Trigger      # closure evidence in the reply and /amr/mapping_state
 ros2 service call /amr/survey/save amr_interfaces/srv/SaveMap "{note: 'seams ok'}"
 ```
-Foxglove: 3D panel, frame `map`, show `/map`, `/scan`, `/odometry/filtered`. The saved
+Watch the map grow on the web app at :5001 (its controls are refused here, as above). The saved
 bundle lands in `<maps_dir>/<map_id>/rev<N>/` (`map.pgm`, `map.yaml`, `posegraph.*`,
 `manifest.yaml`). A failed save leaves `.draft-*`, never a `rev*`.
 
 Localise on a saved map (spec §4.2, §4.3):
 ```bash
 ros2 run amr_mission world_bundle ~/amr_maps            # once: the sim world as sim_factory/rev1 (surfaces only)
-ros2 launch amr_bringup nav.launch.py clutter_count:=12 foxglove:=true
-# Foxglove: 3D panel, frame map; "Publish pose estimate" on /initialpose at the start mark, then drive a little:
+ros2 launch amr_bringup nav.launch.py clutter_count:=12
+# initial pose at the start mark (the web's initial-pose control needs the supervisor), then drive a little:
+ros2 topic pub --once /initialpose geometry_msgs/msg/PoseWithCovarianceStamped "{header: {frame_id: map}, pose: {pose: {orientation: {w: 1.0}}}}"
 ros2 topic echo /amr/localization_state                   # CHECKING -> can_confirm once converged + settled + scan consistent
 ros2 service call /amr/localization/confirm std_srvs/srv/Trigger   # operator: scans align -> READY
 ros2 service call /sim/set_pose amr_interfaces/srv/SetPose2D "{x_m: 2.0, y_m: 0.0, yaw_rad: 3.14}"  # kidnap test
@@ -157,7 +158,7 @@ routes: the swept area behind the vehicle is never observed live, so turn
 clearance comes from the *saved map* plus the scan's forward window only.
 
 **Lidar commissioning (T10, lidar half, 2026-09-16).** Measured on the vehicle
-with `lidar.launch.py foxglove:=true`, `agv_controller` running (it no longer
+with `lidar.launch.py` (then with the Foxglove bridge, removed 2026-11-03), `agv_controller` running (it no longer
 touches the scanner):
 
 | Check | Result |
@@ -206,7 +207,7 @@ Policy (`canopen.decide`, tabled in `test_canopen.py`): linked automatically
 (power stage off), TPDOs flowing so `/wheel_states` stays valid — and **powered**
 (Operation enabled, zero target) only while `amr_base.arm_policy` wants it (2026-10-08):
 under MANUAL while the Manual Arm input (DI08, `panel.di_manual_arm`) is high, under AUTO
-while `LineState`/`RunState.drive_power` asks; a stale panel or request is no power.
+while `RunState.drive_power` asks; a stale panel or request is no power.
 Engage retries every 2 s if the enable fails (usually ETO); power no longer wanted →
 release (zero, standstill wait, Shutdown) back to STANDBY, a release that cannot finish
 latches FAULT. A drive that leaves Operation enabled while powered → release and engage
@@ -280,8 +281,8 @@ and the run page. No endpoint publishes a velocity.
 **One catalogue, two audiences (2026-09-22).** Every stop, hold and fault in the
 stack carries a CODE; `agv_core/alarms.py` maps it to what the operator reads and
 the one thing they do about it, while the node's own `reason` stays the
-engineer's detail. Codes travel in `RunState.fault_code`, `LocalizationState.code`,
-`LineState.code` and `MuxState.code`, and every owner emits an `/amr/events` edge
+engineer's detail. Codes travel in `RunState.fault_code`, `LocalizationState.code`
+and `MuxState.code`, and every owner emits an `/amr/events` edge
 with its code. `/api/alarms` turns the state snapshot into that list ONCE,
 server-side (`amr_web/alarms.py`): the rail, Home, Status and Alarms pages render
 it and derive nothing. Events are appended to `~/.amr/logs/events.jsonl` and
@@ -373,8 +374,11 @@ configuration (fields, monitoring cases), which stays humans-only.
 **Python environment.** User-site `numpy 2.2.6` + `opencv-python-headless 5.0`
 are a consistent pair and are what `amr_tools` (mask painting, T4) will use.
 They break `cv_bridge` (system, built on numpy 1.21). Nothing in this project
-uses `cv_bridge` — there is no camera (D-4) — so this is a known, accepted
-conflict. Do not import `cv_bridge`; if a camera ever appears, revisit.
+uses `cv_bridge`, so this is a known, accepted conflict. The only camera is the
+SICK GLS621 floor-label reader (`manuals/gls6-qr/gls6-system.md`). It decodes on
+the device and sends text telegrams over TCP, not images, so it needs no
+`cv_bridge` either. Do not import `cv_bridge`; if an image camera ever appears,
+revisit.
 
 **ROS domain / DDS scope (2026-09-16).** Vehicle = `ROS_DOMAIN_ID=10`,
 simulation = `20`, launch tests pin 61–67 (`amr_bringup/domains.py`). The shell on
@@ -385,8 +389,8 @@ the vehicle sources `env/vehicle.sh` from `~/.bashrc`; for sim work in a shell,
 *unset* domain, because default 0 is what every unconfigured ROS host on the LAN
 uses. DDS is loopback-only (`config/cyclonedds-local.xml`, `CYCLONEDDS_URI`):
 nothing off this host can join either graph, nothing is bound on the Wi-Fi
-address, and a sim on this host cannot leak either. Foxglove is unaffected — it
-uses `foxglove_bridge` on :8765, not DDS. `lo` has no multicast, so discovery is
+address, and a sim on this host cannot leak either. Outside the web app (:5001)
+no ROS data leaves the vehicle (no WebSocket bridge since 2026-11-03). `lo` has no multicast, so discovery is
 unicast over `MaxAutoParticipantIndex` = 120 slots; raise it if a launch ever has
 more participants. To let a laptop join deliberately: copy the XML, bind `wlp1s0`,
 point `CYCLONEDDS_URI` at the copy for that session only.

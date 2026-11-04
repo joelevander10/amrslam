@@ -25,23 +25,18 @@
 <header>
   <h1>AMR control</h1>
   {# Two navs, one page. The operator gets four tabs (everything they can act on);
-     the engineer keeps all ten. Hidden pages stay reachable by URL - the PIN is a
+     the engineer adds Monitor, I/O, Params and Blind run. Hidden pages stay reachable by URL - the PIN is a
      mistake guard, not security (amr_web/role.py). #}
   <nav>
     <a href="/home"   class="{{ 'on' if page == 'home' }}">Home</a>
-    {# Two navigation types, two run tabs (2026-10-02). A tab for a product the profile
-       does not carry is not offered at all (its pages answer 404). #}
-    {% if tracked_ok %}<a href="/run-tracked" class="{{ 'on' if page == 'run_tracked' }}">Run tracked</a>{% endif %}
-    {% if trackless_ok %}<a href="/run" class="{{ 'on' if page == 'run' }}">Run trackless</a>{% endif %}
+    <a href="/run"    class="{{ 'on' if page == 'run' }}">Run</a>
     <a href="/manual" class="{{ 'on' if page == 'manual' }}">Manual</a>
     <a href="/alarms" class="{{ 'on' if page == 'alarms' }}">Alarms</a>
     {% if role == ENGINEER %}
-    <a href="/status" class="{{ 'on' if page == 'status' }}">Status</a>
     <a href="/monitor" class="{{ 'on' if page == 'monitor' }}">Monitor</a>
     <a href="/io"     class="{{ 'on' if page == 'io' }}">I/O</a>
     <a href="/params" class="{{ 'on' if page == 'params' }}">Params</a>
-    <a href="/commissioning" class="{{ 'on' if page == 'commissioning' }}">Commission</a>
-    {% if tracked_ok %}<a href="/teach" class="{{ 'on' if page == 'teach' }}">Teach</a>{% endif %}
+    <a href="/blindrun" class="{{ 'on' if page == 'blindrun' }}">Blind run</a>
     {% endif %}
     {# The visitors' Demo page (/demo, demo.py) is DEPRECATED since 2026-10-02: no nav link;
        the route still serves for anyone who has the URL. #}
@@ -52,6 +47,21 @@
   <button id="ui-size" class="ui-size" type="button" title="Display size: small (desk) · medium · large (vehicle panel)">Aa</button>
   <button id="reload-btn" class="ui-size" type="button" title="Reload this page (fresh, like Ctrl+Shift+R)" aria-label="Reload page"><svg class="reload-ico" viewBox="0 0 40 40" aria-hidden="true"><path d="M27.5 15.5 A9 9 0 1 0 29 22"/><path d="M28.5 9.5 V16 H22"/></svg></button>
 </header>
+
+{# Emergency banner (emergency-suite plan §5.2): every page, while the panel says not NORMAL.
+   Rendered with the page from alarms.banner(), kept current by amr.js from /api/state.
+   Reset is the cabinet's physical button only: there is no Reset here, by design (E4). #}
+{% set t = ((emg.since_s or 0) if emg else 0)|int %}
+<div id="emg-banner" class="emg-banner{{ ' failed' if emg and emg.failed }}" role="alert"{{ '' if emg else ' hidden' }}>
+  <div class="emg-head">
+    <b class="emg-title" id="emg-title">{{ emg.title if emg else 'EMERGENCY STOP' }}</b>
+    <span class="emg-since">since <span id="emg-since">{{ '%02d:%02d' % (t // 60, t % 60) }}</span><span id="emg-note" class="emg-note">{{ emg.note if emg }}</span></span>
+  </div>
+  <ol id="emg-steps" class="emg-steps">
+    {%- if emg %}{% for s in emg.steps %}<li class="{{ 'done' if s.done }}{{ ' now' if s.now }}">{{ s.text }}</li>{% endfor %}{% endif -%}
+  </ol>
+  <p id="emg-fail" class="emg-fail"{{ '' if emg and emg.failed else ' hidden' }}>{{ emg.failed_text if emg }}</p>
+</div>
 
 <div id="page-error" class="page-error" hidden></div>
 
@@ -81,7 +91,7 @@
     <pre id="log"></pre>
   </aside>
   <main class="{% block main_class %}{% endblock %}">
-    {% if sub %}{# Maps and Routes are SLAM things: they live inside Run trackless. #}
+    {% if sub %}{# Maps and Routes live inside Run. #}
     <nav class="subnav">
       <a href="/run" class="{{ 'on' if sub == 'run' }}">Run</a>
       {% if role == ENGINEER %}

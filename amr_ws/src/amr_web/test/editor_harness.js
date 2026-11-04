@@ -37,6 +37,9 @@ const ctx = { document: doc, window: {}, MapView, INK: new Proxy({}, { get: () =
   fillMapSelect: async sel => { sel.options = { length: 1 }; sel.selectedIndex = 0; sel.value = 'm1/1'; return []; },
   console, setTimeout, crypto: { randomUUID: () => 'x' } };
 vm.createContext(ctx);
+el('ed-snap', 'INPUT').checked = true;
+// editor.html loads measure.js (the Measure tool's geometry) before editor.js
+vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'amr_web', 'static', 'measure.js'), 'utf8'), ctx);
 vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'amr_web', 'static', 'editor.js'), 'utf8'), ctx);
 const flush = () => new Promise(r => setImmediate(r));
 
@@ -110,5 +113,40 @@ const flush = () => new Promise(r => setImmediate(r));
   for (let i = 0; i < 3; i++) await flush();
   out.arc_saved_step = savedSteps[savedSteps.length - 2];
   out.after_arc_to = savedSteps[savedSteps.length - 1].to;
+  // --- Measure (2026-11-03): view only, snaps to the draft and to saved routes ---
+  scripted['/api/maps/m1/1/routes/validate'] = () => ({ status: 200, data: { ok: true, issues: [], compiled: { total_length_m: 1, total_turn_deg: 0, closes: false, steps: [] } } });
+  await els['btn-validate'].onclick();
+  for (let i = 0; i < 3; i++) await flush();
+  const resultBefore = els['ed-result'].innerHTML;
+  out.geometry_calls = 0;
+  scripted['/api/maps/m1/1/routes/geometry'] = () => { out.geometry_calls += 1; return { status: 200, data: { routes: [
+    { route_id: 'other', revision: 2, map_revision: 1, start: [0, 5, 0], steps: [
+      { id: 's1', type: 'straight', start: [0, 5, 0], end: [3, 5, 0], centre: null, radius_m: 0, signed_angle_deg: 0, name: '' },
+      { id: 's2', type: 'wait', start: [3, 5, 0], end: [3, 5, 0], centre: null, radius_m: 0, signed_angle_deg: 0, name: 'UBC' }] },
+    { route_id: 'broken', revision: 1, error: 'bad file' }] } }; };
+  Object.assign(theView.meta, { resolution: 0.05 }); theView.scale = 3.5;   // 14 px of reach = 0.20 m
+  els['tool-measure'].onclick();
+  for (let i = 0; i < 3; i++) await flush();
+  out.measure_on = els['tool-measure'].classList.has('on');
+  out.pan_tools = [...theView.panTools];
+  out.measure_idle = els['ed-measure'].innerHTML;
+  theView.onClick([10.35, 1.05]);       // A: the s7 arc's centre (10.3, 1)
+  theView.onHover([3.05, 5.02]);        // B follows the cursor: the saved route's wait (3, 5)
+  out.measure_live = els['ed-measure'].innerHTML;
+  theView.onClick([3.05, 5.02]);
+  out.measure_rows = els['ed-measure'].innerHTML;
+  out.result_untouched = els['ed-result'].innerHTML === resultBefore;  // a VALID result survives measuring
+  els['ed-snap'].checked = false;       // snapping off: exactly where clicked; a third click starts over
+  theView.onClick([1.0, 0.3]); theView.onClick([1.5, 0.3]);
+  out.free_rows = els['ed-measure'].innerHTML;
+  els['ed-snap'].checked = true;
+  theView.onClick([5.0, 0.1]);          // nothing in reach but the s3 line: onto it
+  out.path_rows = els['ed-measure'].innerHTML;
+  els['tool-measure'].onclick();        // tool off clears
+  out.measure_cleared = els['ed-measure'].innerHTML;
+  els['btn-undo'].onclick();            // measuring added no undo entries: undo still removes s8
+  await els['btn-save'].onclick();
+  for (let i = 0; i < 3; i++) await flush();
+  out.after_undo_ids = savedSteps.map(s => s.id);
   console.log(JSON.stringify(out));
 })().catch(e => { console.log(JSON.stringify({ error: String(e && e.stack || e) })); });

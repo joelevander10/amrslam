@@ -2,30 +2,19 @@
 
     /cmd_wheel_vel  (WheelVelocities, mux, 50 Hz)  ->  RPDO1 to both drives
     TPDO1/TPDO2 from both drives                   ->  /wheel_states  (WheelStates)
+    6077h torque in TPDO1 (diagnostic, logging)     ->  /drives/torque (DriveTorque)
     MLS 2034h:3 (TPDO or SDO poll)                 ->  /imu/data_raw  (sensor_msgs/Imu)
-    MLS TPDO1 track (or SDO poll, read-only)       ->  /amr/line_track (LineTrack)
-    MLS TPDO1 marker code (profile mls.*)          ->  /amr/line_marker (MarkerEvent)
-    MLS event flag -> 2080h cause, 2070h temp      ->  /amr/events MLS_FIELD_WEAK / MLS_TEMP
     CiA-402 state, alarms, liveness                ->  /drives/status (DriveStatus, 10 Hz)
 
-    /amr/commissioning_pp (PpMove, held 50 Hz)     ->  profile-position blind move
-    /drives/pp_status (PpStatus, 10 Hz)            <-  its state and last result
 
 Services (std_srvs/Trigger): /drives/arm, /drives/disarm, /drives/ack_fault.
 
 Drive power (2026-10-08). The link and the power stage are separate levels:
 STANDBY (CANopen up, TPDOs flowing, power stage off) whenever the link is wanted,
-ARMED (Operation enabled) only while amr_base.arm_policy wants power - under MANUAL
-while the Manual Arm input (DI08) is high, under AUTO while the line or the
-trackless run asks for it (LineState / RunState.drive_power). /drives/arm and
+ARMED (Operation enabled) only while amr_base.arm_policy wants power - only while the
+pendant enable / arm input (DI09) is high, and under AUTO also while the run
+asks for it (RunState.drive_power). /drives/arm and
 /drives/disarm set the LINK (standby or fully disarmed), not the power.
-
-Profile position (amr_base/pp.py) is LOCKED by the profile (pp.enabled false)
-until the decision to run it on this motor is recorded (pp.vendor_ref). While a pp move is active the
-bus thread sends the pp controller's controlwords instead of /cmd_wheel_vel, and
-halts on its own authority check (lease with COMMISSIONING and the move's
-generation, a fresh MANUAL panel - required even without require_supervisor), on
-a stale hold, a following error or the time limit.
 
 One bus thread does everything on the wire, in this order every tick:
 service requests, arm policy, setpoint, PC heartbeat, IMU poll, feedback
@@ -64,20 +53,14 @@ from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import Imu
 from std_srvs.srv import Trigger
 
-from amr_base import arm_policy, canopen, gating, pp
-from amr_base.marker_events import MarkerDetector
+from amr_base import arm_policy, canopen, gating
 from amr_base.mls_imu import ImuSample, MlsImu
-from amr_base.mls_track import ERROR, WARN, MlsTrack, RateLimit, TrackSample
 from amr_interfaces.msg import (
     ControlLease,
     DriveStatus,
+    DriveTorque,
     Event,
-    LineState,
-    LineTrack,
-    MarkerEvent,
     PanelState,
-    PpMove,
-    PpStatus,
     RunState,
     WheelStates,
     WheelVelocities,
@@ -92,24 +75,7 @@ RELIABLE_1 = QoSProfile(
 LATCHED = QoSProfile(
     depth=1, reliability=QoSReliabilityPolicy.RELIABLE, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL
 )
-# /amr/line_marker (mls-marker-plan 5.4): every marker is a message, none may be dropped
-# behind a newer one, and a replayed old one must never look new.
-MARKER_QOS = QoSProfile(
-    depth=50, reliability=QoSReliabilityPolicy.RELIABLE, durability=QoSDurabilityPolicy.VOLATILE
-)
 BIG = 1e6
-
-
-def marker_expectation(polarity_lock: bool, teach_lock: bool) -> dict:
-    """Profile mls.* -> the MLS objects and values the sensor must hold for markers to be
-    trusted (read-only check in MlsTrack). Markers are always on (2026-10-23). The same
-    values the bench tool writes (read_mls.MARKER_SETTINGS)."""
-    want = {(0x2028, 1): 1, (0x2028, 2): 1, (0x2028, 3): 1}
-    if teach_lock:
-        want[(0x2029, 0)] = 1
-    if polarity_lock:
-        want[(0x202D, 5)] = 1
-    return want
 
 
 def _fault_code(reason: str) -> str:
@@ -122,9 +88,9 @@ def _fault_code(reason: str) -> str:
     return "DRIVE_FAULT"
 
 
-TRACK_UI_PERIOD_S = 0.2  # /amr/line_track_ui, the display copy
-FIELD_EVENT_MIN_S = 2.0  # MLS_FIELD_WEAK: at most one operator event this often (mls-diagnostics-plan M1)
 WHEELS_UI_PERIOD_S = 0.2  # /wheel_states_ui, the display copy (Home speed tile, 2026-10-08)
+BUS_RETRY_S = 2.0  # can0 missing (USB adapter out): retry this often, status published each try
+NO_BUS = "no bus"  # DriveStatus.link_state while can0 cannot be opened
 
 class DriveNode(Node):
     def __init__(self) -> None:
@@ -136,7 +102,7 @@ class DriveNode(Node):
         dp("driver_timeout_s", config.DRIVER_TIMEOUT_S)
         dp("auto_arm", True)  # bring the link up (STANDBY) at start; power follows arm_policy
         dp("power_panel_timeout_s", 1.0)  # arm_policy: a panel image older than this = no power
-        dp("power_ask_timeout_s", 2.5)  # arm_policy: a LineState/RunState request older than this
+        dp("power_ask_timeout_s", 2.5)  # arm_policy: a RunState request older than this
         dp("arm_retry_s", 2.0)
         dp("pc_node_id", 100)
         dp("pc_heartbeat_ms", 100)
@@ -148,11 +114,6 @@ class DriveNode(Node):
         dp("gyro_sign", 1.0)  # VERIFY on the vehicle: CCW spin must read positive
         dp("gyro_var", 1e-6)  # (rad/s)^2; measured sigma 0.029 deg/s and LSB 0.061 deg/s
         dp("imu_frame", "imu_frame")
-        # MLS track reading (line-follow plan §1.1), read-only: tpdo | sdo | auto | off.
-        # auto listens for TPDO1 and polls by SDO (monitor rate) while none arrive.
-        dp("mls_track_mode", "auto")
-        dp("mls_track_sdo_hz", 10.0)
-        dp("mls_track_variant", config.MLS_VARIANT)  # 2006h:01 as commissioned (profile mls.variant)
         dp("require_supervisor", False)  # production: True (unified plan §4.2)
         dp("lease_timeout_s", 0.3)
         # Diagnostic monitoring (unified plan §7.1): ONE bounded SDO read per slot on the
@@ -160,8 +121,6 @@ class DriveNode(Node):
         dp("monitor_enabled", bool(config.MONITOR_ENABLED))
         dp("monitor_period_still_s", 0.25)
         dp("monitor_period_moving_s", 1.0)
-        dp("pp_hold_timeout_s", 0.2)  # a pp move halts this long after its last hold
-        dp("pp_panel_timeout_s", 0.2)
         p = self.get_parameter
         self.period = 1.0 / p("rate_hz").value
         self.cmd_timeout = p("cmd_timeout_s").value
@@ -205,46 +164,21 @@ class DriveNode(Node):
         self._event_seq = 0
         self._operational = False
         self._edges: dict[str, tuple[str, int, str]] = {}  # slot -> (code, level, detail)
-        self._field_events = RateLimit(FIELD_EVENT_MIN_S)
         self._requests: queue.Queue = queue.Queue()
         self._stop = threading.Event()
         self._status_snapshot: dict = {"state": "starting", "reason": "", "mode": "off"}
-        self._pp = pp.Controller(
-            hold_timeout_s=float(p("pp_hold_timeout_s").value),
-            feedback_timeout_s=2.5 * self.feedback_ms / 1000.0,
-            stop_confirm_s=canopen.DriveLink.STOP_CONFIRM_S,
-        )
-        self._pp_panel_timeout = float(p("pp_panel_timeout_s").value)
-        self._pp_req: pp.Request | None = None
-        self._pp_bad = ""  # why the last PpMove was not accepted as a request
-        self._panel: tuple[float, bool, bool] | None = None  # (t_mono, valid, mode_auto)
-        self._track: MlsTrack | None = None  # built on the bus thread
-        # /amr/line_track is best-effort, so a dropped sample is invisible
-        # without this. Touched only on the bus thread, the sole publisher.
-        self._track_seq = 0
 
         self._pub_wheels = self.create_publisher(WheelStates, "/wheel_states", SENSOR_DATA)
-        # 5 Hz copy for displays, as /amr/line_track_ui. Nothing in control reads it.
+        # 5 Hz copy for displays (the Home speed tile). Nothing in control reads it.
         self._pub_wheels_ui = self.create_publisher(WheelStates, "/wheel_states_ui", SENSOR_DATA)
         self._wheels_ui_t = 0.0
         self._pub_status = self.create_publisher(DriveStatus, "/drives/status", RELIABLE_1)
+        # Motor torque beside each WheelStates, for run logs (towing-load groundwork). Nothing reads it.
+        self._pub_torque = self.create_publisher(DriveTorque, "/drives/torque", SENSOR_DATA)
         self._pub_diag = self.create_publisher(DiagnosticArray, "/diagnostics", 5)
         self._pub_event = self.create_publisher(Event, "/amr/events", 50)
         self._pub_imu = self.create_publisher(Imu, "/imu/data_raw", SENSOR_DATA)
-        self._pub_pp = self.create_publisher(PpStatus, "/drives/pp_status", RELIABLE_1)
-        self._pub_track = self.create_publisher(LineTrack, "/amr/line_track", SENSOR_DATA)
-        # A 5 Hz copy for displays (CPU, 2026-10-02): the web shows it at 2 Hz and was
-        # deserialising all 100 samples a second in Python. Control stays on the full topic.
-        self._pub_track_ui = self.create_publisher(LineTrack, "/amr/line_track_ui", SENSOR_DATA)
-        self._track_ui_t = 0.0
-        # Marker codes (mls-marker-plan): events made on the bus thread, a 1 Hz status heartbeat.
-        self._pub_marker = self.create_publisher(MarkerEvent, "/amr/line_marker", MARKER_QOS)
-        self._markers = MarkerDetector(config.MLS_MARKER_CODES)
-        self._marker_gen_seen = 0
-        self.create_timer(1.0, self._marker_heartbeat)
-        self.create_subscription(PpMove, "/amr/commissioning_pp", self._on_pp, RELIABLE_1)
         self.create_subscription(PanelState, "/amr/panel_state", self._on_panel, 10)
-        self.create_subscription(LineState, "/amr/line_state", lambda m: self._on_ask("line", m), LATCHED)
         self.create_subscription(RunState, "/amr/run_state", lambda m: self._on_ask("run", m), LATCHED)
         self.create_subscription(WheelVelocities, "/cmd_wheel_vel", self._on_cmd, RELIABLE_1)
         self.create_subscription(ControlLease, "/amr/control_lease", self._on_lease, RELIABLE_1)
@@ -294,9 +228,8 @@ class DriveNode(Node):
     def _on_panel(self, msg: PanelState) -> None:
         t = time.monotonic()
         with self._lock:
-            self._panel = (t, bool(msg.valid), bool(msg.mode_auto))
             self._power_panel = arm_policy.Panel(
-                t, bool(msg.valid), bool(msg.mode_auto), bool(msg.manual_arm)
+                t, bool(msg.valid), bool(msg.mode_auto), bool(msg.manual_arm), int(msg.emergency)
             )
 
     def _on_ask(self, source: str, msg) -> None:
@@ -306,31 +239,6 @@ class DriveNode(Node):
         age = self.get_clock().now().nanoseconds * 1e-9 - stamp if stamp > 0 else BIG
         with self._lock:
             self._asks[source] = arm_policy.Ask(source, time.monotonic() - age, bool(msg.drive_power))
-
-    def _on_pp(self, msg: PpMove) -> None:
-        """Every hold replaces the last. A malformed one counts as no hold at all."""
-        try:
-            spec = pp.MoveSpec(
-                pp.WheelMove(
-                    int(msg.left_delta_counts),
-                    int(msg.left_velocity_rpm),
-                    int(msg.left_accel_rpm_s),
-                    int(msg.left_decel_rpm_s),
-                ),
-                pp.WheelMove(
-                    int(msg.right_delta_counts),
-                    int(msg.right_velocity_rpm),
-                    int(msg.right_accel_rpm_s),
-                    int(msg.right_decel_rpm_s),
-                ),
-                float(msg.duration_s),
-            )
-            req = pp.Request(str(msg.run_id), int(msg.generation), bool(msg.hold), spec, time.monotonic())
-            bad = ""
-        except (TypeError, ValueError) as e:
-            req, bad = None, f"malformed PpMove: {e}"
-        with self._lock:
-            self._pp_req, self._pp_bad = req, bad
 
     def _request(self, what: str, res):
         done = threading.Event()
@@ -356,14 +264,12 @@ class DriveNode(Node):
             self._can_lock = ownerlock.acquire("can", "drive_node")  # before any bus I/O (plan §9.2)
         except ownerlock.OwnerBusy as e:
             self.get_logger().error(f"refusing can0: {e}")
-            self._status_snapshot = {"state": "no bus", "reason": str(e), "mode": "off"}
+            self._status_snapshot = {"state": NO_BUS, "reason": str(e), "mode": "off"}
             return
-        try:
-            raw, how = open_bus(config.CAN_BITRATE, config.CAN_CHANNEL, config.CAN_ADAPTER_SERIAL)
-        except Exception as e:  # noqa: BLE001
-            self.get_logger().error(f"CAN bus unavailable: {e} (another CAN owner running?)")
-            self._status_snapshot = {"state": "no bus", "reason": str(e), "mode": "off"}
+        opened = self._wait_for_bus()
+        if opened is None:
             return
+        raw, how = opened
         router = canopen.Router(raw)
         link = canopen.DriveLink(router, self.nodes, self.ramp, log=self._log)
         if self.pc_loss_ms:  # heartbeat kept alive inside blocking arm/disarm sequences too
@@ -384,24 +290,6 @@ class DriveNode(Node):
             imu.start()
             # polled between the SDOs of blocking arm/engage/release sequences too
             link.idle_hook = lambda: imu.poll(time.monotonic())
-        track = MlsTrack(
-            link,
-            config.SENSOR_NODE,
-            self._publish_track,
-            mode=str(self.get_parameter("mls_track_mode").value),
-            sdo_hz=float(self.get_parameter("mls_track_sdo_hz").value),
-            expected_variant=int(self.get_parameter("mls_track_variant").value),
-            markers=marker_expectation(config.MLS_POLARITY_LOCK, config.MLS_TEACH_LOCK),
-            on_event=self._on_mls_event,
-            event_clear=config.MLS_EVENT_CLEAR,
-            log=self._log,
-        )
-        try:
-            track.start()
-        except Exception as e:  # noqa: BLE001 - a sensor problem must not keep the drives down
-            self.get_logger().error(f"MLS track reading unavailable: {e!r}")
-            track.mode = "off"
-        self._track = track
         if not self.pc_loss_ms:
             self.get_logger().warn("pc_loss_ms=0: the drives have NO independent response to losing this PC")
 
@@ -420,6 +308,51 @@ class DriveNode(Node):
             except Exception:  # noqa: BLE001
                 pass
             self._log("bus closed, drives de-energised")
+
+    def _wait_for_bus(self):
+        """Open can0, retrying until it exists. Returns (bus, how), or None on shutdown.
+
+        The CANable is a USB adapter: unplugged at boot, can0 does not exist. Exiting
+        here took the whole base layer down and left the operator a page that said only
+        "base exited" (2026-10-27). Waiting keeps the node, and so the web, alive and
+        says why on /drives/status and as an event; plugging the adapter in recovers by
+        itself. No bus means no frames and no power: nothing here can move the vehicle.
+        """
+        while not self._stop.is_set() and rclpy.ok():
+            try:
+                opened = open_bus(config.CAN_BITRATE, config.CAN_CHANNEL, config.CAN_ADAPTER_SERIAL)
+            except Exception as e:  # noqa: BLE001 - a missing adapter is a condition, retried
+                reason = f"{config.CAN_CHANNEL} unavailable: {e}"
+                if self._status_snapshot.get("reason") != reason:
+                    self.get_logger().error(f"{reason}; retrying every {BUS_RETRY_S:.0f} s")
+                self._status_snapshot = {"state": NO_BUS, "reason": reason, "mode": "off"}
+                self._edge("bus", ("CAN_DOWN", 2, f"{reason} - check the CAN adapter (USB) and its cable"))
+                self._publish_no_bus(reason)
+                self._refuse_requests(reason)
+                self._stop.wait(BUS_RETRY_S)
+                continue
+            self._edge("bus", None)
+            return opened
+        return None
+
+    def _publish_no_bus(self, reason: str) -> None:
+        m = DriveStatus()
+        m.header.stamp = self.get_clock().now().to_msg()
+        m.left_state = m.right_state = NO_BUS
+        m.operational = False
+        m.link_state = NO_BUS
+        m.power_wanted, m.power_reason = False, reason
+        self._safe_publish(self._pub_status, m)
+
+    def _refuse_requests(self, reason: str) -> None:
+        """Answer arm/disarm/ack at once while there is no bus, instead of a 15 s timeout."""
+        while True:
+            try:
+                what, done, box = self._requests.get_nowait()
+            except queue.Empty:
+                return
+            box["ok"], box["msg"] = what == "disarm", f"{what}: no CAN bus ({reason})"
+            done.set()
 
     def _loop(self, link, router, imu) -> None:
         retry_at = 0.0
@@ -525,23 +458,15 @@ class DriveNode(Node):
                     self._edge("stop", ("DRIVE_STOP_UNCONFIRMED", 2, "; ".join(link.stop_unconfirmed)))
 
             # Setpoint at rate_hz; the command watchdog is independent of the mux.
-            if self._pp.active and link.state != canopen.ARMED:
-                # The drives were lost under a pp move (fault/disarm). Their stop frames
-                # already carry Halt (DriveLink.in_pp); record it and stand down.
-                self._pp.abandon(f"drives {link.state} {link.fault_reason or ''}".strip(), now)
-                self.event(2, "PP_ABANDONED", self._pp.last.reason)
             if now - t_tick >= self.period and link.state == canopen.ARMED:
                 t_tick = now
-                if not self._pp_step(link, time.monotonic()):
-                    link.send_target(*self._target(time.monotonic(), link.scale))
+                link.send_target(*self._target(time.monotonic(), link.scale))
 
             if self.pc_loss_ms and now - t_hb >= self.pc_hb_s and not link.heartbeat_withheld:
                 t_hb = now
                 link.send_pc_heartbeat(self.pc_node)
 
             link.idle()  # the IMU poll (link.idle_hook), guarded against re-entry
-            if self._track is not None:
-                self._track.poll(now)
 
             # Feedback: a WheelStates per complete new pair - a new TPDO1 AND a new
             # TPDO2 from both drives, not just one member changing (R07). Once
@@ -561,7 +486,6 @@ class DriveNode(Node):
             if now - t_status >= 0.1:
                 t_status = now
                 self._publish_status(link, imu)
-                self._publish_pp(link, now)
 
             if self._mon is not None and link.state != canopen.DISARMED:
                 moving = link.applied is not None and link.applied != (0, 0)
@@ -631,140 +555,6 @@ class DriveNode(Node):
             return 0, 0
         return canopen.target_rpm(cmd, now, self.cmd_timeout, scale, config.MOTOR_MAX_RPM)
 
-    # ---- profile position ----
-
-    def _pp_gate(self, link, now: float, generation: int) -> str | None:
-        with self._lock:
-            lease, panel = self._lease, self._panel
-        why = pp.authority_gate(
-            now,
-            enabled=bool(config.PP_ENABLED),
-            lease=None if lease is None else (lease.t_recv, lease.generation, lease.allowed),
-            move_generation=generation,
-            panel=panel,
-            lease_timeout_s=self._gate.lease_timeout_s,
-            panel_timeout_s=self._pp_panel_timeout,
-        )
-        if why:
-            return why
-        if link.faulted_nodes():
-            return f"drive fault on node(s) {link.faulted_nodes()}"
-        return None
-
-    def _pp_max_counts(self, link) -> int:
-        """blind_run.max_distance_m of wheel travel, in counts (0 = scale unknown: refuse)."""
-        cpr = link.scale.counts_per_wheel_rev if link.scale else None
-        if not cpr:
-            return 0
-        return int(cpr * config.BLIND_MAX_DISTANCE_M / (math.pi * config.WHEEL_DIA_M))
-
-    def _pp_step(self, link, now: float) -> bool:
-        """One pp tick. -> True when pp owns this tick's RPDO (no velocity setpoint)."""
-        with self._lock:
-            req = self._pp_req
-        if req is None and not self._pp.active:
-            return False
-        tl, tr = link.telemetry[config.LEFT], link.telemetry[config.RIGHT]
-        gen = req.generation if req is not None else -1
-        out = self._pp.tick(
-            pp.Tick(
-                now,
-                req,
-                self._pp_gate(link, now, gen),
-                pp.Feedback(tl.statusword, tl.rpm, tl.t_status),
-                pp.Feedback(tr.statusword, tr.rpm, tr.t_status),
-            )
-        )
-        if out.action == "enter":
-            why = pp.validate_move(
-                out.spec,
-                max_rpm=config.PP_MAX_SPEED_MPS * config.RPM_PER_MPS,
-                max_counts=self._pp_max_counts(link),
-                max_accel_rpm_s=float(config.BLIND_ACCEL_RPM_S),
-            )
-            targets = None
-            if why is None:
-                try:
-                    targets = link.pp_enter(
-                        out.spec, config.PP_EXPECT, config.PP_EXPECT_OBJECTS, 2.5 * self.feedback_ms / 1000.0
-                    )
-                except (RuntimeError, ValueError) as e:
-                    why = str(e)
-            self._pp.entered(why is None, why or "", targets, time.monotonic())
-            if why:
-                self.get_logger().warn(f"pp move {self._pp.run_id} refused: {why}")
-                self.event(1, "PP_REFUSED", why)
-                return False
-            # Audit R02: re-read authority NOW - setup blocked for several SDO transactions.
-            with self._lock:
-                latest = self._pp_req
-            t = time.monotonic()
-            veto = self._pp.veto_start(latest, self._pp_gate(link, t, self._pp.generation), t)
-            if veto is not None:
-                self.get_logger().warn(f"pp move {self._pp.run_id} not started: {veto.reason}")
-                self.event(1, "PP_VETOED", f"{self._pp.run_id}: {veto.reason}")
-                link.send_controlwords(*veto.controlwords)
-                return True
-            self._log(f"pp move {self._pp.run_id} started: targets {targets}")
-            self.event(0, "PP_START", f"{self._pp.run_id} targets {targets}")
-            link.send_controlwords(pp.CW_START, pp.CW_START)
-            return True
-        if out.action == "cw":
-            link.send_controlwords(*out.controlwords)
-            return True
-        if out.action == "exit":
-            try:
-                link.pp_exit()
-                self._pp.exited(True, "", time.monotonic())
-            except RuntimeError as e:
-                self._pp.exited(False, str(e), time.monotonic())
-                link.fault(f"pp: return to pv failed ({e})")
-            r = self._pp.last
-            level = 0 if r.outcome == pp.DONE else 1 if r.outcome == pp.HALTED else 2
-            self._log(f"pp move {r.run_id} {r.outcome}: {r.reason}")
-            self.event(level, f"PP_{r.outcome.upper()}", f"{r.run_id}: {r.reason}")
-            return True
-        if out.action == "fault":
-            link.fault(out.reason)
-            # A halt nobody can confirm at rest: let the drives' own 1016h take over.
-            if link.pc_guard_set:
-                link.heartbeat_withheld = True
-            self.get_logger().error(out.reason)
-            self.event(2, "PP_FAULTED", out.reason)
-            return True
-        return self._pp.active
-
-    def _pp_availability(self, link) -> tuple[bool, str]:
-        if not config.PP_ENABLED:
-            return False, "pp locked in the profile (pp.enabled false)"
-        unset = sorted(k for k, v in config.PP_EXPECT.items() if v is None)
-        if unset:
-            return False, f"pp.expect not configured: {', '.join(unset)}"
-        if link.state != canopen.ARMED:
-            return False, f"drives {link.state}"
-        if self._pp.active:
-            return False, f"a pp move is {self._pp.state}"
-        return True, ""
-
-    def _publish_pp(self, link, now: float) -> None:
-        m = PpStatus()
-        m.header.stamp = self.get_clock().now().to_msg()
-        m.available, why = self._pp_availability(link)
-        last = self._pp.last
-        m.reason = why or (last.reason if last else "") or self._pp_bad
-        m.state, m.run_id = self._pp.state, self._pp.run_id
-        m.outcome = last.outcome if last and last.run_id == self._pp.run_id and not self._pp.active else ""
-        if self._pp.targets:
-            m.left_target, m.right_target = (int(t) for t in self._pp.targets)
-        tl, tr = link.telemetry[config.LEFT], link.telemetry[config.RIGHT]
-        m.left_actual, m.right_actual = int(tl.position or 0), int(tr.position or 0)
-        m.left_target_reached = bool((tl.statusword or 0) & pp.SW_TARGET_REACHED)
-        m.right_target_reached = bool((tr.statusword or 0) & pp.SW_TARGET_REACHED)
-        m.left_following_error = bool((tl.statusword or 0) & pp.SW_FOLLOWING_ERROR)
-        m.right_following_error = bool((tr.statusword or 0) & pp.SW_FOLLOWING_ERROR)
-        m.started_age_s = (now - self._pp.t_start) if (self._pp.active and self._pp.t_start) else -1.0
-        self._safe_publish(self._pub_pp, m)
-
     def _safe_publish(self, pub, msg) -> None:
         # SIGINT invalidates the context while this thread is mid-iteration;
         # a publish then raises RCLError. Stop quietly rather than log an error.
@@ -791,6 +581,12 @@ class DriveNode(Node):
             m.counts_valid = bool(m.left_valid and m.right_valid)
         m.counts_per_wheel_rev = float(scale.counts_per_wheel_rev or 0.0) if scale else 0.0
         self._safe_publish(self._pub_wheels, m)
+        tq = DriveTorque()
+        tq.header.stamp = m.header.stamp
+        tfb = canopen.torque_feedback(link, now, max_age, ((config.LEFT, True), (config.RIGHT, False)))
+        tq.left_torque_pct, tq.left_torque_limited, tq.left_valid = tfb[config.LEFT]
+        tq.right_torque_pct, tq.right_torque_limited, tq.right_valid = tfb[config.RIGHT]
+        self._safe_publish(self._pub_torque, tq)
         if now - self._wheels_ui_t >= WHEELS_UI_PERIOD_S:
             self._wheels_ui_t = now
             self._safe_publish(self._pub_wheels_ui, m)
@@ -878,6 +674,8 @@ class DriveNode(Node):
                 KeyValue(key="statusword", value=f"0x{(t.statusword or 0):04X}"),
                 KeyValue(key="error_register", value=f"0x{(t.error_register or 0):02X}"),
                 KeyValue(key="rpm", value=str(t.rpm if t.rpm is not None else "")),
+                KeyValue(key="torque_actual [%]", value="" if t.torque is None else f"{t.torque * 0.1:.1f}"),
+                KeyValue(key="torque_limited", value=str(t.torque_limited)),
                 KeyValue(key="position_counts", value=str(t.position if t.position is not None else "")),
                 KeyValue(key="nmt", value=t.nmt or ""),
                 KeyValue(
@@ -923,14 +721,6 @@ class DriveNode(Node):
             KeyValue(key="stop_unconfirmed", value="; ".join(link.stop_unconfirmed)),
             KeyValue(key="heartbeat_withheld", value=str(link.heartbeat_withheld)),
             KeyValue(key="cleanup_failures", value="; ".join(link.cleanup_failures)),
-            KeyValue(key="pp_state", value=self._pp.state),
-            KeyValue(key="pp_in_mode", value=str(link.in_pp)),
-            KeyValue(
-                key="pp_last",
-                value=f"{self._pp.last.run_id} {self._pp.last.outcome}: {self._pp.last.reason}"
-                if self._pp.last
-                else "",
-            ),
         ]
         arr.status.append(bus)
         if imu is not None:
@@ -946,98 +736,7 @@ class DriveNode(Node):
                 KeyValue(key="gyro_sign", value=str(self.get_parameter("gyro_sign").value)),
             ]
             arr.status.append(im)
-        if self._track is None:
-            self._safe_publish(self._pub_diag, arr)
-            return
-        temp = self._track.temp
-        if temp is not None and temp["temp_c"] is not None:
-            detail = f"{temp['temp_c']} degC, the sensor's range {temp['lo_c']}..{temp['hi_c']} degC"
-            self._edge("temperature", ("MLS_TEMP", 1, detail) if temp["out"] else None)
-        level, message, kv = self._track.diagnostic(time.monotonic())
-        tr = DiagnosticStatus(name="mls/track", hardware_id=f"node {config.SENSOR_NODE}")
-        levels = {ERROR: DiagnosticStatus.ERROR, WARN: DiagnosticStatus.WARN}
-        tr.level = levels.get(level, DiagnosticStatus.OK)
-        tr.message = message
-        kv += [
-            ("marker_events", str(self._markers.seq)),
-            ("marker_generation", str(self._markers.generation)),
-            ("marker_rejects", str(self._markers.rejects)),
-            ("marker_aborts", str(self._markers.aborts)),
-        ]
-        tr.values = [KeyValue(key=k, value=v) for k, v in kv]
-        arr.status.append(tr)
         self._safe_publish(self._pub_diag, arr)
-
-    def _on_mls_event(self, ev: dict) -> None:
-        """Bus thread: a magnetic-field event under a track (mls_track, E5 gate passed).
-        History only (plan E1): one INFO event, never a standing alarm, never motion."""
-        held = self._field_events.allow(ev["t_mono"])
-        if held is None:
-            return
-        where = "LCP2 --" if ev["lcp2_mm"] is None else f"LCP2 {ev['lcp2_mm']:+d} mm"
-        more = f"; +{held} more since the last report" if held else ""
-        text = f"{ev['field_text']} ({where}, track level {ev['track_level']}/7{more})"
-        self.event(0, "MLS_FIELD_WEAK", text)
-
-    def _publish_track(self, s: TrackSample) -> None:
-        r = s.reading
-        m = LineTrack()
-        m.stamp = self.get_clock().now().to_msg()
-        # stamp is publish time; t_mono is when the frame was DECODED. In SDO
-        # mode those differ by up to a poll period, and a consumer looking only
-        # at stamp cannot tell. The follower gates on this, so it is computed
-        # here rather than inferred downstream.
-        m.sample_age_s = max(0.0, time.monotonic() - s.t_mono)
-        self._track_seq = (self._track_seq + 1) & 0xFFFFFFFF
-        m.seq = self._track_seq
-        m.lcp_mm = [max(-32768, min(32767, int(p))) for p in s.lcp_mm]
-        m.valid = [(i + 1) in r["valid"] for i in range(3)]
-        m.nlcp = int(r["nlcp"])
-        m.nlcp_label = r["nlcp_label"]
-        st = r["status"]
-        m.line_good, m.track_level, m.polarity = st["line_good"], int(st["track_level"]), st["polarity"]
-        m.event_flag = st["event_flag"]
-        m.marker, m.marker_intro = int(r["marker"]["code"]), r["marker"]["intro"]
-        m.source = s.source
-        self._safe_publish(self._pub_track, m)
-        self._marker_sample(s)
-        now = time.monotonic()
-        if now - self._track_ui_t >= TRACK_UI_PERIOD_S:
-            self._track_ui_t = now
-            self._safe_publish(self._pub_track_ui, m)
-
-    def _marker_sample(self, s: TrackSample) -> None:
-        """Bus thread, every decoded MLS sample: the detector, and one message per marker."""
-        track = getattr(self, "_track", None)
-        if track is None:
-            return  # still inside start(): its snapshot sample predates any check
-        if track.start_count != self._marker_gen_seen:
-            self._marker_gen_seen = track.start_count
-            self._markers.new_generation()
-        ev = self._markers.feed(s.t_mono, s.reading, s.source, track.markers_ok)
-        if ev is None:
-            return
-        m = self._marker_msg(track, heartbeat=False)
-        m.seq, m.code, m.raw, m.direction = ev.seq, ev.code, ev.raw, ev.direction
-        m.lcp2_mm = max(-32768, min(32767, ev.lcp2_mm))
-        m.nlcp, m.line_good = ev.nlcp, ev.line_good
-        self._safe_publish(self._pub_marker, m)
-
-    def _marker_msg(self, track, heartbeat: bool) -> MarkerEvent:
-        m = MarkerEvent()
-        m.stamp = self.get_clock().now().to_msg()
-        m.heartbeat = heartbeat
-        m.generation = self._markers.generation
-        m.seq = self._markers.seq
-        m.markers_ok = bool(track is not None and track.markers_ok)
-        m.status = track.marker_status_text() if track is not None else "no sensor"
-        m.rejects, m.aborts = self._markers.rejects, self._markers.aborts
-        return m
-
-    def _marker_heartbeat(self) -> None:
-        """1 Hz: the marker stream's status, so "no marker passed" differs from "no stream".
-        Executor thread; reads counters the bus thread writes (ints, a stale read is harmless)."""
-        self._safe_publish(self._pub_marker, self._marker_msg(getattr(self, "_track", None), heartbeat=True))
 
     def _publish_imu(self, s: ImuSample) -> None:
         m = Imu()

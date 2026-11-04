@@ -103,7 +103,8 @@ def test_framing():
 def test_reply_filtering():
     print("\nLSS: replies are filtered off a live bus")
 
-    # The MLS streams at 100 Hz and the drives heartbeat while this runs, so a
+    # The MLS's TPDO1 0x18A may still stream (removal plan D7) and the drives
+    # heartbeat while this runs, so a
     # reply reader that takes the next frame would read a sensor frame.
     bus = FakeBus()
     bus._queue = []

@@ -66,7 +66,7 @@ def test_the_catalogue_is_well_formed():
 
 
 def test_hold_causes_all_map_to_a_catalogue_code():
-    """RunState.hold_cause and LineState.hold_cause share this vocabulary."""
+    """The hold vocabulary is RunState.hold_cause only (the line layer is retired)."""
     for cause, code in alarms.HOLD_CODES.items():
         assert code in alarms.CATALOGUE, cause
 

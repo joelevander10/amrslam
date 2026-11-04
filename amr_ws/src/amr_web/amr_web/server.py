@@ -26,6 +26,7 @@ from typing import Any, Protocol
 
 import numpy as np
 from agv_core import alarms as catalogue
+from amr_navigation.compiler import compile_route
 from amr_navigation.route import VEHICLE_V_MAX, Route, RouteError
 from amr_navigation.validate import load_dynamic, load_keepout, validate
 from flask import Flask, Response, jsonify, redirect, render_template, request, session
@@ -42,7 +43,7 @@ from amr_web import jog, netcheck, reports, wifi
 from amr_web import role as rolemod
 from amr_web.png import encode_gray
 
-MODE_IDLE, MODE_NAVIGATION, MODE_LINE = 1, 3, 7
+MODE_IDLE, MODE_NAVIGATION = 1, 3
 SURVEY_OPS = {"start": 0, "returned": 1, "save": 2, "abort": 3}
 
 
@@ -67,16 +68,17 @@ class Adapter(Protocol):
     def abort(self) -> tuple[bool, str]: ...
     def prepare_resume(self) -> tuple[bool, str]: ...
     def ack_fault(self) -> tuple[bool, str]: ...
+    def continue_wait(self) -> tuple[bool, str]: ...
     def brakes_release(self) -> tuple[bool, str]: ...
     def brakes_engage(self) -> tuple[bool, str]: ...
+    def record_label(self, role: str, name: str, note: str) -> tuple[bool, str]: ...
     # supervisor (unified plan §4.2, §6.2)
     def supervisor_identity(self) -> tuple[str, int]: ...
     def request_mode(
         self, target: int, map_id: str, map_revision: int, request_id: str
     ) -> tuple[bool, str, str]: ...
     def survey_request(
-        self, operation: int, map_id: str, description: str, request_id: str,
-        cont: tuple[int, float, float, float] | None = None,
+        self, operation: int, map_id: str, description: str, request_id: str
     ) -> tuple[bool, str, str]: ...
     def get_operation(self, operation_id: str) -> dict | None: ...
     def recover(self) -> tuple[bool, str]: ...
@@ -86,13 +88,10 @@ class Adapter(Protocol):
     def io_image(self) -> dict | None: ...
     def events(self, since: int = 0) -> list[dict]: ...
     def emit(self, level: str, code: str, text: str, source: str = "amr_web") -> None: ...
-    # commissioning (unified plan §7.2): plan/clear move nothing; only physical Start executes
+    # blind run (commissioning, unified plan §7.2): plan/clear move nothing; only physical Start executes
     def commissioning(self) -> dict | None: ...
     def commissioning_plan(self, plan_json: str) -> tuple[bool, str, str]: ...
     def commissioning_clear(self) -> tuple[bool, str]: ...
-    # tape layer (2026-10-02): clear moves nothing; only physical Start runs (no arm, 2026-10-07)
-    def line_clear(self) -> tuple[bool, str]: ...
-    def line_mission(self, name: str, destination: str = "") -> tuple[bool, str]: ...
 
 
 def _result(ok: bool, message: str, status_fail: int = 409, **extra):
@@ -139,11 +138,6 @@ def _op_kind(op) -> str:
     return str(op.get("value", "")) if op.get("op") == "paint" else str(op.get("op", ""))
 
 
-def _continuable(m) -> bool:
-    """A survey can continue only a revision that carries slam_toolbox's saved pose graph."""
-    return all(f in (m.files or {}) for f in ("posegraph.posegraph", "posegraph.data"))
-
-
 def _edits_summary(e: dict | None) -> dict | None:
     """What the Maps page shows about how a revision was derived (edits.json)."""
     if not e:
@@ -171,7 +165,6 @@ def create_app(
     wifi_iface: str = "wlp1s0",
     state_dir: str = "~/.amr",
     internet_probe: netcheck.InternetProbe | None = None,
-    product: str | None = None,  # tape | slam | both; None = the profile's `tracked`
 ) -> Flask:
     app = Flask(__name__, template_folder="templates", static_folder="static", static_url_path="/static")
     app.config["MAPS_DIR"] = os.path.expanduser(maps_dir)
@@ -208,22 +201,16 @@ def create_app(
             }
         return _extras[key]
 
+    def labels_for(map_id: str, rev: int) -> tuple[dict, str] | None:
+        """The newest floor-label set recorded on that map revision (never cached: recording
+        a label adds a revision without a new map revision), or None."""
+        return store.latest_labels(app.config["MAPS_DIR"], map_id, rev)
+
     # ---- pages -------------------------------------------------------------------
 
     def _role() -> str:
-        # Default is the engineer view (2026-10-02, commissioning); operator only once chosen.
+        # Default is the engineer view (2026-10-02); operator only once chosen.
         return rolemod.OPERATOR if session.get("role") == rolemod.OPERATOR else rolemod.ENGINEER
-
-    def _product() -> str:
-        """The profile's `tracked`: tape | slam | both. A dev box without a profile is both."""
-        try:
-            from agv_core import config  # noqa: PLC0415
-
-            return {True: "tape", False: "slam"}.get(config.TRACKED, "both")
-        except Exception:  # noqa: BLE001
-            return "both"
-
-    product = product or _product()
 
     def _platform_qr() -> bool:
         """An AMR QR (profile platform qr_analog): the Manual page offers push mode (brakes)."""
@@ -236,27 +223,48 @@ def create_app(
 
     qr = _platform_qr()
 
-    tracked_ok = product in ("tape", "both")
-    trackless_ok = product in ("slam", "both")
+    def _gls_enabled() -> bool:
+        """A GLS621 camera is fitted (gls.enabled): the Run page shows the floor-label section."""
+        try:
+            from agv_core import config  # noqa: PLC0415
+
+            return bool(config.GLS_ENABLED)
+        except Exception:  # noqa: BLE001
+            return True
+
+    gls = _gls_enabled()
 
     @app.context_processor
     def _inject_role():
         """Every template knows the role, so base.html can show the operator's three
-        tabs or the engineer's ten without a second request - and the product, so a
-        tab for the other product is not offered at all."""
-        return {"role": _role(), "OPERATOR": rolemod.OPERATOR, "ENGINEER": rolemod.ENGINEER,
-                "product": product, "tracked_ok": tracked_ok, "trackless_ok": trackless_ok, "qr": qr}
+        tabs or the engineer's ten without a second request - and whether this is an AMR QR
+        (push mode on the Manual page)."""
+        return {"role": _role(), "OPERATOR": rolemod.OPERATOR, "ENGINEER": rolemod.ENGINEER, "qr": qr,
+                "gls": gls}
 
-    def _need(ok: bool):
-        """A page or API of the other product is 404, not hidden (dual-product plan Inc. 4)."""
-        if not ok:
-            from flask import abort  # noqa: PLC0415
+    def _banner() -> dict | None:
+        try:
+            st = adapter.state()
+            return alarmview.banner(st) if isinstance(st, dict) else None
+        except Exception:  # noqa: BLE001 - a page must render even when the state cannot be read
+            return None
 
-            abort(404)
+    @app.context_processor
+    def _inject_emergency():
+        """The emergency banner (base.html) is rendered with the page, so it is there on
+        the first paint; amr.js keeps it current from /api/state."""
+        return {"emg": _banner()}
+
+    def _emergency_refusal() -> str:
+        """Web motion requests refused while not NORMAL (emergency-suite plan §5.3). The
+        mux inhibit and the Flexi Soft's STO are the real guards; this is the reason."""
+        st = adapter.state()
+        return alarmview.emergency_refusal(st) if isinstance(st, dict) else ""
 
     @app.get("/")
     def index():
-        return redirect("/home" if _role() == rolemod.OPERATOR else "/status")
+        # Home for both roles: the Status page folded into Home and Monitor (2026-10-30).
+        return redirect("/home")
 
     @app.get("/home")
     def page_home():
@@ -284,17 +292,19 @@ def create_app(
     def api_role_get():
         return jsonify({"role": _role()})
 
-    @app.get("/status")
-    def page_status():
-        return render_template("status.html", page="status")
-
     @app.get("/monitor")
     def page_monitor():
         return render_template("monitor.html", page="monitor")
 
     @app.get("/io")
     def page_io():
-        return render_template("io.html", page="io")
+        try:
+            from agv_core import config  # noqa: PLC0415
+
+            estop_ch = getattr(config, "PANEL_DI_ESTOP_OK", None)
+        except Exception:  # noqa: BLE001 - without a profile the page matches by name
+            estop_ch = None
+        return render_template("io.html", page="io", estop_ch=estop_ch)
 
     @app.get("/alarms")
     def page_alarms():
@@ -304,136 +314,40 @@ def create_app(
     def page_params():
         return render_template("params.html", page="params")
 
-    @app.get("/commissioning")
-    def page_commissioning():
-        return render_template("commissioning.html", page="commissioning")
+    @app.get("/blindrun")
+    def page_blindrun():
+        return render_template("blindrun.html", page="blindrun")
 
     @app.get("/manual")
     def page_manual():
         return render_template("manual.html", page="manual")
 
-    # Maps and Routes live under Run trackless (2026-10-02): `page` lights that tab and
+    # Maps and Routes live under Run (2026-10-02): `page` lights that tab and
     # `sub` the strip inside it.
     @app.get("/maps")
     def page_maps():
-        _need(trackless_ok)
         return render_template("maps.html", page="run", sub="maps")
 
     @app.get("/editor")
     def page_editor():
-        _need(trackless_ok)
         return render_template("editor.html", page="run", sub="editor", trackless_v=VEHICLE_V_MAX)
 
     @app.get("/review")
     def page_review():
-        _need(trackless_ok)
         return render_template("review.html", page="run", sub="maps")
-
-    @app.get("/survey-continue")
-    def page_survey_continue():
-        _need(trackless_ok)
-        return render_template("survey_continue.html", page="run", sub="maps")
 
     @app.get("/run")
     @app.get("/run-trackless")
     def page_run():
-        _need(trackless_ok)
         return render_template("run.html", page="run", sub="run")
-
-    @app.get("/run-tracked")
-    def page_run_tracked():
-        _need(tracked_ok)
-        return render_template("run_tracked.html", page="run_tracked")
-
-    @app.get("/teach")
-    def page_teach():
-        _need(tracked_ok)
-        return render_template("teach.html", page="teach")
-
-    # ---- tape layer: mission choice and arm/clear. Nothing here moves the vehicle:
-    # a run starts only on the physical Start under AUTO (line_follow_node). ----
-
-    @app.get("/api/line/missions")
-    def api_line_missions():
-        _need(tracked_ok)
-        from agv_core import mission as missions  # noqa: PLC0415
-
-        # Each mission's destination stops, so the page can offer them as a list
-        # rather than free text. A file that does not validate is listed with its
-        # error: selecting it is refused by the layer anyway, with the same words.
-        # notes: each mission's branch and speed rule, "empty" included (the "none" entry).
-        names, dests, errors, notes = [], {}, {}, {}
-        for n in missions.list_missions():
-            try:
-                m = missions.load(n)
-            except missions.MissionError as e:
-                m = None
-                errors[n] = str(e)
-            if m is not None:
-                notes[n] = missions.summary(m)
-            if n == "empty":
-                continue
-            names.append(n)
-            if m is not None:
-                dests[n] = missions.destinations(m)
-        return jsonify({"missions": names, "destinations": dests, "errors": errors, "notes": notes})
-
-    @app.post("/api/line/mission")
-    def api_line_mission():
-        _need(tracked_ok)
-        d, err = _body()
-        if err:
-            return err
-        return _call(adapter.line_mission, str(d.get("name", "") or ""), str(d.get("destination", "") or ""))
-
-    @app.post("/api/line/clear")
-    def api_line_clear():
-        _need(tracked_ok)
-        return _call(adapter.line_clear)
-
-    # ---- tape-graph localization (tracked plan 3, P1): teach and shadow. Nothing here
-    # moves the vehicle: a teach pass is driven by AUTO + the physical Start or under MANUAL.
-
-    @app.get("/api/line/site")
-    def api_line_site():
-        """The site mission's circuits and stations, for the Teach page's lists."""
-        _need(tracked_ok)
-        from agv_core import mission as missions  # noqa: PLC0415
-
-        try:
-            from agv_core import config  # noqa: PLC0415
-
-            name = config.TAPE_LOC_SITE_MISSION       # the one the line layer teaches and shadows
-        except Exception:  # noqa: BLE001 - a dev box without a profile
-            names = missions.list_site_missions()
-            name = names[0] if names else ""
-        try:
-            m = missions.load_site(name)
-        except missions.MissionError as e:
-            return jsonify({"mission": name, "circuits": [], "stations": [], "error": str(e)})
-        return jsonify({"mission": m["MISSION_NAME"], "circuits": sorted(m["CIRCUITS"]),
-                        "stations": list(m["STATIONS"]), "error": ""})
-
-    @app.post("/api/line/teach")
-    def api_line_teach():
-        _need(tracked_ok)
-        if _role() != rolemod.ENGINEER:
-            return _result(False, "teaching needs the engineer view (PIN)", 403)
-        d, err = _body()
-        if err:
-            return err
-        return _call(adapter.line_teach, str(d.get("action", "") or ""), str(d.get("arg", "") or ""))
-
-    @app.post("/api/line/at_home")
-    def api_line_at_home():
-        _need(tracked_ok)
-        return _call(adapter.line_at_home)
 
     # ---- state -------------------------------------------------------------------
 
     @app.get("/api/state")
     def api_state():
-        return jsonify(adapter.state())
+        st = adapter.state()
+        # computed here, once, so every page's banner says the same (alarms.banner)
+        return jsonify(dict(st, banner=alarmview.banner(st)))
 
     # ---- DEMO page: visitors, not operators (manuals/plans/2026-09-23-demo-page.md) ----
     # DEPRECATED 2026-10-02 (operator): no nav link any more; the route stays until removed.
@@ -509,7 +423,6 @@ def create_app(
                             "routes": store.list_routes(maps_dir, map_id),
                             "dynamic_cells": ex["dynamic_cells"],
                             "edits": _edits_summary(ex["edits"]),
-                            "continuable": _continuable(m),
                         }
                     )
                 out.append({"map_id": map_id, "revisions": items})
@@ -535,8 +448,6 @@ def create_app(
                 "routes": store.list_routes(app.config["MAPS_DIR"], map_id),
                 "dynamic_cells": ex["dynamic_cells"],
                 "edits": _edits_summary(ex["edits"]),
-                "review": m.review,
-                "continuable": _continuable(m),
             }
         )
 
@@ -602,7 +513,8 @@ def create_app(
         route = Route.from_dict(payload)
         route.map.id, route.map.revision, route.map.sha256 = map_id, rev, m.sha256
         ex = extras(map_id, rev)
-        return route, validate(route, m, g, fp, ex["keepout"], ex["dynamic"])
+        lab = labels_for(map_id, rev)
+        return route, validate(route, m, g, fp, ex["keepout"], ex["dynamic"], lab[0] if lab else None)
 
     def _compiled_dict(compiled) -> dict:
         return {
@@ -622,9 +534,27 @@ def create_app(
                     "centre": list(s.centre) if s.centre is not None else None,
                     "signed_angle_deg": float(np.degrees(s.signed_angle_rad)),
                     "duration_est_s": s.duration_est_s,
+                    **_home_dict(s),
                 }
                 for s in compiled.steps
             ],
+        }
+
+    def _home_dict(s) -> dict:
+        """A home leg's own shape: its samples and how far off HOME's line it started."""
+        if s.leg is None:
+            return {}
+        leg = s.leg
+        return {
+            "samples": [list(p) for p in s.samples],
+            "home": {
+                "straight": leg.straight,
+                "run_up_m": leg.run_up_m,
+                "offset_m": leg.offset_m,
+                "heading_err_deg": float(np.degrees(leg.heading_err_rad)),
+                "min_radius_m": None if leg.straight else leg.min_radius_m,
+                "text": leg.describe(),
+            },
         }
 
     @app.post("/api/maps/<map_id>/<int:rev>/routes/validate")
@@ -670,6 +600,52 @@ def create_app(
             {"ok": True, "route_id": route.route_id, "revision": revision, "sha256": sha, "path": path}
         )
 
+    # The route editor's Measure tool snaps to saved routes (2026-11-03). All revisions of a map
+    # share one frame (edits repaint cells, never move the origin), so every route of the map id
+    # is a valid target. Compiled only: no clearance sweep and no ROS route preview, unlike
+    # api_route_get, so fetching every route is cheap and moves nothing on the vehicle's displays.
+    ROUTE_GEOMETRY_MAX = 50
+
+    @app.get("/api/maps/<map_id>/<int:rev>/routes/geometry")
+    def api_route_geometry(map_id: str, rev: int):
+        try:
+            bundle(map_id, rev)
+        except (mb.BundleError, gridio.GridError) as e:
+            return _result(False, str(e), 404)
+        listed = store.list_routes(app.config["MAPS_DIR"], map_id)
+        out = []
+        for rid, revs in list(listed.items())[:ROUTE_GEOMETRY_MAX]:
+            rrev = revs[-1]
+            try:
+                route, _sha = store.load_route(app.config["MAPS_DIR"], map_id, rid, rrev)
+                compiled = compile_route(route)
+            except (store.StoreError, ValueError) as e:  # RouteError is a ValueError
+                out.append({"route_id": rid, "revision": rrev, "error": str(e)})
+                continue
+            out.append(
+                {
+                    "route_id": rid,
+                    "revision": rrev,
+                    "map_revision": route.map.revision,
+                    "start": [route.start.x_m, route.start.y_m, route.start.yaw_rad],
+                    "steps": [
+                        {
+                            "id": s.id,
+                            "type": s.type,
+                            "start": list(s.start),
+                            "end": list(s.end),
+                            "centre": list(s.centre) if s.centre is not None else None,
+                            "radius_m": s.radius_m,
+                            "signed_angle_deg": float(np.degrees(s.signed_angle_rad)),
+                            "name": s.name,
+                            **({"samples": [list(p[:2]) for p in s.samples]} if s.leg is not None else {}),
+                        }
+                        for s in compiled.steps
+                    ],
+                }
+            )
+        return jsonify({"routes": out, "truncated": len(listed) > ROUTE_GEOMETRY_MAX})
+
     @app.get("/api/maps/<map_id>/<int:rev>/routes/<route_id>/<int:rrev>")
     def api_route_get(map_id: str, rev: int, route_id: str, rrev: int):
         try:
@@ -678,7 +654,8 @@ def create_app(
         except (store.StoreError, mb.BundleError) as e:
             return _result(False, str(e), 404)
         ex = extras(map_id, rev)
-        v = validate(route, m, g, fp, ex["keepout"], ex["dynamic"])
+        lab = labels_for(map_id, rev)
+        v = validate(route, m, g, fp, ex["keepout"], ex["dynamic"], lab[0] if lab else None)
         body = {
             "route": route.to_dict(),
             "sha256": sha,
@@ -714,25 +691,62 @@ def create_app(
         try:
             m, g = bundle(map_id, rev)
             route, sha = store.load_route(app.config["MAPS_DIR"], map_id, route_id, rrev)
+            # a mission binds the newest label set of its map revision (gls-wait-coding-plan §C.1)
+            lab = labels_for(map_id, rev)
         except RouteError as e:
             return _result(False, f"stored route unreadable: {e}", 422)
         except (store.StoreError, mb.BundleError, gridio.GridError) as e:
             return _result(False, str(e), 404)
+        if lab is not None and lab[0]["map"].get("sha256") != m.sha256:
+            lab = None  # recorded on another bundle of this revision: not this map's labels
         ex = extras(map_id, rev)
-        v = validate(route, m, g, fp, ex["keepout"], ex["dynamic"])
+        v = validate(route, m, g, fp, ex["keepout"], ex["dynamic"], lab[0] if lab else None)
         if not v.ok:
             return jsonify({"ok": False, "issues": [i.to_dict() for i in v.issues]}), 422
-        # route ids/revisions are per map; missions share one directory: the default id names the map
-        mission_id = d.get("mission_id") or f"{map_id}_rev{rev}_{route_id}_rev{rrev}"
+        # route ids/revisions are per map; missions share one directory: the default id names the
+        # map, and the label set when one is bound (a newer set is a new mission, not a conflict)
+        bound = {"revision": lab[0]["revision"], "sha256": lab[1]} if lab else None
+        mission_id = d.get("mission_id") or (
+            f"{map_id}_rev{rev}_{route_id}_rev{rrev}" + (f"_labels{bound['revision']}" if bound else "")
+        )
         try:
             path = store.save_mission(
-                app.config["MAPS_DIR"], mission_id, map_id, rev, m.sha256, route_id, rrev, sha
+                app.config["MAPS_DIR"], mission_id, map_id, rev, m.sha256, route_id, rrev, sha, bound
             )
         except store.StoreConflict as e:
             return _result(False, str(e), 409)
         except store.StoreError as e:
             return _result(False, str(e), 400)
-        return jsonify({"ok": True, "mission_id": mission_id, "path": path})
+        return jsonify({"ok": True, "mission_id": mission_id, "path": path, "labels": bound})
+
+    # ---- floor labels (gls-wait-coding-plan §C) ------------------------------------
+
+    @app.get("/api/maps/<map_id>/<int:rev>/labels")
+    def api_labels(map_id: str, rev: int):
+        try:
+            bundle(map_id, rev)
+            lab = labels_for(map_id, rev)
+        except (store.StoreError, mb.BundleError, gridio.GridError) as e:
+            return _result(False, str(e), 404)
+        if lab is None:
+            return jsonify({"ok": True, "revision": None, "sha256": None, "labels": []})
+        doc, sha = lab
+        return jsonify({"ok": True, "revision": doc["revision"], "sha256": sha, "labels": doc["labels"]})
+
+    @app.post("/api/labels/record")
+    def api_label_record():
+        """"Record label here": the executor checks the vehicle and writes the file."""
+        d, err = _body()
+        if err:
+            return err
+        role, name, note = d.get("role"), d.get("name", ""), d.get("note", "")
+        if role not in ("home", "dest") or not isinstance(name, str) or not isinstance(note, str):
+            return _result(False, "role ('home' or 'dest'), name and note (text) required", 400)
+        if role == "dest" and not name.strip():
+            return _result(False, "a destination label needs a name", 400)
+        if not hasattr(adapter, "record_label"):
+            return _result(False, "label recording is not available here", 409)
+        return _call(adapter.record_label, role, name.strip()[:40], note[:200])
 
     # ---- coordinator calls (services on the robot; the browser never commands wheels) ----
 
@@ -800,7 +814,7 @@ def create_app(
             }
         )
 
-    # ---- commissioning (unified plan §7.2) ----
+    # ---- blind run (commissioning, unified plan §7.2; restored 2026-11-02, PV only) ----
 
     @app.get("/api/commissioning")
     def api_commissioning():
@@ -832,31 +846,19 @@ def create_app(
 
     @app.get("/api/commissioning/capabilities")
     def api_commissioning_capabilities():
-        """What the blind-run form may offer: the profile's caps, and whether the drive
-        owner reports profile position available right now (locked until the decision
-        to run pp on this motor is recorded in pp.vendor_ref). Advisory: the commissioning node and
-        the drive owner enforce the same rules on their own."""
+        """What the blind-run form may offer: the profile's caps. Advisory: the
+        commissioning node enforces the same rules on its own."""
 
         from agv_core import config  # noqa: PLC0415
 
-        st = adapter.pp_status() if hasattr(adapter, "pp_status") else None
-        fresh = st is not None and float(st.get("age_s", 1e9)) <= 1.0
-        if not fresh:
-            pp_ok, pp_reason = False, "no fresh pp status from the drive owner"
-        else:
-            pp_ok, pp_reason = bool(st.get("available")), str(st.get("reason", ""))
         return jsonify(
             {
                 "max_speed_mps": config.BLIND_MAX_SPEED_MPS,
-                "pp_max_speed_mps": config.PP_MAX_SPEED_MPS,
                 "max_distance_m": config.BLIND_MAX_DISTANCE_M,
                 "min_arc_radius_m": config.TRACK_M / 2.0,
                 "track_m": config.TRACK_M,
                 "decel_mps2": config.BLIND_ACCEL_RPM_S * config.MPS_PER_RPM,
                 "field_check_above_mps": 0.4,
-                "pp_available": pp_ok,
-                "pp_reason": "" if pp_ok else pp_reason,
-                "pp_status": st,
             }
         )
 
@@ -916,11 +918,9 @@ def create_app(
         d, err = _body()
         if err:
             return err
-        target = {"idle": MODE_IDLE, "navigation": MODE_NAVIGATION, "line": MODE_LINE}.get(
-            str(d.get("target", "")).lower()
-        )
+        target = {"idle": MODE_IDLE, "navigation": MODE_NAVIGATION}.get(str(d.get("target", "")).lower())
         if target is None:
-            return _result(False, "target must be idle, navigation or line", 400)
+            return _result(False, "target must be idle or navigation", 400)
         try:
             rev = int(d.get("map_revision", 0))
         except (TypeError, ValueError):
@@ -939,20 +939,6 @@ def create_app(
             return err
         rid = str(d.get("request_id") or uuid.uuid4().hex)
         desc = str(d.get("description", d.get("note", "")))
-        if op == "start" and d.get("continue_revision") not in (None, 0):
-            # continue a saved survey: revision + where the vehicle stands on it. The
-            # supervisor re-checks the bundle; the session matches the scan before loading.
-            try:
-                rev = _positive_int(d.get("continue_revision"), "continue_revision")
-                h = d.get("hint")
-                if not isinstance(h, dict):
-                    raise ValueError("hint {x_m, y_m, yaw_rad} is required to continue a survey")
-                hint = (_finite(h.get("x_m"), "hint.x_m"), _finite(h.get("y_m"), "hint.y_m"),
-                        _finite(h.get("yaw_rad"), "hint.yaw_rad"))
-            except ValueError as e:
-                return _result(False, str(e), 422)
-            return _accepted(*adapter.survey_request(
-                SURVEY_OPS[op], str(d.get("map_id", "")), desc, rid, cont=(rev, *hint)))
         return _accepted(*adapter.survey_request(SURVEY_OPS[op], str(d.get("map_id", "")), desc, rid))
 
     # preset survey moves (press once): validated again by survey_move_node, which also checks
@@ -969,6 +955,9 @@ def create_app(
             return _result(False, str(e), 422)
         if kind not in ("straight", "rotate"):
             return _result(False, "kind must be straight or rotate, value a finite number", 422)
+        why = _emergency_refusal()
+        if why:
+            return _result(False, why, 409)
         return _result(*adapter.survey_move(kind, value))
 
     @app.post("/api/survey_move/stop")
@@ -1003,6 +992,9 @@ def create_app(
         owner = str(d.get("owner", ""))[:64]
         if not owner:
             return _result(False, "owner token required", 400)
+        why = _emergency_refusal()
+        if why:
+            return _result(False, why, 409)
         inst, gen = adapter.supervisor_identity()
         if hasattr(adapter, "manual_allowed"):
             ok, why = adapter.manual_allowed()
@@ -1030,6 +1022,15 @@ def create_app(
         if err:
             return err
         inst, gen = adapter.supervisor_identity()
+        why = _emergency_refusal()
+        if why:
+            # the held jog ends here: the session dies and a revocation goes out (as release)
+            with jog_lock:
+                sessions.release(str(d.get("session", "")))
+                adapter.manual_publish(
+                    jog.Command(inst, gen, str(d.get("session", "")), 0, 0.0, 0.0, 0.0, "", 0.0)
+                )
+            return _result(False, why, 409)
         with jog_lock:
             try:
                 cmd = sessions.refresh(
@@ -1107,6 +1108,9 @@ def create_app(
         d, err = _body()
         if err:
             return err
+        why = _emergency_refusal()
+        if why:
+            return _result(False, why, 409)
         return _call(adapter.run_mission, str(d.get("mission_id", "")))
 
     @app.post("/api/mission/pause")
@@ -1119,11 +1123,25 @@ def create_app(
 
     @app.post("/api/mission/resume")
     def api_mission_resume():
+        why = _emergency_refusal()
+        if why:
+            return _result(False, why, 409)
         return _call(adapter.prepare_resume)
 
     @app.post("/api/mission/ack")
     def api_mission_ack():
         return _call(adapter.ack_fault)
+
+    @app.post("/api/mission/continue")
+    def api_mission_continue():
+        """The web Continue (AMR QR, executor web_continue): releases a route wait step. The
+        executor re-checks everything and refuses anything that is not WAITING."""
+        if not qr:
+            return _result(False, "Continue is on the panel on this vehicle (PB Continue or Start)", 403)
+        why = _emergency_refusal()
+        if why:
+            return _result(False, why, 409)
+        return _call(adapter.continue_wait)
 
     # push mode (AMR QR): release / re-apply the brakes (drives disarmed / armed). No velocity.
     @app.post("/api/brakes/release")
@@ -1150,7 +1168,7 @@ def create_app(
         if moving:
             return _result(False, "the wheels are turning; stop the vehicle first", 409)
         run_state = (st.get("run") or {}).get("state_name")
-        if run_state in ("READY", "EXECUTING", "PAUSED", "BLOCKED"):
+        if run_state in ("READY", "EXECUTING", "PAUSED", "BLOCKED", "WAITING"):
             return _result(False, f"a run is {run_state}; abort it first", 409)
         cmd = ["sudo", "-n", "systemctl", "restart", "amr.service"]
         try:

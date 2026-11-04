@@ -25,6 +25,7 @@ function jogpad(root, opts) {
       <div class="pad jog-grid${o.compact ? ' compact' : ''}">
         ${CELLS.map(([dir, glyph, name, key]) => `<button class="dir${dir === 'stop' ? ' stopbtn' : ''}" data-dir="${dir}" title="${name}${key ? ' — ' + key : ''}">
           <span class="glyph">${glyph}</span><span class="name">${name}</span><span class="key">${key || '&nbsp;'}</span></button>`).join('')}
+        <div class="jog-emg" hidden><b>E-stop active</b></div>
       </div>
       <div class="jog-foot">
         <div class="tel"><span>Speed</span><b>${V.toFixed(2)}</b><i>m/s · corners ${Math.round(TURN_RATIO * 100)} % inner wheel</i></div>
@@ -54,7 +55,11 @@ function jogpad(root, opts) {
   // The physical input is recorded BEFORE the press request goes out, so a release that
   // happens while it is in flight has something to cancel. A press whose input was
   // released meanwhile gives its session straight back and never refreshes it.
+  // While the panel says not NORMAL (alarms.banner via /api/state) the pad is greyed and no
+  // press is sent; the server refuses one anyway (409) and the mux inhibit is the real guard.
+  let emg = '';
   async function press(dir) {
+    if (emg) { status.textContent = emg; return; }
     if (held || pending || releasing) return;
     const token = { dir };
     pending = token;
@@ -128,5 +133,17 @@ function jogpad(root, opts) {
   window.addEventListener('blur', () => release('blur'));
   window.addEventListener('pagehide', () => release('pagehide'));
   document.addEventListener('visibilitychange', () => { if (document.hidden) release('hidden'); });
+  const pad = root.querySelector('.jog-grid'), emgLabel = root.querySelector('.jog-emg');
+  function emergency(b) {
+    const why = b ? (b.reason || 'E-stop active') : '';
+    if (why === emg) return;
+    emg = why;
+    if (pad) pad.classList.toggle('emg', !!emg);
+    if (emgLabel) emgLabel.hidden = !emg;
+    cells.forEach(btn => { if (btn.dataset.dir !== 'stop') { if (btn.dataset.t === undefined) btn.dataset.t = btn.title || ''; btn.disabled = !!emg; btn.title = emg || btn.dataset.t; } });
+    if (emg) { status.textContent = emg; release('E-stop').then(() => { if (emg) status.textContent = emg; }); }
+    else status.textContent = 'not held';
+  }
+  if (typeof onState === 'function') onState(st => emergency(st.banner));
   return { release };
 }

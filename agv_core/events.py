@@ -1,7 +1,7 @@
 """Operator event log: a bounded ring buffer of things a human needs to know.
 
 The web UI used to keep this in the browser, which meant a page reload threw it
-away - and the AGV stops itself on line loss, sensor timeout and watchdog, so the
+away - and the AGV stops itself on a field, a drive fault and the watchdog, so the
 reason for a stop could disappear before anyone read it. Keeping it server-side
 makes it survive a reload, a page switch, and a second browser.
 
@@ -9,7 +9,7 @@ makes it survive a reload, a page switch, and a second browser.
 Nothing on a per-tick path may emit: at 50 Hz a single chatty call site flushes
 the entire buffer of everything meaningful within four seconds. That means no
 emits from the PID tick, the loop-health window, or telemetry polling - and
-anything edge-triggered (a driver fault, a lost tape) must fire once per EDGE,
+anything edge-triggered (a driver fault, a lost scanner) must fire once per EDGE,
 not once per poll.
 
 Deliberately dependency-free so both the bus thread and Flask can import it

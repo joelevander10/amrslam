@@ -149,18 +149,44 @@ def test_manual_during_a_safety_hold_aborts_the_run():
     assert n.fsm.state == fsm.IDLE and "manual" in n.fsm.reason
 
 
-def test_controller_abort_is_retried_three_times_then_faults():
+def _abort_and_resume(n):
+    """One controller abort, then the 2 s all-clear auto-resume. Returns the state after."""
+    n.phase = ren.PHASE_GOAL
+    n.goals.current, n.goals.result = object(), ga.ABORTED
+    tick(n, torque=True, field=True)
+    if n.fsm.state != fsm.BLOCKED:
+        return n.fsm.state
+    assert n.hold_cause == "controller" and "path blocked" in n.fsm.reason
+    run_for(n, 2.2, torque=True, field=True)
+    return n.fsm.state
+
+
+def test_a_blocked_path_is_retried_until_clear_and_never_faults():
+    """Owner 2026-11-03: three retries in 8 s faulted a run while someone crossed the aisle.
+    A blocked path now holds for as long as it takes and continues once clear."""
     n = node()
     tick(n, torque=True, field=True)
-    for attempt in range(4):
-        n.phase = ren.PHASE_GOAL
-        n.goals.current, n.goals.result = object(), ga.ABORTED
-        tick(n, torque=True, field=True)
-        if attempt < 3:
-            assert n.fsm.state == fsm.BLOCKED and n.hold_cause == "controller", attempt
-            run_for(n, 2.2, torque=True, field=True)
-            assert n.fsm.state == fsm.EXECUTING, attempt
-    assert n.fsm.state == fsm.FAULT and "aborted" in n.fsm.reason
+    for attempt in range(40):  # ~90 s of a blocked path
+        assert _abort_and_resume(n) == fsm.EXECUTING, attempt
+    n.phase = ren.PHASE_GOAL
+    n.goals.current, n.goals.result = object(), ga.ABORTED
+    tick(n, torque=True, field=True)
+    assert n.fsm.state == fsm.BLOCKED and "blocked 9" in n.fsm.reason and "once clear" in n.fsm.reason
+
+
+def test_moving_on_restarts_the_blocked_time():
+    n = node()
+    tick(n, torque=True, field=True)
+    _abort_and_resume(n)
+    _abort_and_resume(n)
+    assert n._blocked_since is not None and n.clock[0] - n._blocked_since > 4.0
+    n._pose = lambda: (2.5, 0.0, 0.0)  # drove 1.5 m on: that blockage is over
+    n.phase = ren.PHASE_GOAL
+    n.goals.current, n.goals.result = object(), ga.ABORTED
+    tick(n, torque=True, field=True)
+    assert "(blocked 0 s;" in n.fsm.reason
+    n._reset_step_state()  # the next step
+    assert n._blocked_since is None
 
 
 def test_abort_during_a_safety_stop_is_a_hold_not_a_retry():
@@ -378,3 +404,102 @@ def test_holds_that_resume_by_themselves_keep_power_and_skip_the_warning():
     assert n.hold_cause == "field" and n.drive_power()
     run_for(n, 2.5, torque=True, field=True)
     assert n.fsm.state == fsm.EXECUTING and n.phase != ren.PHASE_PREMOVE
+
+
+def _field_hold(n, pushed_to):
+    """A protective stop 2 m along the line, a push while held, then the torque back."""
+    n._pose = lambda: (2.0, 0.0, 0.0)
+    tick(n, torque=True, field=True)
+    tick(n, torque=False, field=False)
+    assert n.fsm.state == fsm.BLOCKED and n.hold_cause == "field"
+    n._pose = lambda: pushed_to
+    tick(n, torque=True, field=True)
+
+
+def test_a_bump_inside_the_resume_corridor_resumes_and_steers_back():
+    """Owner 2026-11-03: a trolley pushed the vehicle 0.13 m off an arc during a protective
+    stop; the 0.10 m route corridor kept it held. resume_corridor_m (0.20) lets it resume, and
+    the same width holds for converge_m of travel while the controller steers back."""
+    n = node()
+    _field_hold(n, (2.0, -0.13, 0.0))  # 2 m along: past the step-start grace
+    run_for(n, 3.0, torque=True, field=True)
+    assert n.fsm.state == fsm.EXECUTING, n.fsm.reason
+    n.phase = ren.PHASE_GOAL
+    n.goals.current, n.goals.result = object(), None
+    n._pose = lambda: (2.6, -0.25, 0.0)  # 0.6 m after the resume, still converging
+    tick(n, torque=True, field=True)
+    assert n.fsm.state == fsm.EXECUTING, n.fsm.reason
+    n._pose = lambda: (3.2, -0.25, 0.0)  # 1.2 m after the resume: the route's 0.10 m again
+    tick(n, torque=True, field=True)
+    assert n.fsm.state == fsm.FAULT and n.fault_code == "EXEC_OFF_PATH"
+
+
+def test_a_push_past_the_resume_corridor_stays_held_and_says_why():
+    n = node()
+    _field_hold(n, (2.0, -0.35, 0.0))
+    run_for(n, 3.0, torque=True, field=True)
+    assert n.fsm.state == fsm.BLOCKED
+    assert "outside the corridor (-0.35 m cross-track, allowed 0.30 m)" in n.fsm.reason
+
+
+class _ClearClient:
+    """A local-costmap clear service that is up, counting the calls."""
+
+    def __init__(self, ready=True):
+        self.calls, self.ready = 0, ready
+
+    def service_is_ready(self):
+        return self.ready
+
+    def call_async(self, _req):
+        self.calls += 1
+
+
+def test_a_long_blocked_path_clears_the_costmap_once_per_ten_seconds():
+    """Owner 2026-11-03: phantom marks beside the vehicle (out of the scanner's view, never
+    ray-traced clear) kept s12 aborting forever. After 10 s of a blocked path the local
+    costmap is cleared, then at most once per 10 s while it stays blocked."""
+    n = node()
+    cleared = []
+    n._clear_cli = SimpleNamespace(
+        service_is_ready=lambda: True, call_async=lambda _r: cleared.append(n.clock[0])
+    )
+    n.notes = []
+    n._note = lambda level, code, text: n.notes.append(code)
+    tick(n, torque=True, field=True)
+    t0 = n.clock[0]
+    while n.clock[0] - t0 < 40.0:  # 40 s of a blocked path: abort, hold, auto-resume, abort...
+        if _abort_and_resume(n) != fsm.EXECUTING:
+            run_for(n, 2.2, torque=True, field=True)  # a clear restarted the countdown
+            assert n.fsm.state == fsm.EXECUTING
+    assert len(cleared) >= 3 and set(n.notes) == {"COSTMAP_CLEARED"}
+    assert cleared[0] - t0 >= 10.0, "nothing cleared in the first 10 s"
+    gaps = [b - a for a, b in zip(cleared, cleared[1:], strict=False)]
+    assert min(gaps) >= 10.0 - 1e-6, gaps
+
+
+def test_a_clear_restarts_the_all_clear_countdown():
+    n = node()
+    n._clear_cli = _ClearClient()
+    n._note = lambda *_a: None
+    tick(n, torque=True, field=True)
+    n.phase = ren.PHASE_GOAL
+    n.goals.current, n.goals.result = object(), ga.ABORTED
+    tick(n, torque=True, field=True)
+    assert n.fsm.state == fsm.BLOCKED
+    n._blocked_since = n.clock[0] - 11.0  # blocked for 11 s already
+    tick(n, torque=True, field=True)
+    assert n._clear_cli.calls == 1 and n._auto_since is None
+    run_for(n, 1.5, torque=True, field=True)
+    assert n.fsm.state == fsm.BLOCKED, "the retry waits the full 2 s on the fresh costmap"
+    run_for(n, 1.0, torque=True, field=True)
+    assert n.fsm.state == fsm.EXECUTING
+
+
+def test_no_clear_service_is_harmless():
+    n = node()
+    n._clear_cli = _ClearClient(ready=False)
+    tick(n, torque=True, field=True)
+    for _ in range(6):
+        assert _abort_and_resume(n) == fsm.EXECUTING
+    assert n._clear_cli.calls == 0

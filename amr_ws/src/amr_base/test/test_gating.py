@@ -97,9 +97,48 @@ def test_names_cover_every_source_and_the_lease_bits_are_distinct():
         if k.isupper() and not k.startswith("LEASE_") and isinstance(v, int) and not isinstance(v, bool)
     }
     assert sources == set(g.NAMES), f"sources without a NAMES entry: {sorted(sources - set(g.NAMES))}"
-    assert g.LINE == 7 and g.PENDANT == 6  # MuxState.msg pins these numbers
+    assert g.PENDANT == 6  # MuxState.msg pins these numbers
+    # LINE (7) and LEASE_LINE (bit 8) are retired with the tracked product
+    assert not hasattr(g, "LINE") and not hasattr(g, "LEASE_LINE")
     assert len(set(g.NAMES.values())) == len(g.NAMES)  # no two sources share a name
     # the lease classes are single, distinct bits of ControlLease.allowed
-    bits = [g.LEASE_MANUAL, g.LEASE_AUTONOMOUS, g.LEASE_COMMISSIONING, g.LEASE_LINE]
-    assert bits == [1, 2, 4, 8]
+    bits = [g.LEASE_MANUAL, g.LEASE_AUTONOMOUS, g.LEASE_COMMISSIONING]
+    assert bits == [1, 2, 4]
     assert all(b and not (b & (b - 1)) for b in bits)  # each is one bit
+
+
+def test_estop_inhibits_every_source_ahead_of_the_lease():
+    """Emergency plan §4.3: not NORMAL is NONE, inhibited, code ESTOP, whatever is asking."""
+    from amr_base.gating import LEASE_AUTONOMOUS, LEASE_MANUAL, PENDANT, Drives, Lease, Manual, Params
+
+    sup = Params(require_supervisor=True)
+    lease = Lease(10.0, "i", 1, 1, LEASE_MANUAL | LEASE_AUTONOMOUS)
+    drives = Drives(10.0, True)
+    for emg in (1, 2, 3, 4):
+        manual = Panel(10.0, True, False, fwd=True, emergency=emg)
+        s = select(10.0, Stamped(10.0, 0.3, 0.0), None, None, None, manual, sup, lease=lease,
+                   manual=Manual(10.0, 0.2, 0.0, "i", 1, "s", 1, 0.5), drives=drives)
+        assert (s.source, s.inhibited, s.code) == (NONE, True, "ESTOP"), emg
+        auto = Panel(10.0, True, True, emergency=emg)
+        s = select(10.0, None, Stamped(10.0, 0.3, 0.0), None, Permit(10.0, FOLLOW, True, "i", 1), auto, sup,
+                   lease=Lease(10.0, "i", 1, 1, 0), drives=Drives(10.0, False))
+        assert s.code == "ESTOP", "ahead of INHIBITED / DRIVES_NOT_READY"
+    # NORMAL: the pendant drives again (the re-press rule is the node's, below)
+    pendant = Panel(10.0, True, False, fwd=True)
+    s = select(10.0, None, None, None, None, pendant, sup, lease=lease, drives=drives)
+    assert s.source == PENDANT
+    # a stale image is PANEL_STALE's, not a false emergency
+    s = select(10.0, None, None, None, None, Panel(9.0, False, False, emergency=1))
+    assert s.code == "PANEL_STALE"
+
+
+def test_repress_guard_needs_one_release_after_normal():
+    from amr_base.gating import RepressGuard
+
+    g = RepressGuard()
+    assert not g.update(0, True), "a pendant held with no emergency is just driving"
+    assert g.update(1, True)
+    assert g.update(2, False), "released during the emergency does not count"
+    assert g.update(0, True), "held through the Reset: nothing moves"
+    assert not g.update(0, False)
+    assert not g.update(0, True), "a fresh press after the release drives"

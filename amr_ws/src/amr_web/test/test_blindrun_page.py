@@ -1,5 +1,5 @@
-"""/commissioning blind-run page: capabilities, evidence history, the tape measurement
-(and its path safety), and the real static/blindrun.js form logic under node."""
+"""/blindrun page: capabilities, evidence history, the tape measurement (and its path
+safety), and the real static/blindrun.js form logic under node. PV only (pp removed)."""
 
 import json
 import pathlib
@@ -16,12 +16,6 @@ FOOTPRINT_YAML = "polygon: [[-0.5, -0.35], [1.1, -0.35], [1.1, 0.35], [-0.5, 0.3
 
 
 class Stub:
-    def __init__(self, pp=None):
-        self.pp = pp
-
-    def pp_status(self):
-        return self.pp
-
     def supervisor_identity(self):
         return ("i", 1)
 
@@ -46,7 +40,6 @@ def evidence(plan_id="straight-fwd-1m-pv", backend="pv", dx=1.0, dy=0.0, hdg=0.0
             ],
         },
         "gyro_heading_deg": 0.1,
-        "pp_result": {"error_counts": [-3, 2]} if backend == "pp" else None,
     }
 
 
@@ -64,29 +57,32 @@ def env(tmp_path):
     fp.write_text(FOOTPRINT_YAML)
     maps = tmp_path / "maps"
     maps.mkdir()
-    stub = Stub({"available": False, "reason": "pp locked in the profile (pp.enabled false)", "age_s": 0.1})
+    stub = Stub()
     app = create_app(stub, str(maps), str(fp), state_dir=str(state))
     app.config["TESTING"] = True
     return app.test_client(), stub, evdir
 
 
-def test_capabilities_report_the_profile_caps_and_the_pp_lock(env):
-    client, stub, _ = env
+def test_the_page_serves_and_the_engineer_nav_links_it(env):
+    client, _, _ = env
+    r = client.get("/blindrun")
+    assert r.status_code == 200 and 'id="br-form"' in r.get_data(as_text=True)
+    assert 'href="/blindrun"' in client.get("/home").get_data(as_text=True)
+
+
+def test_capabilities_report_the_profile_caps(env):
+    client, _, _ = env
     c = client.get("/api/commissioning/capabilities").json
-    assert c["max_speed_mps"] == 0.8 and c["pp_max_speed_mps"] <= 0.8
+    assert c["max_speed_mps"] == 0.8
     assert c["min_arc_radius_m"] == pytest.approx(0.2435)
-    assert c["pp_available"] is False and "locked" in c["pp_reason"]
     assert c["decel_mps2"] > 0
-    stub.pp = {"available": True, "reason": "", "age_s": 5.0}  # stale: not available whatever it says
-    c = client.get("/api/commissioning/capabilities").json
-    assert c["pp_available"] is False and "no fresh pp status" in c["pp_reason"]
-    stub.pp = None
-    assert client.get("/api/commissioning/capabilities").json["pp_available"] is False
+    assert not any(k.startswith("pp") for k in c)  # profile position is gone
 
 
 def test_history_lists_evidence_only_with_commanded(env):
     client, _, _ = env
     rows = client.get("/api/commissioning/history").json
+    # older evidence from the pp backend still lists, named as such
     assert {r["backend"] for r in rows} == {"pv", "pp"} and len(rows) == 2
     r = next(r for r in rows if r["backend"] == "pv")
     assert r["commanded"]["dx_mm"] == 1000.0 and r["measured"] is None and r["error"] is None
@@ -168,13 +164,11 @@ def test_blindrun_js_form_builds_the_plans_the_job_expects():
     assert out["straight_rev"]["plan"]["speed"] == {"speed_mps": 0.25}
     assert out["rotate_cw"]["plan"]["segments"] == [{"kind": "pivot", "angle_deg": -90}]
     assert out["arc_right"]["plan"]["segments"] == [{"kind": "arc", "radius_m": -1.2, "angle_deg": 45}]
-    assert out["arc_right"]["plan"]["id"] == "arc-right-45deg-r1.2m-pv"
+    assert out["arc_right"]["plan"]["id"] == "arc-right-45deg-r1.2m"
+    assert "backend" not in out["arc_right"]["plan"]  # the node defaults to pv, the only one
     for key in ("straight_rev", "rotate_cw", "arc_right"):
         assert out[key]["errors"] == [], out[key]
     assert any("radius" in e for e in out["arc_too_tight"]["errors"])
     assert any("speed" in e for e in out["too_fast"]["errors"])
-    assert any("PP not available" in e for e in out["pp_locked"]["errors"])
-    assert out["pp_unlocked"]["errors"] == [] and out["pp_unlocked"]["plan"]["backend"] == "pp"
-    assert any("speed" in e for e in out["pp_over_pp_cap"]["errors"])
     assert any("number" in e for e in out["blank_distance"]["errors"])
     assert out["stop_0p8"] == pytest.approx(0.8 * 0.8 / (2 * 0.2513), rel=1e-3)

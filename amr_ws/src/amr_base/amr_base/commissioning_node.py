@@ -1,20 +1,19 @@
-"""commissioning_node (unified plan §7.2): the /blind replacement.
+"""commissioning_node (unified plan §7.2): the blind run behind the /blindrun page.
 
     /amr/commissioning/plan   PlanCommissioning   validate + hold a plan (moves nothing)
     /amr/commissioning/clear  Trigger             drop the plan / abort a running job
     /amr/commissioning_state  CommissioningState  latched, on change + 2 Hz
-    /amr/commissioning_wheels WheelVelocities     per-wheel setpoints while a pv job runs,
+    /amr/commissioning_wheels WheelVelocities     per-wheel setpoints while a job runs,
                                                   to the mux's COMMISSIONING source
-    /amr/commissioning_pp     PpMove              the held pp move while a pp job runs
-                                                  (and hold=false after it ends early),
-                                                  to the drive owner
-    /drives/pp_status         PpStatus  (in)      pp availability and the move's outcome
 
 A job executes only on a fresh physical Start edge under a valid MANUAL panel
 while the supervisor's lease carries the COMMISSIONING class (the supervisor
-grants that - and withholds MANUAL - while this node reports PREPARED/RUNNING).
-Every tick re-checks that authority; the mux and drive owner gate the output
-again on their own. Evidence goes to <state_dir>/commissioning/<plan>-<ts>-<ns>.json,
+grants that - and withholds MANUAL - while this node reports PREPARED/RUNNING/
+SETTLING). Every tick re-checks that authority; the mux and drive owner gate
+the output again on their own. An emergency aborts a running job, like a survey
+move (owner, 2026-11-02; amr_base/commissioning.py).
+Profile velocity only: the pp backend was removed on 2026-10-30.
+Evidence goes to <state_dir>/commissioning/<plan>-<ts>-<ns>.json,
 written when a job ends, is cleared, or the node shuts down mid-job.
 """
 
@@ -38,8 +37,6 @@ from amr_interfaces.msg import (
     ControlLease,
     ModeState,
     PanelState,
-    PpMove,
-    PpStatus,
     WheelStates,
     WheelVelocities,
 )
@@ -56,7 +53,6 @@ MODE_NAMES = {
     ModeState.TRANSITIONING: "TRANSITIONING",
     ModeState.FAULT: "FAULT",
     ModeState.STOPPING: "STOPPING",
-    ModeState.LINE: "LINE",
 }
 LATCHED = QoSProfile(
     depth=1, reliability=QoSReliabilityPolicy.RELIABLE, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL
@@ -104,8 +100,6 @@ class CommissioningNode(Node):
         self._gyro_t = None
         self._generation = 0
         self._last_phase = None
-        self._seq = 0
-        self._pp_view: cj.PpView | None = None
         self.create_subscription(WheelStates, "/wheel_states", self._on_wheels, SENSOR)
         self.create_subscription(ControlLease, "/amr/control_lease", self._on_lease, RELIABLE_1)
         self.create_subscription(ModeState, "/amr/mode_state", self._on_mode, LATCHED)
@@ -115,8 +109,6 @@ class CommissioningNode(Node):
         # Plan admission needs only wheel feedback, which stays subscribed. Safe to
         # create/destroy here: this node spins a single-threaded executor.
         self._job_subs: list = []
-        self.create_subscription(PpStatus, "/drives/pp_status", self._on_pp_status, RELIABLE_1)
-        self._pub_pp = self.create_publisher(PpMove, "/amr/commissioning_pp", RELIABLE_1)
         self._pub_cmd = self.create_publisher(WheelVelocities, "/amr/commissioning_wheels", RELIABLE_1)
         self._pub_state = self.create_publisher(CommissioningState, "/amr/commissioning_state", LATCHED)
         self.create_service(PlanCommissioning, "/amr/commissioning/plan", self._srv_plan)
@@ -146,18 +138,6 @@ class CommissioningNode(Node):
                 return
         self._lease, self._lease_t = m, time.monotonic()
         self._generation = int(m.generation)
-
-    def _on_pp_status(self, m: PpStatus) -> None:
-        self._pp_view = cj.PpView(
-            time.monotonic(),
-            bool(m.available),
-            str(m.reason),
-            str(m.state),
-            str(m.run_id),
-            str(m.outcome),
-            (int(m.left_target), int(m.right_target)),
-            (int(m.left_actual), int(m.right_actual)),
-        )
 
     def _on_imu(self, m: Imu) -> None:
         z = float(m.angular_velocity.z)
@@ -208,7 +188,6 @@ class CommissioningNode(Node):
                 lease_allowed=allowed,
                 stopped=stopped,
                 mode=self._mode_snapshot(now),
-                pp_status=self._pp_view,
             )
         except ValueError as e:
             res.ok, res.message = False, str(e)
@@ -223,7 +202,6 @@ class CommissioningNode(Node):
         ev = self.job.clear()
         if ev is not None:
             self._publish_wheels(0.0, 0.0)
-            self._publish_pp_hold()  # hold=false at once, not on the owner's stale timeout
             self._write_evidence(ev)
         res.success, res.message = True, "cleared"
         self._publish_state()
@@ -247,7 +225,7 @@ class CommissioningNode(Node):
 
     def _tick(self) -> None:
         now = time.monotonic()
-        self._job_inputs(self.job.phase in (cj.PREPARED, cj.RUNNING, cj.SETTLING))
+        self._job_inputs(self.job.phase in cj.ACTIVE)
         if self.job.phase in (cj.IDLE, cj.DONE, cj.ABORTED):
             # Nothing prepared or moving. A Start press here is not consumed: the job
             # refuses any edge older than its plan, so holding it is harmless.
@@ -273,14 +251,11 @@ class CommissioningNode(Node):
             gyro_yaw_rad_s=self._gyro if gyro_ok else None,
             authority=authority,
             start_edge_t=start_edge_t,
-            pp_status=self._pp_view,
+            emergency=bool(panel_ok and getattr(self._panel, "emergency", 0) != PanelState.EMG_NORMAL),
         )
         before = self.job.phase
         wl, wr = self.job.tick(inputs)
-        self._publish_pp_hold()
-        if self.job.backend == "pp":
-            pass  # the drive owner moves the wheels; nothing goes to the mux
-        elif self.job.phase in (cj.RUNNING, cj.SETTLING):
+        if self.job.phase in (cj.RUNNING, cj.SETTLING):
             self._publish_wheels(wl, wr)
         elif before in (cj.RUNNING, cj.SETTLING):
             # Do not leave the previous nonzero sample live until the mux's
@@ -292,24 +267,6 @@ class CommissioningNode(Node):
             if self.job.phase in (cj.DONE, cj.ABORTED):
                 self._write_evidence()
             self._publish_state()
-
-    def _publish_pp_hold(self) -> None:
-        hold = self.job.pp_hold()
-        if hold is None or self.job.pp_spec is None:
-            return
-        run_id, held = hold
-        s = self.job.pp_spec
-        m = PpMove()
-        m.header.stamp = self.get_clock().now().to_msg()
-        m.run_id, m.generation, m.hold = run_id, self._generation, held
-        self._seq += 1
-        m.seq = self._seq
-        m.left_delta_counts, m.right_delta_counts = s.left.delta_counts, s.right.delta_counts
-        m.left_velocity_rpm, m.right_velocity_rpm = s.left.velocity_rpm, s.right.velocity_rpm
-        m.left_accel_rpm_s, m.right_accel_rpm_s = s.left.accel_rpm_s, s.right.accel_rpm_s
-        m.left_decel_rpm_s, m.right_decel_rpm_s = s.left.decel_rpm_s, s.right.decel_rpm_s
-        m.duration_s = float(s.duration_s)
-        self._pub_pp.publish(m)
 
     def _publish_wheels(self, left: float, right: float) -> None:
         m = WheelVelocities()
@@ -341,7 +298,6 @@ class CommissioningNode(Node):
             return
         try:
             self._publish_wheels(0.0, 0.0)
-            self._publish_pp_hold()
         except Exception:  # noqa: BLE001 - the context may already be shut down
             pass
         self._write_evidence(ev)
@@ -369,11 +325,6 @@ class CommissioningNode(Node):
         m.completed = int(s.get("completed", 0))
         m.reason = str(s.get("reason", "") or "")
         m.results_path = self._results_path if self.job.phase in (cj.DONE, cj.ABORTED) else ""
-        m.backend = self.job.backend
-        m.run_id = self.job.run_id
-        if self.job.backend == "pp" and self.job.phase in (cj.RUNNING, cj.DONE, cj.ABORTED):
-            counts, _cpr, _st = self._feedback(time.monotonic())
-            m.progress_left_m, m.progress_right_m = (float(x) for x in self.job.pp_progress(counts))
         self._pub_state.publish(m)
 
 

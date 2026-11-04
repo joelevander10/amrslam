@@ -106,6 +106,41 @@ def test_sdo_mode_backs_off_when_the_sensor_is_absent():
     assert imu.misses == 6
 
 
+class RecordingLink(FakeLink):
+    """FakeLink that records any write or NMT command the IMU reader might send."""
+
+    def __init__(self, objects):
+        super().__init__(objects)
+        self.writes, self.nmts = [], []
+
+    def write(self, node, index, sub, value, size, what=""):
+        self.writes.append((node, index, sub, value))
+
+    def nmt(self, command, node=0):
+        self.nmts.append((command, node))
+
+
+def test_only_reads_and_nmt_only_to_the_mls_nothing_is_written():
+    """Ported from test_mls_track (2026-10-27, tracked removal): across start() and many
+    polls, in SDO and in TPDO mode, the gyro reader writes nothing, and any NMT it sends
+    is addressed to node 10 - never a broadcast (0) and never a drive (1, 2)."""
+    sdo = {(0x2006, 2): 1, (mls_imu.TPDO_GYRO_COMM, 1): 0x80000000, (GYRO, 3): 5, (STAMP, 0): 7}
+    tpdo = {
+        (0x2006, 2): 1,
+        (mls_imu.TPDO_GYRO_COMM, 1): 0x28A,
+        (mls_imu.TPDO_GYRO_MAP, 0): 1,
+        (mls_imu.TPDO_GYRO_MAP, 1): (GYRO << 16) | (3 << 8) | 16,
+    }
+    for objs, mode in ((sdo, "sdo"), (tpdo, "tpdo")):
+        link = RecordingLink(objs)
+        imu = MlsImu(link, 10, lambda s: None, log=lambda s: None)
+        assert imu.start() == mode
+        for k in range(300):
+            imu.poll(k * 0.02)
+        assert link.writes == []
+        assert all(n == 10 for _, n in link.nmts)
+
+
 # ---- F04: malformed PDOs never become a measurement --------------------------
 
 

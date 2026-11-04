@@ -160,7 +160,6 @@ def test_base_ready_after_the_boot_budget_leaves_fault_by_itself():
     sv.generation = 1
     sv.groups = {"base": Alive()}
     sv.snap = Snap()
-    sv._auto_enter_line = lambda: None
     sv._boot_reported, sv.reports = True, []
     sv._boot_report = lambda now, missing: sv.reports.append(missing)
     for name in ("_tick", "_base_failure"):

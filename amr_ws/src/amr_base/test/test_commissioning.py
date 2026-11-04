@@ -1,6 +1,7 @@
 """U8 / P1-P2 attachment (unified plan §12.2): a plan upload cannot start motion;
 a fresh physical Start can authorise exactly one job; authority loss aborts it."""
 
+import dataclasses
 import json
 
 import pytest
@@ -238,3 +239,15 @@ def test_r31_new_plan_resets_per_job_evidence():
     plan(job, now=2.0)
     ev = job.evidence()
     assert ev["aborted_segment"] is None and ev["started_counts"] is None and ev["gyro_gaps_s"] == []
+
+
+def test_the_panel_emergency_aborts_a_running_job():
+    """Emergency plan §4.6 / owner 2026-11-02: aborted like a survey move, never resumed -
+    a new plan and Start are needed."""
+    job = cj.Job()
+    plan(job)
+    job.tick(inputs(1.0, start=True))
+    assert job.phase == cj.RUNNING
+    job.tick(dataclasses.replace(inputs(1.02), emergency=True))
+    assert job.phase == cj.ABORTED and job.reason == "emergency stop"
+    assert job.tick(inputs(1.10, start=True)) == (0.0, 0.0) and job.phase == cj.ABORTED

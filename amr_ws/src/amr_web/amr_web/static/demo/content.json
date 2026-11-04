@@ -19,8 +19,8 @@
       "label": "carrying method, built to your load"
     },
     {
-      "value": "2 modes",
-      "label": "tape guided or tape-free"
+      "value": "No tape",
+      "label": "navigates by its own map"
     }
   ],
   "cards": [
@@ -30,19 +30,14 @@
       "body": "The live view on the left is what its laser safety scanner sees right now. On the move, the AGV stops for people in its path and continues by itself once the way is clear."
     },
     {
-      "kicker": "One platform",
-      "title": "Two ways to find its way",
-      "body": "Start with magnetic tape on the floor today. When your layout changes, the same vehicle can move to tape-free navigation."
-    },
-    {
-      "kicker": "Tape guided",
-      "title": "Follows a line, reliably",
-      "body": "The AGV follows a magnetic strip on the floor and stops at marked stations. Quick to install, easy to change: move the tape, change the route."
-    },
-    {
-      "kicker": "Tape-free",
+      "kicker": "Map based",
       "title": "Learns your factory",
       "body": "Drive it around the site once and it builds its own map. Routes are drawn on a screen. No floor work at all."
+    },
+    {
+      "kicker": "Easy to change",
+      "title": "New layout, new route",
+      "body": "When your layout changes, survey the area again and draw the new route. Nothing on the floor to move."
     },
     {
       "kicker": "Always in reach",

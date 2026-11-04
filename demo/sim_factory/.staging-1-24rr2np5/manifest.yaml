@@ -1,0 +1,27 @@
+map_id: sim_factory
+revision: 1
+created: 2026-11-03T19:38:43+0700
+frame_id: map
+resolution: 0.05
+origin:
+- -3.0
+- -10.0
+- 0.0
+width: 600
+height: 400
+start:
+  x_m: 0.0
+  y_m: 0.0
+  yaw_rad: 0.0
+  description: world origin mark
+review:
+  dx_m: 0.0
+  dy_m: 0.0
+  dyaw_rad: 0.0
+  note: 'fixture: sim world surfaces written as map'
+files:
+  map.pgm: 5036efb1101e51a9d5c1de86859b8b1f16a859a7e2472710c0f4f5eb15e41d2a
+  map.yaml: 9829172db59fc7577a1365343dc14aa1a3f762b4acfbb376180694108319c485
+software:
+  source: amr_mission.fixtures.write_world_as_bundle
+sha256: 9d1d20e443b399e315983abcd12d7fba8500585a9a05e0ea758db9ad2ab13385

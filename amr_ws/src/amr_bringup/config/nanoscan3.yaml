@@ -1,7 +1,7 @@
-# sick_safetyscanners2 parameters for the nanoScan3 on enp3s0.
+# sick_safetyscanners2 parameters for the nanoScan3 on enp2s0 (host 192.168.3.1/24, scanner 192.168.3.10).
 #
 # Addresses come from the existing controller's config (LIDAR_SENSOR_IP,
-# LIDAR_HOST_IP, LIDAR_PORT) and manuals/rfid-setup + /etc/netplan/70-nanoscan3.yaml.
+# LIDAR_HOST_IP, LIDAR_PORT) and /etc/netplan/70-lan2-nanoscan3.yaml.
 #
 # On start the driver opens a CoLa2 session (TCP 2122) and writes the UDP
 # output settings of `channel` on the scanner: host_ip, host_udp_port and the
@@ -17,7 +17,7 @@ sick_safetyscanners2_node:
   ros__parameters:
     frame_id: "laser_frame"          # spec §2.3, exact string
     sensor_ip: "192.168.3.10"
-    host_ip: "192.168.3.2"
+    host_ip: "192.168.3.1"
     interface_ip: "0.0.0.0"
     host_udp_port: 6060
     channel: 0

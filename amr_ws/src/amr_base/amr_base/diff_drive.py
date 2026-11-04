@@ -66,7 +66,8 @@ def scurve(
     therefore follows a trapezoidal acceleration profile: no step in torque demand at
     the start of a pendant press, and no overshoot past the target. Reaching the
     target zeroes the acceleration state. Manual sources on the mux use it (2026-09-18,
-    0.3 m/s^2 with 1.0 m/s^3); the autonomous sources keep slew_asym.
+    0.3 m/s^2 with 1.0 m/s^3), and the autonomous sources' linear speed (2026-11-03,
+    auto_jerk), except a warning-field stop.
     """
     dv = target - v
     if dv == 0.0:

@@ -42,40 +42,6 @@
     --math-bg: #f3f5f9;
     color-scheme: light;
   }
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) {
-      --paper: #0f1319; --surface: #171c24; --surface-2: #1f2530;
-      --ink: #e6e9ef; --ink-2: #b9c0cc; --ink-3: #8a93a3;
-      --rule: #333b48; --rule-soft: #262d38;
-      --accent: #9cc0e8; --accent-2: #7fa9dc; --on-accent: #0f1319;
-      --ok: #7fcfa2; --hazard-ink: #e8c75a; --stop: #ef7b70; --stop-wash: #3a1c1a;
-      --violet: #b9aee0; --cyan: #7ec6d3;
-      --blue-wash: #182536;   --blue-line: #3f5f85;
-      --green-wash: #15291f;  --green-line: #3f7a62;
-      --amber-wash: #2d2610;  --amber-line: #8a6d14;
-      --violet-wash: #231f33; --violet-line: #6a5f91;
-      --cyan-wash: #132a2e;   --cyan-line: #3f7f8a;
-      --grey-wash: #1d222b;   --grey-line: #5b6474;
-      --card: rgba(15,19,25,.5); --wire: #6b7585; --math-bg: #11151c;
-      color-scheme: dark;
-    }
-  }
-  :root[data-theme="dark"] {
-    --paper: #0f1319; --surface: #171c24; --surface-2: #1f2530;
-    --ink: #e6e9ef; --ink-2: #b9c0cc; --ink-3: #8a93a3;
-    --rule: #333b48; --rule-soft: #262d38;
-    --accent: #9cc0e8; --accent-2: #7fa9dc; --on-accent: #0f1319;
-    --ok: #7fcfa2; --hazard-ink: #e8c75a; --stop: #ef7b70; --stop-wash: #3a1c1a;
-    --violet: #b9aee0; --cyan: #7ec6d3;
-    --blue-wash: #182536;   --blue-line: #3f5f85;
-    --green-wash: #15291f;  --green-line: #3f7a62;
-    --amber-wash: #2d2610;  --amber-line: #8a6d14;
-    --violet-wash: #231f33; --violet-line: #6a5f91;
-    --cyan-wash: #132a2e;   --cyan-line: #3f7f8a;
-    --grey-wash: #1d222b;   --grey-line: #5b6474;
-    --card: rgba(15,19,25,.5); --wire: #6b7585; --math-bg: #11151c;
-    color-scheme: dark;
-  }
 
   * { box-sizing: border-box; }
   body {
@@ -507,6 +473,34 @@
     text-transform: uppercase;
   }
 
+  /* ---- floor-label slide ---- */
+  .frames-svg { display: block; width: 100%; height: 150px; margin-top: 8px; }
+  .frames-svg .floor { fill: var(--surface); stroke: var(--rule); }
+  .frames-svg .body { fill: none; stroke: var(--ink-3); stroke-width: 1.5; stroke-dasharray: 5 3; }
+  .frames-svg .lbl { fill: var(--amber-wash); stroke: var(--hazard-ink); stroke-width: 1.5; }
+  .frames-svg .ax { stroke: var(--ink-2); stroke-width: 1.6; fill: none; }
+  .frames-svg .tf { stroke: var(--accent-2); stroke-width: 1.8; fill: none; marker-end: url(#tfarrow); }
+  .frames-svg .tf.rec { stroke: var(--hazard-ink); stroke-dasharray: 5 3; }
+  .frames-svg marker path { fill: var(--accent-2); }
+  .frames-svg .pt { fill: var(--accent); }
+  .frames-svg .cam { fill: var(--stop); }
+  .frames-svg text { fill: var(--ink-2); font: 600 10.5px "IBM Plex Mono", ui-monospace, monospace; }
+  .frames-svg .t-tf { fill: var(--accent-2); }
+  .frames-svg .t-rec { fill: var(--hazard-ink); }
+  .tbl { width: 100%; margin-top: 10px; border-collapse: collapse; font-size: 12.5px; line-height: 1.28; }
+  .tbl th {
+    padding: 0 6px 5px 0;
+    color: var(--tone);
+    font: 600 10px "IBM Plex Mono", ui-monospace, monospace;
+    letter-spacing: .06em;
+    text-align: left;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--tone);
+  }
+  .tbl td { padding: 6px 6px 6px 0; color: var(--ink-2); vertical-align: top; border-bottom: 1px solid var(--rule-soft); }
+  .tbl td:last-child { color: var(--ink); font-weight: 600; }
+  .tbl tr.never td { color: var(--ink-3); }
+
   .slide-note {
     position: absolute;
     z-index: 5;
@@ -520,6 +514,18 @@
   @media (prefers-reduced-motion: no-preference) {
     html { scroll-behavior: smooth; }
   }
+
+  /* one slide per 1600 x 900 page */
+  @page { size: 1600px 900px; margin: 0; }
+  @media print {
+    html, body { background: var(--surface); print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+    .toolbar { display: none; }
+    .deck { display: block; padding: 0; }
+    .frame-wrap { overflow: visible; }
+    .frame { width: 1600px !important; height: 900px !important; border: 0; break-after: page; }
+    .frame-wrap:last-child .frame { break-after: auto; }
+    .slide { transform: none !important; }
+  }
 </style>
 </head>
 <body>
@@ -530,7 +536,8 @@
   <button type="button" id="jump-flow" data-jump="flow">02 · Data flow</button>
   <button type="button" id="jump-slam" data-jump="slam">03 · slam_toolbox</button>
   <button type="button" id="jump-amcl" data-jump="amcl">04 · Localization</button>
-  <span class="meta">4 diagrams · from amr_ws configs · 2026-09-19</span>
+  <button type="button" id="jump-labels" data-jump="labels">05 · Floor labels</button>
+  <span class="meta">5 diagrams · from amr_ws configs + GLS plan · 2026-11-02</span>
 </nav>
 
 <main class="deck">
@@ -554,9 +561,10 @@
         <h3>Sensors</h3>
         <div class="sub">raw measurements</div>
         <dl class="kv">
-          <dt>nanoScan3</dt><dd>2-D LiDAR, 190° sector, 34 Hz → <code>/scan</code></dd>
+          <dt>nanoScan3</dt><dd>2-D LiDAR, 190° sector, ~17 Hz → <code>/scan</code></dd>
           <dt>Encoders ×2</dt><dd>BLV-R motor position over CANopen → <code>/wheel_states</code></dd>
           <dt>MLS gyro</dt><dd>Yaw rate, CAN node 10 → <code>/imu/data_raw</code></dd>
+          <dt>GLS621</dt><dd>Floor-label camera, ~14.6 Hz → <code>/gls/reading</code></dd>
         </dl>
       </article>
 
@@ -565,9 +573,10 @@
         <h3>Pre-processing</h3>
         <div class="sub">amr_base · amr_localization</div>
         <dl class="kv">
-          <dt>Scan gate</dt><dd>Releases a scan only once TF can place it; ≤ 10 Hz</dd>
+          <dt>Scan gate</dt><dd>TF-ready scans only, thinned to ~8.5 Hz</dd>
           <dt>Wheel odom</dt><dd>Midpoint integration of encoder deltas → x, y, θ</dd>
           <dt>Gyro bias</dt><dd>2 s still-window average subtracted (raw +0.057 °/s)</dd>
+          <dt>Label read</dt><dd>Codes of one image → label ID + camera pose</dd>
         </dl>
       </article>
 
@@ -582,10 +591,10 @@
         </dl>
       </article>
 
-      <article class="box core" style="left:600px; top:395px; width:400px; height:160px;">
+      <article class="box core" style="left:600px; top:383px; width:400px; height:184px;">
         <h3>SLAM on GVIEVO-01</h3>
         <div class="sub">2-D LiDAR graph SLAM + particle filter</div>
-        <p>Build the map once in a supervised survey, then localize on the saved, approved map on every run.</p>
+        <p>Build the map once in a supervised survey, then localize on the saved, approved map on every run. Floor labels check the pose where the vehicle stops.</p>
         <div class="chips"><span class="chip">survey → slam_toolbox</span><span class="chip">run → AMCL</span></div>
       </article>
 
@@ -607,7 +616,8 @@
         <dl class="kv">
           <dt>Survey</dt><dd>IDLE → MAPPING → RETURN_REVIEW → SAVING → SAVED</dd>
           <dt>Saved</dt><dd>map.pgm/.yaml + pose graph + hashed manifest</dd>
-          <dt>Rule</dt><dd>rev N is published by atomic rename, never rewritten</dd>
+          <dt>Rule</dt><dd>Atomic rename to rev N; never rewritten</dd>
+          <dt>Labels</dt><dd>Label set per map rev: HOME + trolley stops</dd>
         </dl>
       </article>
 
@@ -616,8 +626,9 @@
         <h3>Localization</h3>
         <div class="sub">AMCL + localization monitor</div>
         <dl class="kv">
-          <dt>Filter</dt><dd>500–2 000 particles, likelihood-field laser model</dd>
-          <dt>Gate</dt><dd>READY needs settled covariance, scan check, operator OK</dd>
+          <dt>Filter</dt><dd>500–2 000 particles, likelihood field</dd>
+          <dt>Gate</dt><dd>READY needs settled checks + operator OK or a HOME label fix</dd>
+          <dt>Labels</dt><dd>Re-zeros at HOME and at trolley stops</dd>
           <dt>Loss</dt><dd>No random recovery: LOST stops the robot</dd>
         </dl>
       </article>
@@ -640,7 +651,7 @@
         <text x="1262" y="587">load</text>
         <circle cx="600" cy="475" r="3.5"/><circle cx="1000" cy="475" r="3.5"/>
       </svg>
-      <div class="slide-note">Source: amr_ws/src · slam_mapping.yaml · amcl.yaml · ekf.yaml</div>
+      <div class="slide-note">Source: amr_ws/src · slam_mapping.yaml · amcl.yaml · ekf.yaml · profiles/agv-01.json gls.*</div>
     </section>
   </div></div>
 
@@ -660,92 +671,112 @@
       <div class="caption" style="left:800px; top:140px; width:260px;">Fusion</div>
       <div class="caption" style="left:1140px; top:140px; width:394px;">Mode layer · one at a time</div>
 
-      <article class="box violet" style="left:66px; top:175px; width:250px; height:130px;">
+      <article class="box violet" style="left:66px; top:168px; width:250px; height:122px;">
         <h3>nanoScan3</h3><div class="sub">SICK LiDAR · Ethernet</div>
-        <p>190° sector at 34 Hz, stamped on arrival.</p>
+        <p>190° sector at ~17 Hz (every 2nd scan), stamped on arrival.</p>
       </article>
-      <article class="box violet" style="left:66px; top:345px; width:250px; height:130px;">
+      <article class="box violet" style="left:66px; top:306px; width:250px; height:122px;">
         <h3>BLV-R encoders</h3><div class="sub">CANopen nodes 1 / 2</div>
         <p>Motor-side position; wheel slip is not seen.</p>
       </article>
-      <article class="box violet" style="left:66px; top:515px; width:250px; height:130px;">
+      <article class="box violet" style="left:66px; top:444px; width:250px; height:122px;">
         <h3>MLS gyro</h3><div class="sub">CANopen node 10</div>
         <p>Yaw rate with a raw +0.057 °/s bias.</p>
       </article>
-
-      <article class="box amber" style="left:420px; top:175px; width:300px; height:130px;">
-        <h3>Scan gate</h3><div class="sub">scan_gate_node</div>
-        <p>Holds each scan until TF can place it, thins to ≤ 10 Hz, drops it after 0.5 s.</p>
+      <article class="box violet" style="left:66px; top:582px; width:250px; height:122px;">
+        <h3>GLS621</h3><div class="sub">SICK floor camera · Ethernet</div>
+        <p>Reads the floor label under the vehicle, ~14.6 images/s.</p>
       </article>
-      <article class="box amber" style="left:420px; top:345px; width:300px; height:130px;">
+
+      <article class="box amber" style="left:420px; top:168px; width:300px; height:122px;">
+        <h3>Scan gate</h3><div class="sub">scan_gate_node</div>
+        <p>Holds each scan until TF can place it, thins to ~8.5 Hz, drops it after 0.5 s.</p>
+      </article>
+      <article class="box amber" style="left:420px; top:306px; width:300px; height:122px;">
         <h3>Wheel odometry</h3><div class="sub">diff_drive_odom_node</div>
         <p>Midpoint integration of left/right wheel travel into x, y, θ.</p>
       </article>
-      <article class="box amber" style="left:420px; top:515px; width:300px; height:130px;">
+      <article class="box amber" style="left:420px; top:444px; width:300px; height:122px;">
         <h3>Gyro bias removal</h3><div class="sub">imu_bias_node</div>
         <p>Averages yaw rate over 2 s still windows and subtracts it; silent until calibrated.</p>
       </article>
+      <article class="box amber" style="left:420px; top:582px; width:290px; height:122px;">
+        <h3>Label reader</h3><div class="sub">gls_node</div>
+        <p>One reading per image: the label ID and the camera's pose on the label.</p>
+      </article>
 
-      <article class="box cyan" style="left:800px; top:345px; width:260px; height:300px;">
+      <article class="box cyan" style="left:800px; top:306px; width:260px; height:260px;">
         <span class="status">ROS pkg</span>
         <h3>EKF</h3><div class="sub">robot_localization</div>
         <p>A 15-state Kalman filter at 50 Hz in 2-D mode.</p>
-        <p>Fuses only forward speed and yaw rate. The gyro's absolute yaw drifts 3.4 °/min, so orientation is never fused directly.</p>
+        <p>Fuses only forward speed and yaw rate: the gyro's absolute yaw drifts 3.4 °/min.</p>
         <div class="chips"><span class="chip">v<sub>x</sub></span><span class="chip">ω<sub>z</sub></span><span class="chip">/odometry/filtered</span></div>
       </article>
+      <article class="box blue" style="left:800px; top:582px; width:220px; height:122px;">
+        <span class="status">Own code</span>
+        <h3>Label fix</h3><div class="sub">label_fix_node</div>
+        <p>Stopped on a known label; gated against AMCL.</p>
+      </article>
 
-      <article class="box green" style="left:1140px; top:175px; width:394px; height:230px;">
+      <article class="box green" style="left:1140px; top:168px; width:394px; height:242px;">
         <span class="status">Survey mode</span>
         <h3>slam_toolbox</h3><div class="sub">online async · Ceres back end</div>
         <p>Matches each keyframe scan, grows the pose graph, closes loops and renders the occupancy map the operator watches.</p>
         <div class="chips"><span class="chip">/map · 5 cm</span><span class="chip">map → odom</span><span class="chip">pose graph</span></div>
       </article>
-      <article class="box blue" style="left:1140px; top:455px; width:394px; height:250px;">
+      <article class="box blue" style="left:1140px; top:450px; width:394px; height:254px;">
         <span class="status">Run mode</span>
         <h3>map_server + AMCL</h3><div class="sub">+ localization_monitor_node</div>
-        <p>Loads an approved revision, tracks the pose with a particle filter, and gates READY / LOST for the route executor.</p>
+        <p>Loads an approved revision, tracks the pose with a particle filter, and gates READY / LOST for the route executor. A label fix re-seeds it at HOME and at trolley stops.</p>
         <div class="chips"><span class="chip">/amcl_pose</span><span class="chip">map → odom</span><span class="chip">/amr/localization_state</span></div>
       </article>
 
-      <div class="tf-strip">
+      <div class="tf-strip" style="top:740px; height:102px;">
         <div class="tf-title"><b>TF tree</b><span>Each cell is one link of <code>map → odom → base_footprint → sensors</code>, under the node that publishes it.</span></div>
-        <div><b>base_footprint → laser_frame, imu_frame</b><span>URDF, fixed. The LiDAR sits 0.964 m ahead of the drive axle.</span></div>
+        <div><b>base_footprint → sensor frames</b><span>URDF, fixed: laser_frame 0.964 m ahead of the drive axle, imu_frame, and gls_frame on the floor under the camera.</span></div>
         <div><b>odom → base_footprint</b><span>EKF at 50 Hz. Smooth and continuous, but it drifts.</span></div>
         <div><b>map → odom</b><span>slam_toolbox (survey) or AMCL (run). It cancels the drift and may jump.</span></div>
       </div>
 
       <svg class="wires" viewBox="0 0 1600 900" aria-hidden="true">
         <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z"/></marker></defs>
-        <path class="arrow" d="M316 240 H420"/>
-        <rect class="label-bg" x="343" y="219" width="50" height="17"/><text x="368" y="231" text-anchor="middle">/scan</text>
+        <path class="arrow" d="M316 229 H420"/>
+        <rect class="label-bg" x="343" y="208" width="50" height="17"/><text x="368" y="220" text-anchor="middle">/scan</text>
 
-        <path class="arrow" d="M720 240 H1140"/>
-        <rect class="label-bg" x="860" y="219" width="140" height="17"/><text x="930" y="231" text-anchor="middle">/scan_gated · ≤10 Hz</text>
-        <path class="arrow" d="M1100 240 V520 H1140"/>
-        <circle cx="1100" cy="240" r="3.5"/>
+        <path class="arrow" d="M720 229 H1140"/>
+        <rect class="label-bg" x="855" y="208" width="150" height="17"/><text x="930" y="220" text-anchor="middle">/scan_gated · ~8.5 Hz</text>
+        <path class="arrow" d="M1100 229 V500 H1140"/>
+        <circle cx="1100" cy="229" r="3.5"/>
 
-        <path class="arrow" d="M316 410 H420"/>
-        <rect class="label-bg" x="322" y="389" width="92" height="17"/><text x="368" y="401" text-anchor="middle">/wheel_states</text>
-        <path class="arrow dash" d="M340 410 V560 H420"/>
-        <circle cx="340" cy="410" r="3.5"/>
-        <rect class="label-bg" x="346" y="474" width="62" height="17"/><text x="377" y="486" text-anchor="middle">still?</text>
+        <path class="arrow" d="M316 367 H420"/>
+        <rect class="label-bg" x="322" y="346" width="92" height="17"/><text x="368" y="358" text-anchor="middle">/wheel_states</text>
+        <path class="arrow dash" d="M340 367 V488 H420"/>
+        <circle cx="340" cy="367" r="3.5"/>
+        <rect class="label-bg" x="346" y="418" width="62" height="17"/><text x="377" y="430" text-anchor="middle">still?</text>
 
-        <path class="arrow" d="M720 410 H800"/>
-        <rect class="label-bg" x="724" y="389" width="72" height="17"/><text x="760" y="401" text-anchor="middle">/odom_raw</text>
+        <path class="arrow" d="M720 367 H800"/>
+        <rect class="label-bg" x="724" y="346" width="72" height="17"/><text x="760" y="358" text-anchor="middle">/odom_raw</text>
 
-        <path class="arrow" d="M316 590 H420"/>
-        <rect class="label-bg" x="322" y="597" width="92" height="17"/><text x="368" y="609" text-anchor="middle">/imu/data_raw</text>
-        <path class="arrow" d="M720 580 H800"/>
-        <rect class="label-bg" x="726" y="559" width="68" height="17"/><text x="760" y="571" text-anchor="middle">/imu/data</text>
+        <path class="arrow" d="M316 522 H420"/>
+        <rect class="label-bg" x="322" y="529" width="92" height="17"/><text x="368" y="541" text-anchor="middle">/imu/data_raw</text>
+        <path class="arrow" d="M720 505 H800"/>
+        <rect class="label-bg" x="726" y="484" width="68" height="17"/><text x="760" y="496" text-anchor="middle">/imu/data</text>
 
-        <path class="arrow" d="M930 645 V750"/>
-        <rect class="label-bg" x="880" y="689" width="100" height="17"/><text x="930" y="701" text-anchor="middle">TF · 50 Hz</text>
+        <path class="arrow" d="M316 643 H420"/>
+        <rect class="label-bg" x="337" y="622" width="62" height="17"/><text x="368" y="634" text-anchor="middle">CoLa A</text>
+        <path class="arrow" d="M710 643 H800"/>
+        <rect class="label-bg" x="712" y="622" width="86" height="17"/><text x="755" y="634" text-anchor="middle">/gls/reading</text>
+        <path class="arrow" d="M1020 643 H1140"/>
+        <rect class="label-bg" x="1047" y="622" width="88" height="17"/><text x="1091" y="634" text-anchor="middle">/initialpose</text>
 
-        <path class="arrow" d="M1337 405 V455"/>
+        <path class="arrow" d="M1040 566 V740"/>
+        <rect class="label-bg" x="990" y="713" width="100" height="17"/><text x="1040" y="725" text-anchor="middle">TF · 50 Hz</text>
+
+        <path class="arrow" d="M1337 410 V450"/>
         <rect class="label-bg" x="1262" y="421" width="150" height="17"/><text x="1337" y="433" text-anchor="middle">saved rev → loaded</text>
 
-        <path class="arrow" d="M1534 290 H1562 V796 H1534"/>
-        <path class="arrow" d="M1337 705 V750"/>
+        <path class="arrow" d="M1534 289 H1562 V791 H1534"/>
+        <path class="arrow" d="M1337 704 V740"/>
       </svg>
       <div class="slide-note">Consumers of /scan_gated: slam_toolbox, AMCL, costmap, monitor · web live view stays on raw /scan</div>
     </section>
@@ -768,7 +799,7 @@
       <article class="box cyan" style="left:66px; top:165px; width:234px; height:180px;">
         <span class="status">Step 1</span>
         <h3>Keyframe gate</h3>
-        <p>A gated scan becomes a keyframe only after 0.2 m or 0.2 rad of travel, and at most every 0.2 s.</p>
+        <p>A gated scan (~8.5 Hz) becomes a keyframe only after 0.2 m or 0.2 rad of travel, and at most every 0.2 s.</p>
       </article>
       <article class="box cyan" style="left:336px; top:165px; width:234px; height:180px;">
         <span class="status">Step 2</span>
@@ -805,11 +836,11 @@
       <div class="lifecycle">
         <h3>Survey lifecycle <small>mapping_session_node wraps the loop above</small></h3>
         <div class="states">
-          <div class="state"><b>IDLE</b><span>Readiness checks, start mark recorded</span></div>
+          <div class="state"><b>IDLE</b><span>Readiness checks; start mark, and the HOME label if one is seen</span></div>
           <div class="state"><b>MAPPING</b><span>Operator drives the survey; loop runs</span></div>
           <div class="state"><b>RETURN_REVIEW</b><span>Back at the mark: closure dx, dy, dθ shown</span></div>
-          <div class="state"><b>SAVING</b><span>Pause SLAM, serialise graph, verify hashes</span></div>
-          <div class="state"><b>SAVED</b><span>Atomic rename to rev N, never rewritten</span></div>
+          <div class="state"><b>SAVING</b><span>Map lock, pause SLAM, serialise graph, verify hashes</span></div>
+          <div class="state"><b>SAVED</b><span>Atomic rename to rev N; HOME → label set rev 1</span></div>
         </div>
       </div>
 
@@ -894,7 +925,7 @@ eᵢⱼ = zᵢⱼ ⊖ (xᵢ⁻¹ ⊕ xⱼ)</div>
         <p>The best cluster gives the pose and its covariance.</p>
       </article>
 
-      <article class="box blue monitor" style="height:400px;">
+      <article class="box blue monitor" style="height:420px;">
         <span class="status">Own code</span>
         <h3>Localization monitor</h3>
         <div class="sub">localization_monitor_node · readiness.py</div>
@@ -902,23 +933,23 @@ eᵢⱼ = zᵢⱼ ⊖ (xᵢ⁻¹ ⊕ xⱼ)</div>
           <div class="st">UNLOCALIZED</div>
           <div class="tr">/initialpose</div>
           <div class="st">CHECKING</div>
-          <div class="tr">settled 2 s + operator OK</div>
+          <div class="tr">settled 2 s + operator OK / label fix</div>
           <div class="st ready">READY</div>
           <div class="tr">any trigger</div>
           <div class="st lost">LOST</div>
         </div>
-        <p>READY needs every automatic check to hold for 2 s and the operator to confirm that live scans line up with the map. Low covariance alone cannot prove the robot is in the right aisle. A new initial pose restarts CHECKING.</p>
+        <p>READY needs every automatic check to hold for 2 s, plus a confirm: the operator's (live scans line up with the map) or a HOME label fix that still agrees with AMCL. While CHECKING, AMCL is asked for an in-place update every 0.5 s, so a parked vehicle converges without a nudge. A new initial pose restarts CHECKING.</p>
         <div class="checks">
           <div class="check"><b>Covariance</b><span>xx, yy ≤ 0.05 m² · yaw ≤ 0.03 rad². LOST if exceeded for 1 s.</span></div>
           <div class="check"><b>Pose jump</b><span><code>map→odom</code> moves &gt; 0.15 m or &gt; 5°. Ignored for 1.5 s after an initial pose.</span></div>
           <div class="check trigger"><b>Long beams · loss trigger</b><span><code>r_meas &gt; r_map + tol</code> and the endpoint lands in mapped free space. LOST if &gt; 15 % for 1 s.</span></div>
-          <div class="check"><b>Scan match</b><span>≥ 60 % of endpoints near mapped obstacles. Gates the operator's confirm only.</span></div>
-          <div class="check"><b>Freshness</b><span>scan 0.15 s · wheels 0.10 s · IMU 0.20 s · TF 0.20 s · AMCL 5 s.</span></div>
+          <div class="check"><b>Scan match</b><span>≥ 60 % of endpoints near mapped obstacles. Gates either confirm, operator or label.</span></div>
+          <div class="check"><b>Freshness</b><span>scan 0.15 s · wheels 0.10 s · IMU 0.20 s (+0.6 s while drives power up) · TF 0.20 s · AMCL 5 s.</span></div>
           <div class="check"><b>Dynamic areas</b><span>Beams in marked dynamic zones are left out of both scan fractions.</span></div>
         </div>
       </article>
 
-      <article class="box cyan" style="left:820px; top:585px; width:714px; height:190px;">
+      <article class="box cyan" style="left:820px; top:600px; width:714px; height:182px;">
         <span class="status">Own code</span>
         <div class="scan-check">
           <div>
@@ -959,7 +990,136 @@ eᵢⱼ = zᵢⱼ ⊖ (xᵢ⁻¹ ⊕ xⱼ)</div>
         <path class="arrow" d="M543 455 H820"/>
         <rect class="label-bg" x="566" y="434" width="232" height="17"/><text x="682" y="446" text-anchor="middle">/amcl_pose + cov · map→odom</text>
       </svg>
-      <div class="slide-note">Source: amcl.yaml · localization/readiness.py · scan_consistency.py</div>
+      <div class="slide-note">Source: amcl.yaml · localization/readiness.py · scan_consistency.py · gls-wait-coding-plan §7 E</div>
+    </section>
+  </div></div>
+
+  <!-- =========================== 05 FLOOR LABELS =========================== -->
+  <div class="frame-wrap"><div class="frame" id="labels">
+    <section class="slide" aria-labelledby="t5">
+      <header class="slide-head">
+        <div class="brand"><h2>GVIEVO-01 · Localization &amp; Mapping</h2></div>
+        <div class="title-wrap">
+          <h1 id="t5">Floor-label fixes</h1>
+          <p>GLS621 camera · label set per map · a pose check where the vehicle stops</p>
+        </div>
+      </header>
+
+      <div class="caption" style="left:66px; top:138px; width:400px;">Camera · read-only, outside the safety path</div>
+      <div class="caption" style="left:566px; top:138px; width:460px;">label_fix_node · only while stationary</div>
+      <div class="caption" style="left:1090px; top:138px; width:444px;">Frames · SE(2) on the floor</div>
+
+      <article class="box violet" style="left:66px; top:165px; width:400px; height:150px;">
+        <span class="status">Hardware</span>
+        <h3>GLS621</h3>
+        <div class="sub">SICK floor camera · 192.168.4.1:2112</div>
+        <p>Looks down from ~203 mm and decodes the Data Matrix codes of one multi-code label: ~14.6 images/s, 4–5 codes each. Sends nothing when no label is in view.</p>
+      </article>
+
+      <article class="box amber" style="left:66px; top:340px; width:400px; height:205px;">
+        <span class="status">Own code</span>
+        <h3>gls_node</h3>
+        <div class="sub">GlsLink thread · never writes the camera</div>
+        <dl class="kv">
+          <dt>Verify</dt><dd>Settings read back at every connect; frames dropped until they match</dd>
+          <dt>Image</dt><dd>Codes sharing one $FAMS → median x, y, angle; two labels = invalid</dd>
+          <dt>Output</dt><dd>Label ID + T<sub>LC</sub>; invalid at 5 Hz after 0.5 s of silence</dd>
+        </dl>
+      </article>
+
+      <article class="box grey" style="left:66px; top:570px; width:400px; height:195px;">
+        <span class="status">Own code</span>
+        <h3>Label set</h3>
+        <div class="sub">&lt;map&gt;/labels/revN.yaml · per map revision</div>
+        <dl class="kv">
+          <dt>HOME</dt><dd>x0000y0000 · optional · read at survey start</dd>
+          <dt>Stops</dt><dd>UBC x0100 · ITG x0200 · PISTON x0300</dd>
+          <dt>Record</dt><dd>“Record label here”: parked, READY, 15 frames → T<sub>ML</sub> from AMCL</dd>
+        </dl>
+      </article>
+
+      <article class="box blue" style="left:566px; top:165px; width:460px; height:330px;">
+        <span class="status">Own code</span>
+        <h3>Accept a reading</h3>
+        <div class="sub">label_fix.py · pure, clock-fed</div>
+        <dl class="kv">
+          <dt>Still</dt><dd>Wheels at rest for 1 s</dd>
+          <dt>Codes</dt><dd>≥ 2 per image; 15 frames within 2 mm / 0.5°</dd>
+          <dt>Label</dt><dd>In the mission's label set, and the one expected at this stop</dd>
+          <dt>Gate</dt><dd>|AMCL − GLS| ≤ 0.30 m / 10°; at boot on HOME no prior is needed, the ID is the evidence</dd>
+          <dt>Deadband</dt><dd>A residual of a few mm: logged, not snapped</dd>
+        </dl>
+        <p>Every decision goes to <code>/amr/label_fix</code> and the drift log: the residual at each stop is the drift measurement.</p>
+      </article>
+
+      <article class="box green" style="left:566px; top:535px; width:460px; height:230px;">
+        <span class="status">Apply</span>
+        <h3>Snap and confirm</h3>
+        <p>1 · Publish <code>/initialpose</code> at T<sub>MB</sub>, σ ≥ 5 mm / 0.5°.</p>
+        <p>2 · AMCL re-seeds its particles there; the monitor restarts CHECKING.</p>
+        <p>3 · A fix that still agrees confirms READY without the operator (LOC_CONFIRMED_BY_LABEL). Scan match ≥ 60 % still applies.</p>
+        <div class="chips"><span class="chip">gls.correct_at_home</span><span class="chip">gls.correct_at_waits</span></div>
+      </article>
+
+      <article class="box" style="left:1090px; top:165px; width:444px; height:330px;">
+        <h3>Where the pose comes from</h3>
+        <svg class="frames-svg" viewBox="0 0 408 150" role="img" aria-label="Map frame M at the lower left; the vehicle B with its camera point C over a floor label L; arrows T_MB from M to B, T_BC from B to C, and T_ML from M to L">
+          <defs><marker id="tfarrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z"/></marker></defs>
+          <rect class="floor" x="0" y="0" width="408" height="150"/>
+          <path class="ax" d="M22 134 H62 M22 134 V96"/>
+          <text x="10" y="146">M</text>
+          <rect class="body" x="168" y="18" width="208" height="88"/>
+          <rect class="lbl" x="300" y="64" width="26" height="26" transform="rotate(6 313 77)"/>
+          <circle class="pt" cx="200" cy="62" r="4"/>
+          <path class="ax" d="M200 62 H232"/>
+          <text x="186" y="50">B</text>
+          <circle class="cam" cx="317" cy="72" r="3.5"/>
+          <text x="326" y="64">C</text>
+          <text x="330" y="100">L</text>
+          <path class="tf" d="M28 128 C80 90 130 66 192 62"/>
+          <path class="tf" d="M206 66 C250 80 280 78 310 73"/>
+          <path class="tf rec" d="M28 136 C140 140 250 118 304 90"/>
+          <text class="t-tf" x="86" y="76">T_MB</text>
+          <text class="t-tf" x="236" y="92">T_BC</text>
+          <text class="t-rec" x="150" y="148">T_ML · label set</text>
+          <text x="346" y="80">T_LC</text>
+        </svg>
+        <div class="math">record  T_ML = T_MB ⊕ T_BC ⊕ T_LC⁻¹
+fix     T_MB = T_ML ⊕ T_LC ⊕ T_BC⁻¹</div>
+        <p>T_BC is the camera mount (<code>gls.mount_*</code>), T_LC one reading, T_ML the label's entry in the set. A label ID is a name: no position is read from its digits.</p>
+      </article>
+
+      <article class="box" style="left:1090px; top:535px; width:444px; height:230px; --tone: var(--ink-2);">
+        <h3>When a fix applies</h3>
+        <table class="tbl">
+          <thead><tr><th style="width:36%">Where</th><th style="width:15%">Label</th><th style="width:25%">AMCL prior</th><th>Then</th></tr></thead>
+          <tbody>
+            <tr><td>Boot on HOME</td><td>HOME</td><td>none needed</td><td>snap + confirm</td></tr>
+            <tr><td>Parked at HOME after a run</td><td>HOME</td><td>≤ 0.30 m / 10°</td><td>re-zero</td></tr>
+            <tr><td>WAITING at a trolley stop</td><td>its own</td><td>≤ 0.30 m / 10°</td><td>snap, then Continue</td></tr>
+            <tr class="never"><td>Any other time</td><td>—</td><td>—</td><td>log only</td></tr>
+          </tbody>
+        </table>
+      </article>
+
+      <div class="stop-strip" style="top:790px;">
+        <strong>Disagree means stop</strong>
+        <span>GLS and AMCL over 0.30 m / 10° apart: LABEL_DISAGREE, Continue refused, no snap. A label not seen only warns (LABEL_NOT_SEEN).</span>
+        <em>Labels check, never steer</em>
+      </div>
+
+      <svg class="wires" viewBox="0 0 1600 900" aria-hidden="true">
+        <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z"/></marker></defs>
+        <path class="arrow" d="M266 315 V340"/>
+        <text x="278" y="332">telegrams</text>
+        <path class="arrow" d="M466 420 H566"/>
+        <rect class="label-bg" x="472" y="399" width="88" height="17"/><text x="516" y="411" text-anchor="middle">/gls/reading</text>
+        <path class="arrow" d="M466 650 C516 650 516 470 566 470"/>
+        <rect class="label-bg" x="494" y="550" width="44" height="17"/><text x="516" y="562" text-anchor="middle">T_ML</text>
+        <path class="arrow" d="M796 495 V535"/>
+        <rect class="label-bg" x="806" y="506" width="52" height="17"/><text x="832" y="518" text-anchor="middle">apply</text>
+      </svg>
+      <div class="slide-note">Source: gls-wait-coding-plan.md §6–7 · gls6-system.md §3 · profiles/agv-01.json gls.* · no fix while moving, none into slam_toolbox</div>
     </section>
   </div></div>
 </main>

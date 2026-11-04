@@ -26,13 +26,26 @@
     <label class="field" style="margin-top:1rem">Arc <small>forward along a circle · R ≥ 1 m · 45–180°</small>
       <span class="inline"><input id="ed-arc-radius" type="number" step="0.1" min="1" max="50" value="1.0" title="radius, m"><input id="ed-arc-angle" type="number" step="5" min="45" max="180" value="90" title="angle, degrees"><button id="btn-arc-l" class="tool" title="Arc to the left (ccw)">Arc L</button><button id="btn-arc-r" class="tool" title="Arc to the right (cw)">Arc R</button></span>
     </label>
+    <label class="field" style="margin-top:1rem">Wait <small>{% if qr %}stop until START or the Run page's Continue{% else %}stop until PB Continue or Start{% endif %} · hitch / release points</small>
+      <span class="inline"><input id="ed-wait-name" type="text" maxlength="40" placeholder="UBC hitch" title="what the operator reads while it waits"><select id="ed-wait-label" title="optional: the floor label recorded at this stop (Run page: Record label here)"><option value="">— no label —</option></select><button id="btn-wait" class="tool" title="Add a wait at the route's end pose">Wait</button></span>
+    </label>
+    <label class="field" style="margin-top:1rem">Home <small>last step · forward to the start pose · ≤ 5 m behind it</small>
+      <span class="inline"><button id="btn-home" class="tool" title="End the route at the start pose (HOME): a straight if the route already ends on HOME's line, otherwise an S-curve (radius ≥ 1 m, at most 20° off HOME's heading)">Go home</button></span>
+    </label>
     <div class="bar">
       <button id="btn-undo" class="tool">Undo</button><button id="btn-redo" class="tool">Redo</button><button id="btn-clear" class="danger">Clear steps</button>
     </div>
     <div class="sep"></div>
+    <h3>Measure <small>view only · never changes the route</small></h3>
+    <div class="bar" style="margin-top:0">
+      <button id="tool-measure" class="tool" title="Click two points: distance, ΔX and ΔY in map mm. Snaps to waits, arc centres, step ends and route lines">Measure</button>
+      <label class="check" style="margin:0;align-items:center" title="Off (or hold Shift): measure from exactly where you click"><input id="ed-snap" type="checkbox" checked> Snap</label>
+    </div>
+    <div id="ed-measure"><div class="none">select Measure, then click two points on the map</div></div>
+    <div class="sep"></div>
     <h3>Limits</h3>
     <label class="field">Repeat count <input id="ed-repeat" type="number" min="1" max="100" value="1"></label>
-    <p class="note">Speed <b id="ed-speed" data-v="{{ '%.2f' % trackless_v }}">{{ '%.2f' % trackless_v }}</b> m/s — the vehicle's trackless speed, not a route setting. Reverse runs at half; a tight arc slower.</p>
+    <p class="note">Speed <b id="ed-speed" data-v="{{ '%.2f' % trackless_v }}">{{ '%.2f' % trackless_v }}</b> m/s — the vehicle's trackless speed, not a route setting. Reverse runs at half; arcs at 0.30 m/s, a tight arc slower still.</p>
     <div class="bar">
       <button id="btn-validate" class="big">Validate</button>
       <button id="btn-save" class="big run">Save revision</button>
@@ -50,4 +63,4 @@
   </div>
 </section>
 {% endblock %}
-{% block scripts %}<script src="/static/mapview.js"></script><script src="/static/editor.js"></script>{% endblock %}
+{% block scripts %}<script src="/static/mapview.js"></script><script src="/static/measure.js"></script><script src="/static/editor.js"></script>{% endblock %}

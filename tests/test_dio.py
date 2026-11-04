@@ -170,8 +170,7 @@ def test_dio_faults():
 def test_dio_health():
     """comms_ok keys on recent SUCCESSFUL scans, not on socket state.
 
-    The opposite of RfidLink, deliberately: the reader is push-only so silence
-    is normal, but this module is polled, so silence is the fault.
+    This module is polled, so silence is the fault, never a quiet period.
     """
     print("\ndio: health verdict")
 

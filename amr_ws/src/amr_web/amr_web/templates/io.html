@@ -8,7 +8,7 @@
   <div id="io-link" class="tel-grid"></div>
   <p id="io-detail" class="note"></p>
 </section>
-<section id="io-lists" class="cols">
+<section id="io-lists" class="cols" data-estop-ch="{{ estop_ch if estop_ch is not none else '' }}">
   <div><h2>Inputs <small>DI</small></h2><div id="di" class="io-list"><div class="none">no I/O image</div></div></div>
   <div><h2>Outputs <small>DO · req / read</small></h2><div id="do" class="io-list"><div class="none">no I/O image</div></div></div>
 </section>
@@ -16,14 +16,26 @@
 {% block scripts %}<script>
 const lamp = (on, cls) => `<span class="lamp ${cls || ''} ${on ? 'on' : ''}" title="${on ? 'on' : 'off'}"></span>`;
 const ch = (p, i) => `${p}${String(i).padStart(2, '0')}`;
+// DI08 "E-stop OK (safety PLC)": HIGH = no emergency. The channel is the profile's
+// panel.di_estop_ok; without it, the input whose name says E-stop. LOW is shown red, with
+// the controller's derived emergency state (PanelState.emergency) beside it.
+const ESTOP_CH = document.getElementById('io-lists').dataset.estopCh;
+const isEstop = (names, i) => ESTOP_CH !== '' ? i === +ESTOP_CH : /e-?stop/i.test(names[i] || '');
+function estopNote() {
+  const e = lastState && lastState.emergency;
+  return e ? `emergency: ${e.state_name}` : 'emergency: –';
+}
 async function tick() {
   const { status, data } = await apiGet('/api/io');
   if (status === 200 && data) {
     const stale = !data.comms_ok || data.age_s > 1.0;
     document.getElementById('io-lost').hidden = !stale;
     document.getElementById('io-lists').classList.toggle('stale-block', stale);
-    document.getElementById('di').innerHTML = data.di.map((v, i) =>
-      `<div class="io-row"><span class="io-ch">${ch('DI', i)}</span>${lamp(v)}<span class="io-name">${esc(data.di_names[i])}</span></div>`).join('');
+    document.getElementById('di').innerHTML = data.di.map((v, i) => {
+      const es = isEstop(data.di_names, i);
+      const name = es ? `${data.di_names[i] || 'E-stop OK'} · ${v ? 'OK' : 'LOW'} · ${estopNote()}` : data.di_names[i];
+      return `<div class="io-row${es && !v ? ' bad' : ''}"><span class="io-ch">${ch('DI', i)}</span>${lamp(v)}<span class="io-name">${esc(name)}</span></div>`;
+    }).join('');
     document.getElementById('do').innerHTML = '<div class="io-row do head"><span></span><span>req</span><span>read</span><span></span></div>' +
       data.do_readback.map((v, i) =>
         `<div class="io-row do"><span class="io-ch">${ch('DO', i)}</span>${lamp(data.do_requested[i], 'do')}${lamp(v, 'do')}<span class="io-name">${esc(data.do_names[i])}</span></div>`).join('');

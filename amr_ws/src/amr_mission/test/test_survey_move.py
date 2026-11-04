@@ -38,12 +38,10 @@ def test_bounds():
     assert sm.Move.parse("rotate", -90).target == pytest.approx(-math.pi / 2)
     assert sm.Move.parse("rotate", 45).label() == "spin left 45 deg"
     assert sm.Move.parse("rotate", -90).label() == "spin right 90 deg"
-    assert sm.Move.parse("rotate", -20).label() == "spin right 20 deg"
     for kind, value in (
         ("straight", 0.01),
         ("straight", 10.5),
-        ("rotate", 10),
-        ("rotate", 60),
+        ("rotate", 30),
         ("rotate", 270),
         ("strafe", 1.0),
         ("straight", float("nan")),
@@ -57,7 +55,7 @@ def test_straight_arrives_within_a_centimetre_at_the_survey_speed():
     (x, y, yaw), t, reason, peak_v, _ = drive(ctl, pose=(1.0, 2.0, math.pi / 2))
     assert reason == "" and abs(ctl.achieved() - 3.0) <= 0.011
     assert (x, y) == (pytest.approx(1.0, abs=0.01), pytest.approx(5.0, abs=0.011))
-    assert peak_v <= 0.30 + 1e-9 and peak_v > 0.28
+    assert peak_v <= 0.40 + 1e-9 and peak_v > 0.38
     assert t < ctl.nominal_s + 3.0
 
 
@@ -69,7 +67,7 @@ def test_reverse_and_heading_hold():
     assert abs(math.degrees(yaw)) < 1.5
 
 
-@pytest.mark.parametrize("deg", [20, -20, 30, -30, 45, -90, 135, 180, -180])
+@pytest.mark.parametrize("deg", [45, -90, 135, 180, -180])
 def test_spins_arrive_within_half_a_degree_at_0_2_rad_s(deg):
     ctl = sm.MoveController(sm.Move.parse("rotate", deg))
     (_, _, yaw), _, reason, peak_v, peak_w = drive(ctl, pose=(0.0, 0.0, 3.0))
@@ -103,5 +101,3 @@ def test_verdict_thresholds():
     spin = sm.Move.parse("rotate", 90)
     assert not sm.check_verdict(spin, 0.11, 0.0)[0]
     assert sm.check_verdict(spin, 0.02, math.radians(1.9))[0]
-    ok, text = sm.check_verdict(straight, 0.26, math.radians(20.0))  # 2026-10-23 boiacca slip
-    assert not ok and "broken" in text and "Abort" in text and "slipped" not in text

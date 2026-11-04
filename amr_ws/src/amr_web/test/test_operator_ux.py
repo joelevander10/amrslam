@@ -136,7 +136,9 @@ def test_a_field_stop_says_it_resumes_by_itself_and_offers_no_button():
     assert h["state"] == view.STOPPED_WILL_RESUME and h["button"] == ""
 
 
-def test_an_estop_hold_tells_the_operator_to_press_start():
+def test_an_inferred_estop_hold_sends_the_operator_to_the_cabinet_reset():
+    """The executor's torque-inferred 'estop' hold (panel stale or not yet reporting): the
+    same ESTOP words as the panel's emergency - release, then the physical Reset."""
     st = merged(
         run={
             "state_name": "BLOCKED",
@@ -149,7 +151,7 @@ def test_an_estop_hold_tells_the_operator_to_press_start():
         }
     )
     h = view.headline(st, view.standing(st))
-    assert h["state"] == view.STOPPED_NEEDS_YOU and "Start" in h["action"]
+    assert h["state"] == view.STOPPED_NEEDS_YOU and "Reset" in h["action"] and h["button"] == ""
 
 
 def test_an_executor_fault_offers_acknowledge():
@@ -279,8 +281,9 @@ def test_events_carry_the_catalogue_title(tmp_path):
 
 
 def test_a_fresh_session_lands_on_the_engineer_view(tmp_path):
+    """2026-10-30: Status folded into Home and Monitor, so both roles land on Home."""
     client, _ = app_for(merged(), tmp_path)
-    assert client.get("/").headers["Location"].endswith("/status")
+    assert client.get("/").headers["Location"].endswith("/home")
     assert client.get("/api/role").get_json()["role"] == role.ENGINEER
 
 
@@ -299,8 +302,9 @@ def test_the_engineer_pin_opens_the_engineering_nav(tmp_path):
     client, _ = app_for(merged(), tmp_path)
     assert client.post("/api/role", json={"role": "engineer", "pin": "0000"}).status_code == 403
     assert client.post("/api/role", json={"role": "engineer", "pin": role.DEFAULT_PIN}).status_code == 200
-    body = client.get("/status").get_data(as_text=True)
-    assert "/params" in body and "/commissioning" in body
+    body = client.get("/home").get_data(as_text=True)
+    assert "/params" in body and "/monitor" in body
+    assert "/commissioning" not in body and 'href="/status"' not in body  # removed 2026-10-30
     # and the way back is always open: a guard you cannot leave is a trap
     assert client.post("/api/role", json={"role": "operator"}).status_code == 200
     assert "/params" not in client.get("/home").get_data(as_text=True)
@@ -311,9 +315,9 @@ def test_only_the_engineer_gets_an_unconditional_restart_button(tmp_path):
     rebuilt; an engineer restarts for other reasons (a rebuilt overlay, a changed env)."""
     client, _ = app_for(merged(), tmp_path)
     client.post("/api/role", json={"role": "operator"})
-    assert 'id="btn-restart"' not in client.get("/status").get_data(as_text=True)
+    assert 'id="btn-restart"' not in client.get("/monitor").get_data(as_text=True)
     client.post("/api/role", json={"role": "engineer", "pin": role.DEFAULT_PIN})
-    assert 'id="btn-restart"' in client.get("/status").get_data(as_text=True)
+    assert 'id="btn-restart"' in client.get("/monitor").get_data(as_text=True)
 
 
 def test_the_pin_lives_outside_the_repository_and_can_be_overridden(tmp_path, monkeypatch):
@@ -451,37 +455,19 @@ def test_the_engineer_pin_is_typed_on_an_on_page_keypad(tmp_path):
     assert "prompt(" not in js
 
 
-def test_the_manual_page_shows_the_line_reading_above_the_pad(tmp_path):
-    """The MLS reading is read in every mode; the engineer jogs over tape and watches LCP1..3."""
-    client, _ = app_for(merged(), tmp_path)
-    body = client.get("/manual").get_data(as_text=True)
-    assert 'id="line-track"' in body and 'id="lt-lcps"' in body
-    assert body.index('id="line-track"') < body.index('id="jog"')
-
-
-def test_rfid_tags_show_on_the_manual_and_run_tracked_pages(tmp_path):
-    client, _ = app_for(merged(), tmp_path)
-    for page in ("/manual", "/run-tracked"):
-        body = client.get(page).get_data(as_text=True)
-        assert 'id="rf-status"' in body and 'id="rf-tags"' in body, page
-        assert "rfidTags(st.rfid)" in body, page
-    # the last tag, large for the HMI: Run tracked only (operator, 2026-10-07)
-    assert 'id="rf-last"' in client.get("/run-tracked").get_data(as_text=True)
-    assert 'id="rf-last"' not in client.get("/manual").get_data(as_text=True)
-
-
-def test_home_shows_speed_rfid_and_line_tiles_and_loads_no_mission(tmp_path):
-    """2026-10-08: setting a mission is not a Home thing. Home shows three live readings."""
+def test_home_shows_the_speed_tile_and_loads_no_mission(tmp_path):
+    """2026-10-08: setting a mission is not a Home thing. Home shows the measured speed."""
     client, _ = app_for(merged(), tmp_path)
     body = client.get("/home").get_data(as_text=True)
-    for tile in ("live-speed", "live-rfid", "live-line"):
-        assert f'id="{tile}"' in body, tile
+    assert 'id="live-speed"' in body and 'class="home-live"' in body
+    for gone in ("live-rfid", "live-marker", "live-line"):
+        assert f'id="{gone}"' not in body, gone
     assert "home-mission" not in body and "/api/mission/run" not in body
-    assert "/static/linetrack.js" in body, "the RFID 'reading now' rule is shared, not copied"
+    assert "linetrack.js" not in body
 
 
 def test_home_shows_the_job_beside_the_status_and_cannot_set_it(tmp_path):
-    """2026-10-08: the job is shown on Home, wider than the status block; set on Run tracked."""
+    """2026-10-08: the job is shown on Home, wider than the status block."""
     client, _ = app_for(merged(), tmp_path)
     body = client.get("/home").get_data(as_text=True)
     top = body.index('class="home-top"')
@@ -515,119 +501,69 @@ def test_the_adapter_reports_measured_wheel_speed_as_body_speed(monkeypatch):
     assert a._wheels["valid"] is False and a._wheels["v_mps"] is None
 
 
-def test_the_adapter_keeps_the_rfid_link_and_the_last_tag_passes():
-    """Heartbeats set the link; each encounter is one pass, newest first, at most RFID_RECENT."""
+def test_one_run_tab_and_maps_routes_live_under_run(tmp_path):
+    """2026-10-27 (trackless only): one Run tab, no tracked pages; Maps/Routes in its subnav."""
+    client, _ = app_for(merged(), tmp_path)
+    body = client.get("/home").get_data(as_text=True)
+    nav = body.split('<nav>')[1].split('</nav>')[0]
+    assert '<a href="/run"' in nav and ">Run<" in nav
+    assert "Run tracked" not in body and "Run trackless" not in body and ">Teach<" not in body
+    assert "/run-tracked" not in nav and "/teach" not in nav
+    assert "/maps" not in nav and "/editor" not in nav, "Maps/Routes left the top nav"
+    sub = client.get("/maps").get_data(as_text=True)
+    assert 'class="subnav"' in sub and 'href="/maps"' in sub and 'href="/editor"' in sub
+    for path in ("/run", "/run-trackless", "/maps", "/editor", "/review"):
+        assert client.get(path).status_code == 200, path
+
+
+def test_the_tracked_pages_and_line_apis_are_gone(tmp_path):
+    client, stub = app_for(merged(), tmp_path)
+    for path in ("/run-tracked", "/teach", "/api/line/missions", "/api/line/site"):
+        assert client.get(path).status_code == 404, path
+    for path in ("/api/line/mission", "/api/line/clear", "/api/line/teach", "/api/line/at_home"):
+        assert client.post(path, json={}).status_code == 404, path
+    r = client.post("/api/mode", json={"target": "line"})
+    assert r.status_code == 400 and r.get_json()["message"] == "target must be idle or navigation"
+    assert stub.calls == [], "nothing reached the adapter"
+    home = client.get("/home").get_data(as_text=True)
+    assert 'id="nav-tracked"' not in home and "home-nav" not in home
+
+
+def test_base_renders_the_run_tab_with_no_product_variable(tmp_path):
+    """An undefined Jinja variable is falsy: a leftover `{% if trackless_ok %}` would hide Run."""
+    from flask import render_template_string
+
+    client, _ = app_for(merged(), tmp_path)
+    app = client.application
+    with app.test_request_context("/home"):
+        body = render_template_string('{% extends "base.html" %}', page="home")
+    assert '<a href="/run"' in body and ">Run<" in body
+    src = open(os.path.join(app.root_path, app.template_folder, "base.html"), encoding="utf-8").read()
+    assert "trackless_ok" not in src and "tracked_ok" not in src and "product" not in src
+
+
+def test_the_adapter_state_carries_no_tracked_keys(monkeypatch):
     import threading
-    from types import SimpleNamespace
 
     from amr_web import adapter as ad
 
     a = ad.RosAdapter.__new__(ad.RosAdapter)
     a._lock = threading.Lock()
-    a._rfid, a._rfid_t = None, 0.0
-    import collections
-
-    a._rfid_tags = collections.deque(maxlen=ad.RFID_RECENT)
-    clock = [100.0]
-    a._now = lambda: clock[0]
-
-    def msg(**kw):
-        base = dict(heartbeat=False, rfid_tag="", encounter_seq=0, generation=0, comms_ok=True,
-                    rx_age_s=0.1, tag_age_s=-1.0,
-                    rssi_dbm=0.0, channel=-1, freq_mhz=0.0, reader="", config_mismatch=[])
-        base.update(kw)
-        return SimpleNamespace(**base)
-
-    assert a._rfid_state(100.0) == {"link": None, "tags": []}
-    a._on_rfid(msg(heartbeat=True, encounter_seq=0))
-    for n in range(1, ad.RFID_RECENT + 3):
-        clock[0] += 1.0
-        a._on_rfid(msg(rfid_tag=f"{n:04X}", encounter_seq=n))
-    a._on_rfid(msg(heartbeat=False, rfid_tag="", encounter_seq=99))  # no tag: not a pass
-    st = a._rfid_state(clock[0] + 0.5)
-    assert st["link"]["comms_ok"] and st["link"]["age_s"] == pytest.approx(ad.RFID_RECENT + 2 + 0.5)
-    assert [t["tag"] for t in st["tags"]][:2] == [f"{ad.RFID_RECENT + 2:04X}", f"{ad.RFID_RECENT + 1:04X}"]
-    assert len(st["tags"]) == ad.RFID_RECENT and st["tags"][0]["age_s"] == pytest.approx(0.5)
-    assert st["link"]["rssi_dbm"] is None and st["tags"][0]["rssi_dbm"] is None  # no read yet: not 0 dBm
-
-    # Read quality and the reader's configuration ride along for display.
-    mism = ["region: reader 1, profile expects 0"]
-    a._on_rfid(msg(heartbeat=True, rssi_dbm=-74.0, channel=0,
-                   reader="active RS232 US 902.75-927.25 MHz 30 dBm", config_mismatch=mism))
-    a._on_rfid(msg(rfid_tag="0020", encounter_seq=200, rssi_dbm=-72.5, channel=3))
-    st = a._rfid_state(clock[0])
-    assert (st["link"]["rssi_dbm"], st["link"]["channel"]) == (-74.0, 0)
-    assert st["link"]["reader"].startswith("active") and st["link"]["config_mismatch"] == mism
-    assert st["tags"][0]["tag"] == "0020" and st["tags"][0]["rssi_dbm"] == -72.5
-
-
-def _product_app(product, tmp_path):
-    maps = tmp_path / "maps"
-    maps.mkdir(exist_ok=True)
-    stub = Stub(merged())
-    app = create_app(stub, str(maps), state_dir=str(tmp_path / "state"), product=product)
-    app.config["TESTING"] = True
-    return app.test_client(), stub
-
-
-def test_two_run_tabs_and_maps_routes_live_under_run_trackless(tmp_path):
-    """2026-10-02: "Run" was ambiguous with two navigation types."""
-    client, _ = _product_app("both", tmp_path)
-    body = client.get("/status").get_data(as_text=True)
-    assert ">Run tracked<" in body and ">Run trackless<" in body
-    nav = body.split('<nav>')[1].split('</nav>')[0]
-    assert "/maps" not in nav and "/editor" not in nav, "Maps/Routes left the top nav"
-    sub = client.get("/maps").get_data(as_text=True)
-    assert 'class="subnav"' in sub and 'href="/editor"' in sub
-    assert client.get("/run-trackless").status_code == 200
-
-
-def test_a_product_the_profile_does_not_carry_is_404_not_hidden(tmp_path):
-    client, _ = _product_app("slam", tmp_path)
-    assert ">Run tracked<" not in client.get("/status").get_data(as_text=True)
-    assert client.get("/run-tracked").status_code == 404
-    assert client.post("/api/line/clear").status_code == 404
-    client, _ = _product_app("tape", tmp_path)
-    for path in ("/run", "/maps", "/editor"):
-        assert client.get(path).status_code == 404, path
-    assert client.get("/run-tracked").status_code == 200
-
-
-def test_line_apis_reach_the_layer_and_never_move_anything(tmp_path):
-    client, stub = _product_app("both", tmp_path)
-    listing = client.get("/api/line/missions").get_json()
-    assert "line-a" in listing["missions"] and "empty" not in listing["missions"]
-    assert listing["destinations"]["line-a"] == ["MRU1", "MRU2", "MRU3", "MRU4"], "offered as a list"
-    # 2026-10-23: the picker notes each job's branch and speed rule, the "none" entry included.
-    assert {"basic-right", "basic-high-left", "basic-high-right"} <= set(listing["missions"])
-    assert listing["notes"]["empty"] == "always branch left · normal speed"
-    assert listing["notes"]["basic-high-right"] == "always branch right · HIGH zones (markers 2→1)"
-    assert client.post("/api/line/mission", json={"name": "line-a", "destination": "MRU2"}).status_code == 200
-    assert client.post("/api/line/clear").status_code == 200
-    assert stub.calls == [("line_mission", ("line-a", "MRU2")), ("line_clear", ())]
-
-
-def test_run_tracked_has_no_arm_button_and_no_arm_api(tmp_path):
-    """2026-10-07: the physical Start runs from IDLE; motor arming is drive_node's."""
-    client, _ = _product_app("tape", tmp_path)
-    assert "btn-line-arm" not in client.get("/run-tracked").get_data(as_text=True)
-    assert client.post("/api/line/arm").status_code in (404, 405)
-
-
-def test_tracked_trackless_is_one_switch_on_home(tmp_path):
-    """2026-10-08: level 1 of navigation is a Home switch (tracked = LINE, the boot
-    default; trackless = IDLE and its mapping/navigation steps). Run tracked no longer
-    carries mode buttons, and a single-product vehicle has nothing to switch."""
-    client, _ = _product_app("both", tmp_path)
-    home = client.get("/home").get_data(as_text=True)
-    assert 'id="nav-tracked"' in home and 'data-target="line"' in home
-    assert 'id="nav-trackless"' in home and 'data-target="idle"' in home
-    tracked = client.get("/run-tracked").get_data(as_text=True)
-    assert "btn-line-mode" not in tracked and "btn-line-idle" not in tracked
-    for product in ("tape", "slam"):
-        (tmp_path / product).mkdir()
-        client, _ = _product_app(product, tmp_path / product)
-        assert 'id="nav-tracked"' not in client.get("/home").get_data(as_text=True), product
+    a._now = lambda: 10.0
+    for name in ("_mode", "_lease", "_panel", "_drives", "_mux", "_wheels", "_mapping", "_loc", "_run",
+                 "_survey_move", "_scan_recv_t", "_ipc_temp", "_emg", "_emg_active_t"):
+        setattr(a, name, None)
+    for name in ("_mode_t", "_lease_t", "_panel_t", "_drives_t", "_mux_t", "_wheels_t", "_mapping_t",
+                 "_loc_t", "_run_t", "_survey_move_t", "_started_t", "_emg_t"):
+        setattr(a, name, 0.0)
+    a._ipc_temp_t, a._diag = 10.0, {}
+    a._disk_t, a._disk_cache = 10.0, {"free_mb": 1, "level": "ok", "path": "/"}
+    st = a.state()
+    assert "wheels" in st and "mux" in st
+    for gone in ("line", "line_track", "rfid", "markers"):
+        assert gone not in st, gone
+    assert 7 not in ad.MODE_NAMES and 7 not in ad.MUX_NAMES
+    assert not hasattr(ad, "LINE_NAMES") and not hasattr(ad, "RFID_RECENT")
 
 
 def test_ipc_temperature_reads_coretemp_package_and_hottest_core(tmp_path):
@@ -646,65 +582,10 @@ def test_ipc_temperature_reads_coretemp_package_and_hottest_core(tmp_path):
 
 def test_supply_and_temperature_chips_sit_beside_net_on_every_page(tmp_path):
     client, _ = app_for(merged(), tmp_path)
-    for page in ("/home", "/status", "/manual"):
+    for page in ("/home", "/monitor", "/manual"):
         body = client.get(page).get_data(as_text=True)
         net = body.index('id="net"')
         assert net < body.index('id="supply"') < body.index('id="ipc-temp"'), page
-
-
-# ---- MLS markers on Home (mls-marker-plan 6.1, 2026-10-09) ----------------------------
-
-
-def _home(tmp_path):
-    maps = tmp_path / "maps"
-    maps.mkdir(exist_ok=True)
-    app = create_app(Stub(merged()), str(maps), state_dir=str(tmp_path / "state"))
-    app.config["TESTING"] = True
-    return app.test_client().get("/home").get_data(as_text=True)
-
-
-def test_home_always_puts_the_marker_tile_right_after_rfid(tmp_path):
-    """2026-10-23: markers are always on, so the tile is not behind a profile switch."""
-    body = _home(tmp_path)
-    assert 'class="home-live three"' in body
-    rfid, marker, line = (body.index(f'id="{t}"') for t in ("live-rfid", "live-marker", "live-line"))
-    assert rfid < marker < line, "Speed · RFID · Marker on the first row, the line sensor under them"
-    assert "markerReading(" in body, "the marker rule is shared in linetrack.js, not copied"
-
-
-def test_the_adapter_keeps_the_marker_status_and_the_last_markers():
-    import collections
-    import threading
-    from types import SimpleNamespace
-
-    from amr_web import adapter as ad
-
-    a = ad.RosAdapter.__new__(ad.RosAdapter)
-    a._lock = threading.Lock()
-    a._marker, a._marker_t, a._marker_gen = None, 0.0, None
-    a._marker_reads = collections.deque(maxlen=ad.RFID_RECENT)
-    clock = [100.0]
-    a._now = lambda: clock[0]
-
-    def msg(**kw):
-        base = dict(heartbeat=False, seq=0, generation=0, code=0, raw=0, direction=0, lcp2_mm=0,
-                    nlcp=2, line_good=True, markers_ok=True, status="ok", rejects=0, aborts=0)
-        base.update(kw)
-        return SimpleNamespace(**base)
-
-    assert a._marker_state(100.0) == {"link": None, "events": []}
-    a._on_marker(msg(heartbeat=True))
-    clock[0] += 1.0
-    a._on_marker(msg(seq=1, code=2, raw=4, lcp2_mm=-3))
-    clock[0] += 1.0
-    a._on_marker(msg(seq=2, code=1, raw=2, lcp2_mm=5, aborts=1))
-    st = a._marker_state(clock[0] + 0.5)
-    assert [e["code"] for e in st["events"]] == [1, 2] and st["events"][0]["age_s"] == pytest.approx(0.5)
-    assert st["link"]["count"] == 2 and st["link"]["aborts"] == 1 and st["link"]["markers_ok"]
-    a._on_marker(msg(heartbeat=True, generation=1, seq=0, status="misconfigured: 2028h:03 = 0 (want 1)",
-                     markers_ok=False))
-    st = a._marker_state(clock[0])
-    assert st["events"] == [] and st["link"]["status"].startswith("misconfigured")
 
 
 def test_the_adapter_never_assigns_one_attribute_twice_in_init():
@@ -729,3 +610,45 @@ def test_the_adapter_never_assigns_one_attribute_twice_in_init():
                     names.append(e.attr)
     dup = sorted({n for n in names if names.count(n) > 1})
     assert not dup, f"assigned twice in RosAdapter.__init__: {dup}"
+
+
+# ---- route wait steps (gls-wait-coding-plan §A.5, 2026-10-30) ---------------------------
+
+
+def _waiting(**over):
+    run = {"state_name": "WAITING", "wait_name": "UBC hitch", "mission_id": "m1", "step_index": 1,
+           "step_id": "w1", "continue_refused": "", "reason": "waiting at UBC hitch"}
+    run.update(over)
+    return merged(run=run)
+
+
+def test_a_waiting_run_says_press_continue_and_offers_no_web_button():
+    st = _waiting()
+    rows = view.standing(st)
+    h = view.headline(st, rows)
+    assert h["state"] == f"{view.WAITING} · UBC hitch" and "Continue" in h["action"]
+    assert h["code"] == "RUN_WAITING" and h["button"] == "", "only the physical button releases a wait (W4)"
+    assert h["run_active"] and "step 2" in h["detail"]
+
+
+def test_a_refused_continue_is_the_row_the_operator_reads_first():
+    st = _waiting(continue_refused="0.25 m / 0.0 deg off the wait pose; reposition or abort")
+    h = view.headline(st, view.standing(st))
+    assert h["code"] == "CONTINUE_REFUSED" and h["state"].startswith(view.WAITING)
+    assert [r["code"] for r in view.standing(st)][:2] == ["CONTINUE_REFUSED", "RUN_WAITING"]
+
+
+def test_the_status_and_commissioning_pages_are_gone(tmp_path):
+    """2026-10-30: Status folded into Home (mode, reason, fault, Return to idle, Recover) and
+    Monitor (map, readiness, standing codes, Restart); Commission removed with pp. The blind
+    run came back on 2026-11-02 as its own page, /blindrun (PV only), not as /commissioning."""
+    client, _ = app_for(merged(), tmp_path)
+    for path in ("/status", "/commissioning"):
+        assert client.get(path).status_code == 404, path
+    assert client.get("/blindrun").status_code == 200
+    home = client.get("/home").get_data(as_text=True)
+    for el in ("home-mode", "home-reason", "home-fault", "home-idle", "home-recover"):
+        assert f'id="{el}"' in home, el
+    mon = client.get("/monitor").get_data(as_text=True)
+    for el in ('id="st-active"', 'id="st-standing"', 'id="st-ready"', 'id="mon"'):
+        assert el in mon, el

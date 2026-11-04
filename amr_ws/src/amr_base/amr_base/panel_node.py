@@ -7,6 +7,9 @@
     /cmd_wheel_vel + /drives/status
         -> horn-and-lights coil (DO HORN_DO_CHANNEL), renewed every tick,
            expiring on its own (config.HORN_HOLD_S) if this node dies
+    DI08 (panel.di_estop_ok) + Reset + /drives/status
+        -> PanelState.estop_ok / emergency (amr_base/emergency.py) and the ESTOP*
+           events; while not NORMAL every coil this node drives is LOW
 
 The panel is the ONLY thing that can authorise motion on the ROS side (the mux
 takes authority from /amr/panel_state, the executor needs a Start edge under
@@ -30,12 +33,11 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy, qos_profile_sensor_data
 
-from amr_base import panel_io
+from amr_base import emergency, panel_io
 from amr_interfaces.msg import (
     DriveStatus,
     Event,
     IoImage,
-    LineState,
     MuxState,
     PanelState,
     RunState,
@@ -82,11 +84,9 @@ class PanelNode(Node):
         self._wheels_t: float | None = None
         # dio.alarm_on: the run states and the scanner fields as the mux sees them.
         self.create_subscription(MuxState, "/amr/mux_state", self._on_mux, RELIABLE_1)
-        self.create_subscription(LineState, "/amr/line_state", self._on_line, LATCHED)
         self.create_subscription(RunState, "/amr/run_state", self._on_run, LATCHED)
         self._mux: MuxState | None = None
         self._mux_t: float | None = None
-        self._line_state: int | None = None
         self._run_state: int | None = None
         self._run_premove = False
         self._alarm = False
@@ -95,6 +95,8 @@ class PanelNode(Node):
         self._armed = False
         self._armed_t: float | None = None  # a stale "armed" is not armed (unified plan §7.1)
         self._horn = None
+        self.emergency = emergency.Emergency(config.PANEL_ESTOP_RESET_TIMEOUT_S)
+        self._drive_states: tuple[str, str, str] = ("", "", "")
 
         if not config.DIO_ENABLED:
             self.get_logger().warn("dio.enabled is false in the profile: no panel, no horn, valid=false")
@@ -105,10 +107,12 @@ class PanelNode(Node):
         self.create_timer(1.0 / float(self.get_parameter("rate_hz").value), self._tick)
         self.get_logger().info(
             f"panel on DIO {config.DIO_IP}:{config.DIO_PORT}: reset DI{config.PANEL_DI_RESET}, "
-            f"start DI{config.PANEL_DI_START}, selector DI{config.PANEL_DI_AUTO} "
+            f"start DI{config.PANEL_DI_START}, continue DI{config.PANEL_DI_CONTINUE}, selector DI{config.PANEL_DI_AUTO} "
             f"(ON = {'AUTO' if config.PANEL_AUTO_WHEN_ON else 'MANUAL'}), "
-            f"manual arm DI{config.PANEL_DI_MANUAL_ARM}; "
-            f"horn {f'DO{config.HORN_DO_CHANNEL}' if config.HORN_ENABLED else 'disabled'}; "
+            f"manual arm DI{config.PANEL_DI_MANUAL_ARM}, E-stop OK DI{config.PANEL_DI_ESTOP_OK}, "
+            + (", ".join(f"{n} DI{ch}" for n, ch, _r in config.PANEL_DESTINATIONS) or "no destinations")
+            + "; "
+            + f"horn {f'DO{config.HORN_DO_CHANNEL}' if config.HORN_ENABLED else 'disabled'}; "
             + (
                 f"pendant fwd DI{config.PENDANT_DI_FWD}, "
                 f"rvs DI{config.PENDANT_DI_RVS}, left DI{config.PENDANT_DI_LEFT}, "
@@ -127,9 +131,6 @@ class PanelNode(Node):
     def _on_mux(self, m: MuxState) -> None:
         self._mux, self._mux_t = m, time.monotonic()
 
-    def _on_line(self, m: LineState) -> None:
-        self._line_state = int(m.state)
-
     def _on_run(self, m: RunState) -> None:
         self._run_state = int(m.state)
         self._run_premove = bool(m.premove)
@@ -143,6 +144,7 @@ class PanelNode(Node):
     def _on_drives(self, m: DriveStatus) -> None:
         self._armed = bool(m.operational)
         self._armed_t = time.monotonic()
+        self._drive_states = (str(m.left_state), str(m.right_state), str(m.link_state))
 
     # -- tick --
 
@@ -155,6 +157,7 @@ class PanelNode(Node):
             self.get_logger().info(frame.changed)
             lvl = Event.WARN if "LOST" in frame.changed or "invalid" in frame.changed else Event.INFO
             self._event(lvl, "PANEL", frame.changed)
+        normal = self._emergency_step(frame)
         self._io_n = (self._io_n + 1) % self._io_every
         if self._io_n == 0:
             self._publish_io(snap)
@@ -164,48 +167,80 @@ class PanelNode(Node):
         m.mode_auto = frame.mode_auto
         m.start_edge = frame.start_edge
         m.reset_edge = frame.reset_edge
+        m.continue_edge = frame.continue_edge
+        m.dest_edge = frame.dest_edge
         m.seq = frame.seq
         m.pendant_fwd, m.pendant_rvs, m.pendant_left, m.pendant_right = frame.pendant
         m.manual_arm = frame.manual_arm
+        m.estop_ok = frame.estop_ok
+        m.emergency = self.emergency.state
         self._pub.publish(m)
         if time.monotonic() - self._ui_t >= 0.1:
             self._ui_t = time.monotonic()
             self._pub_ui.publish(m)
 
-        # dio.motion_on (DO00, DO08): on while the motors turn, off when they do not, in any
-        # mode. Feedback older than WHEELS_FRESH_S counts as not turning.
+        # dio.motion_on (DO00 lamp, DO01 horn): on while the motors turn, off when they do not,
+        # in any mode. Feedback older than WHEELS_FRESH_S counts as not turning.
         fresh = self._wheels_t is not None and time.monotonic() - self._wheels_t <= WHEELS_FRESH_S
 
-        # dio.alarm_on (DO01): AUTO run active and a scanner field occupied, or the
+        # dio.alarm_on (DO02): AUTO run active and a scanner field occupied, or the
         # pre-move warning after a Start.
         mux = self._mux
         mux_fresh = mux is not None and time.monotonic() - self._mux_t <= MUX_FRESH_S
         alarm = panel_io.alarm_wanted(
-            frame.valid and frame.mode_auto, self._line_state, self._run_state,
+            frame.valid and frame.mode_auto, self._run_state,
             mux_fresh and mux.field_fresh,
             bool(mux.protective_clear) if mux_fresh else True,
             bool(mux.warning_active) if mux_fresh else False,
             run_premove=self._run_premove,
-        )
-        for ch in config.DIO_ALARM_ON:
-            self.link.set_coil(ch, alarm, config.HORN_HOLD_S)
-        # the movement horn (dio.movement_horn, DO00) gives way to the alarm horn
-        outs = panel_io.motion_outputs(self._turning and fresh, alarm, config.DIO_MOTION_ON, config.DIO_MOVEMENT_HORN)
-        for ch, on in outs.items():
+        ) and normal
+        horn = False
+        if config.HORN_ENABLED:
+            now = time.monotonic()
+            age = None if self._cmd_t is None else now - self._cmd_t
+            armed = self._armed and self._armed_t is not None and now - self._armed_t <= 0.3
+            horn = panel_io.horn_wanted(armed, *self._cmd, age, self.cmd_timeout) and normal
+            if horn != self._horn:
+                self._horn = horn
+                self.get_logger().debug(f"horn {'on' if horn else 'off'}")
+        # the horn (dio.movement_horn, DO01) gives way to the alarm horn; the lamp turns with it;
+        # not NORMAL: everything LOW (owner, 2026-10-30)
+        for ch, on in panel_io.coil_image(normal, alarm, self._turning and fresh, horn).items():
             self.link.set_coil(ch, on, config.HORN_HOLD_S)
         if alarm != self._alarm:
             self._alarm = alarm
             self.get_logger().info(f"alarm horn {'on' if alarm else 'off'}")
 
-        if config.HORN_ENABLED:
-            now = time.monotonic()
-            age = None if self._cmd_t is None else now - self._cmd_t
-            armed = self._armed and self._armed_t is not None and now - self._armed_t <= 0.3
-            want = panel_io.horn_wanted(armed, *self._cmd, age, self.cmd_timeout)
-            self.link.set_coil(config.HORN_DO_CHANNEL, want, config.HORN_HOLD_S)
-            if want != self._horn:
-                self._horn = want
-                self.get_logger().debug(f"horn {'on' if want else 'off'}")
+    def _emergency_step(self, frame: panel_io.PanelFrame) -> bool:
+        """Run the emergency state machine; log and report its transitions. True at NORMAL."""
+        e = self.emergency
+        left, right, link = self._drive_states
+        age = None if self._armed_t is None else time.monotonic() - self._armed_t
+        prev = e.state
+        note = e.step(time.monotonic(), emergency.Inputs(
+            frame.valid, frame.estop_ok, frame.reset_edge, emergency.sto_held(left, right, link, age)))
+        if note:
+            # Two call sites, not one picked at run time: rclpy refuses a logging call site whose
+            # severity changes between calls (ValueError - it killed panel_node on the first
+            # RESETTING -> NORMAL, 2026-10-30).
+            if e.state == emergency.NORMAL:
+                self.get_logger().info(note)
+            else:
+                self.get_logger().warn(note)
+            why, ev = note.split(": ", 1)[1], None
+            if e.state == emergency.ACTIVE and e.tripped:  # a blind panel is PANEL_STALE's, not this
+                ev = (Event.ERROR, "ESTOP", f"EMERGENCY STOP ({why}): release the E-stop, then press Reset")
+            elif e.state == emergency.RESET_NEEDED:
+                ev = (Event.WARN, "ESTOP_RESET_NEEDED", "E-stop released: press Reset")
+            elif e.state == emergency.RESETTING:
+                ev = (Event.INFO, "ESTOP", "Reset pressed: waiting for the drives to leave STO")
+            elif e.state == emergency.RESET_FAILED:
+                ev = (Event.ERROR, "ESTOP_RESET_FAILED", f"Reset did not take: {why}")
+            elif e.state == emergency.NORMAL and prev != emergency.ACTIVE:
+                ev = (Event.INFO, "ESTOP", "cleared: emergency stop")
+            if ev:
+                self._event(*ev)
+        return e.state == emergency.NORMAL
 
     def _event(self, level: int, code: str, text: str) -> None:
         m = Event()

@@ -96,34 +96,6 @@ connected via socketcan:can0
 [3] verdict
     OK: 400/400 transfers, zero errors. Termination and wiring look sound.
 
-# read mls (no magnetic track present)
-connected via socketcan:can0
-
-[1] identity (node 10)
-    order number   1104468
-    vendor ID      0x01000056
-    product code   0x00001100
-    revision       0x00000007
-    serial number  0x018E8F7E
-
-[2] configuration
-    2006h:01 variant TPDO1   3 (Standard enhanced) -> track data Standard (INT16)
-    2025h min. level         300 digits
-    2026h zero offset        0 mm
-    2027h sensor flipped     0
-    2028h:01 use markers     0
-    2028h:02 marker style    0
-    1800h TPDO1              COB-ID 0x18A OK enabled, type 0xFF, event timer 10 ms
-
-[3] live measurement
-    2024h field level        154 (0.12 mT)   <-- below min. level 300, no track will be reported
-    2021h:0B line level 1       +0 (+0.00 mT)
-    2021h:0C line level 2       +0 (+0.00 mT)
-    2021h:0D line level 3       +0 (+0.00 mT)
-
-    #LCP 0 - no track
-    -- no track --                                 -- lvl 0 north
-
 # drive forward
 
 gvipc-evo-01@gvipc-evo-01:~/agv_can$ python3 drive_forward.py --go

@@ -1,22 +1,22 @@
 # Unified AMR operator and cutover runbook
 
 `amr.service` is the intended production service. It starts the hardware base,
-operator web app and optional Foxglove bridge, then enters **LINE** (tracked, the
-default) unless the profile is trackless-only, which stays in **IDLE**. It does
-not load a map, start a survey, resume a commissioning job or run a route after
-boot, and LINE moves nothing until the physical Start under AUTO. The operator
-switches to trackless on Home, then selects mapping or navigation from Run trackless.
+operator web app, then stays in **IDLE**. It does
+not load a map, start a survey or run a route after boot. The operator selects mapping or navigation from Run.
 
 The physical controls remain authoritative:
 
-- **MANUAL** permits bounded browser jog or a held commissioning plan.
+- **MANUAL** permits bounded browser jog, the pendant and preset survey moves.
 - **AUTO** permits a loaded route only after a fresh physical **Start** edge.
 - E-stop and the FX3/STO chain remain the immediate physical stop path.
 - A stale panel, supervisor lease, drive state or command inhibits motion.
 
-The web app is `http://192.168.2.20:5001/`. Its tabs are **Status**, **Manual**,
-**Maps** (survey), **Routes** (route editor), **Run**, **Monitor**, **I/O**,
-**Alarms** (events), **Params** and **Commission**. Every page has the same left
+The web app is `http://192.168.2.20:5001/` and opens on **Home**. Its tabs are
+**Home**, **Run** (with **Maps** for surveys and **Routes** for the route editor),
+**Manual**, **Alarms** (events), **Monitor**, **I/O**, **Params** and **Blind run**. The
+Status and Commission pages were removed on 2026-10-30: Home shows the mode, its reason,
+the fault banner, Return to idle and Recover; Monitor has the rest. The blind run came
+back on 2026-11-02 as its own page (§3, PV only). Every page has the same left
 rail: tiles for Mode, Selector, Drives, Command, Localisation, Run, Wheels and
 Generation, with the event log below. A tile with a yellow bar needs attention and
 a red bar means a fault or stale data. If the whole rail is greyed out and the
@@ -47,8 +47,7 @@ The pages open in the **operator** view: **Home · Run · Manual · Alarms**, an
 nothing else. Home is one line of state, one sentence of action and one button,
 all chosen server-side from the alarm catalogue (`agv_core/alarms.py`, section 4).
 
-The **engineer** view adds Status, Maps, Routes, Monitor, I/O, Params and
-Commission. Press `Op` in the header and type the PIN; press `Eng` to go back.
+The **engineer** view adds Maps, Routes, Monitor, I/O, Params and Blind run. Press `Op` in the header and type the PIN; press `Eng` to go back.
 The PIN is **2809** by default and lives in `~/.amr/web.json` (0600, created on
 first run) or in `AMR_WEB_ENGINEER_PIN`, never in the repository. It is a mistake
 guard, not security: every endpoint is still reachable directly on the network,
@@ -57,22 +56,22 @@ it always was.
 
 A healthy start reaches `IDLE`, with the base and web processes running and no
 mapping/navigation layer. The Home page must read `READY` with nothing standing.
-In the engineer view, the Status page and the rail must show:
+Home and the rail must show:
 
-- Mode `IDLE`, with no red fault banner on the Status page;
+- Mode `IDLE`, with no red fault banner on Home;
 - Selector `MANUAL` or `AUTO` (not `STALE`/`INVALID`) and Drives `ARMED` or `OFF`, without a red bar;
 - Command `none` while untouched;
-- Active map `—`, Localisation and Run `–`.
+- Localisation and Run `–` (and, on Monitor, Active map `—`).
 
 Stopping the service revokes the control lease first. The supervisor then stops
-the active layer, base, Foxglove and web process groups. The base shutdown
+the active layer, base and web process groups. The base shutdown
 zeros wheel commands, clears the drive heartbeat consumer and de-energizes the
 drives; the panel owner drives its output coil low. After stop, check that no
 child remains:
 
 ```bash
 systemctl show amr.service -p ActiveState -p SubState -p MainPID -p Result
-pgrep -af 'amr_|nav2|slam_toolbox|foxglove' || true
+pgrep -af 'amr_|nav2|slam_toolbox' || true
 ```
 
 Do not use process-name kills during normal operation. The supervisor owns the
@@ -89,49 +88,6 @@ read-only and says nothing technical: no scan, no pose or any fault reads as
 Wording, specs and `near_m`: `amr_web/static/demo/content.json` (restart the
 service after editing). The view needs `/scan` and the odom TF (EKF) running.
 
-### Tape or trackless: the profile's `tracked` key
-
-One vehicle, two products, chosen by a single top-level key in
-`profiles/<name>.json` and read once at boot:
-
-| `"tracked"` | boots to | offered | refused with |
-|---|---|---|---|
-| `false` (default, the SLAM AMR) | `IDLE` | surveys, maps, routes | LINE: "this vehicle is trackless (profile tracked=false)" |
-| `true` (the magnetic-tape AGV) | `IDLE` → `LINE` by itself | the tape follower (physical Start under AUTO; no software arm) | surveys, NAVIGATION: "this vehicle is a tape AGV (profile tracked=true)" |
-| `null` (both, agv-01) | `IDLE` → `LINE` by itself (since 2026-10-08) | both: the **Navigation** switch on Home picks tracked (LINE) or trackless (IDLE, then mapping → navigation on Run trackless) | nothing by product |
-
-The Status header's mode shows `LINE` and `/api/state` carries `product`
-(`"tape"` / `"slam"`). Switching = edit the key, then
-`sudo systemctl restart amr.service` (the key is missing → the profile refuses
-to load and the service does not start; the error names it). The boot entry
-into LINE happens once; leaving it afterwards is honoured and not undone. Jogging
-needs no mode change (MANUAL jogs in LINE too). On a `null` vehicle the Home
-**Navigation** switch is the way between the two: Tracked requests LINE, Trackless
-requests IDLE. Like every mode change it moves nothing and is refused unless the
-vehicle is stopped, nothing is running and there is no emergency.
-
-**The LINE follower's rules (after the 2026-09-21 review fixes):**
-
-| Event | Follower | To continue |
-|---|---|---|
-| physical Start under AUTO from IDLE or DONE (2026-10-07: no Arm button) | ARMED if every prerequisite holds: the drives power up and the alarm horn sounds for `timing.auto_start_delay_s` (2 s), then RUNNING with the movement horn; otherwise stays IDLE, "Start refused: …" in the event log | fix the cause, press Start again (a refused press is dropped, never remembered) |
-| drives not powered within `timing.premove_timeout_s` (8 s) of a Start | back where the Start came from, "Start cancelled: drives did not power up" | release the E-stop, Reset the safety relay, Start |
-| selector leaves AUTO, or the supervisor withdraws LEASE_LINE | FAULT `authority` at once, not after the 0.5 s grace | Reset, Start |
-| Reset (any state but IDLE) | IDLE | Start |
-| field violated | HOLD `field` | resumes by itself 2 s after clear (`auto_resume_hold_s`) |
-| torque lost with the field clear — also while already held for `drives`/`rate`/`track` | HOLD `estop`, drives to standby | physical Start (the 2 s warning again) |
-| no fresh `/output_paths` (0.5 s) | Start refused ("protective field state unknown"); a torque loss counts as `estop` | scanner driver up |
-| tape samples under `line_min_track_hz` (profile), or fewer than 3 seen, or SDO | Start refused / HOLD `rate` | MLS TPDO stream (`nmt_starts` in diagnostics) |
-
-> **Branching (2026-10-08):** every run takes the LEFT track at every diverter and merge:
-> `branch_default` is `left` in both `missions/line-a.json` and `missions/empty.json` (plain
-> line following), with no branch-latch tags. The RIGHT trial flag is gone.
-
-Speed: two tracked speeds from the profile, cruise `autopilot.auto_rpm`
-(2387 r/min = 0.75 m/s) and slow = `auto_rpm × auto_slow_ratio` (0.5 → 0.375 m/s);
-no separate LINE ceiling. A warning field halves either. In the sim the launch passes
-`field_source:=assume_clear` (no scanner there); never on a vehicle.
-
 ## 2. Survey → draw a route → run it
 
 The complete workflow, in order. Only step C moves the vehicle on its own, and
@@ -140,7 +96,7 @@ or it moves nothing.
 
 Before you begin:
 
-- The service is in `IDLE` (Status page) and the drives are operational.
+- The service is in `IDLE` (Home) and the drives are operational.
 - Someone is at the vehicle with the E-stop in reach, and the area is clear.
 - The selector is on **MANUAL**.
 - Mark a start position and heading on the floor (tape an arrow). The survey
@@ -170,9 +126,9 @@ fast one.
 **Drive power (2026-10-08).** The drives are not powered while idle: they sit in
 standby (CANopen up, wheel counts read, power stage off). Under **MANUAL** they are
 powered only while the **Manual Arm** switch (DI08) is on; jog pad, pendant, survey
-moves and commissioning moves do nothing with it off (Status shows Drives `OFF`,
+moves do nothing with it off (Monitor and the rail show Drives `OFF`,
 reason "Manual Arm (DI08) off"). Under **AUTO** they are powered by a run: every
-move after a Start first sounds the alarm horn for 2 s (tape and trackless alike),
+move after a Start first sounds the alarm horn for 2 s,
 holds that wait for Start drop to standby, holds that clear by themselves keep power.
 
 **Pendant.** The hard-wired jog pendant on the DIO island works under the same
@@ -207,23 +163,16 @@ RIGHT DI07. The IO page shows the live bits under those names.
    - `not ready: IMU not calibrated`: the IMU calibrates during the first
      ~2.3 s of standing still after the service starts. Wait and press again.
    **Preset moves** (2026-09-19, Maps page under the jog pad, only while surveying):
-   type a distance and press *Forward* / *Reverse* (0.05–10 m at 0.30 m/s), or a
-   *Left* / *Right* spin of 20, 30, 45, 90, 135 or 180° (0.20 rad/s). Press once: the vehicle
+   type a distance and press *Forward* / *Reverse* (0.05–10 m at 0.40 m/s, 0.30 until 2026-11-03), or a
+   *Left* / *Right* spin of 45, 90, 135 or 180° (0.20 rad/s). Press once: the vehicle
    drives the whole move by itself under the same authority as the jog pad
    (selector **MANUAL**). **Any pendant button, the E-stop, the selector, the jog
    pad or *Stop move* ends it at once.** After each move the page reports how far
    SLAM corrected the vehicle's position during it; a red "the map may have
    slipped here" (a heading correction of 2° or more) means the scan matcher
    probably took a wrong alignment: back up and drive that stretch again, slowly.
-   **"the map is broken from here"** (5° or more in one move) is a wrong scan
-   match that is already part of the map, and driving it again does not undo it.
-   **Abort the survey** and start again, or continue from the last saved revision
-   (A1). On 2026-10-23, two 20° slips went unnoticed and the loop never closed
-   (2.9 m at the start mark).
    Smooth preset moves and slow spins are what the mapping copes with best in
-   large open areas. On a large site, survey in parts: close each part at its
-   start mark, save it, and **Continue survey** from there (A1). A bad slip then
-   costs one part, not the whole site.
+   large open areas.
 4. Drive the area slowly with the jog pad. Watch **Live map**: grey and black
    cells grow, the green arrow is the vehicle and red points are the current
    scan.
@@ -257,48 +206,6 @@ falls back to `odom` a few seconds later. Nothing recovers it: abort and start
 the survey again (a fresh slam_toolbox is launched). SLAM and AMCL read
 `/scan_gated` (scan_gate_node), which releases each scan only once its odometry
 transform exists, to keep them off the tf2 code path that hung on 2026-09-17.
-
-### A1. Continue a saved survey (`Maps` → **Continue survey**)
-
-A large area does not have to be surveyed in one go (2026-10-23). Save part of it,
-and later keep surveying **the same map** from wherever the vehicle stands, as long
-as that spot is inside the saved map. slam_toolbox loads the saved pose graph, so
-old and new parts close loops with each other like one survey. The save becomes
-the next revision of the same map id; the saved revision is not changed.
-
-1. Stop the vehicle somewhere **inside the saved map**, preferably where walls or
-   pillars run in two directions. Selector **MANUAL**, mode `IDLE`.
-2. On **Maps**, press **Continue survey** on the revision. Only revisions with a
-   saved pose graph show the button (surveyed or continued ones, not merged ones).
-3. Say where the vehicle is:
-   - **Where its survey ended**: the vehicle has not moved since that save.
-   - **At its start mark**: parked on the map's floor mark, at its heading.
-   - **Drag pose on map**: drag from the vehicle's position towards its
-     heading. About 1 m and 30° is close enough.
-4. Optionally describe the spot (**Where you are now**), then press
-   **Continue survey**. The robot matches the live scan against the saved map
-   around your pose first:
-   - `continue refused: the scan fits the saved map poorly here`: the pose is off,
-     or the vehicle is outside the mapped area. Correct the pose, or drive further in.
-   - `continue refused: ambiguous`: another pose fits almost as well (a long
-     corridor, repeated rack rows). Move to where the walls run in two directions.
-   - Nothing has loaded after a refusal: press again.
-5. On a good match it loads the pose graph. This takes up to about two minutes for a
-   large map. The Maps page then shows `MAPPING`, `continues revN`, and the scan
-   match score.
-   - `... loaded, but SLAM put the vehicle ...` or `... could not load ...`: the
-     supervisor goes to FAULT. Press **Recover**, then start again.
-6. Survey as in section A.
-7. **Returned to start** means the map's **original** start mark, in the same frame.
-   Driving back to it measures the closure of the whole map, old and new. You can
-   also press it where you are and save, as with a partial survey; the closure
-   numbers then mean nothing.
-8. **Save map revision**. The revision list shows `continues revN (scan match x.xx)`.
-
-- Dynamic areas, keepout and edits of the continued revision are **not carried
-  over**: the new revision is a fresh map. Mark them again with **Edit areas**.
-- Routes and the tape graph belong to a revision: re-validate or re-teach them on
-  the new one.
 
 ### A2. Trolleys and other temporary objects (`Maps` → **Edit areas**)
 
@@ -395,27 +302,37 @@ The route editor moves nothing. The mode can stay `IDLE`.
      to the left.
    - **Undo**, **Redo** and **Clear steps** edit the list. The step list
      (`s1`, `s2`, …) is shown under **Steps**.
+   - **Measure** (2026-11-03, view only): click point A, then point B. The
+     panel and the map show the distance, ΔX and ΔY in mm, in map
+     coordinates (B − A). A click snaps, in this order, to a wait point, an
+     arc centre, a step end (or turn point, route start, survey start), or
+     else onto a route line. Snapping covers the route being drawn and the
+     newest revision of every saved route on this map (drawn faint while
+     Measure is on). Untick **Snap**, or hold Shift, to measure from exactly
+     where you click. A third click starts a new measurement; Esc or
+     switching the tool off clears it. Dragging still pans. Measuring never
+     changes the route, its undo history or the last validation.
 4. **Repeat count**: how many times the route runs back to back, 1–100. Use 1
    unless the route returns to its own start pose. A repeated run shows
-   `[pass p/P]` in the run reason. **Speed cap**: 0.05–0.60 m/s, new routes
-   0.55 (2026-09-19). Use 0.15–0.20 m/s for a first run. **Long straight
-   speed**: a straight strictly longer than *Long straight from* (default
-   4 m) runs at this speed, up to 0.85 m/s (new routes 0.85); leave the field
-   empty for no boost. Boosted straights show `▲0.85` in the step list and
-   the result shows how many. **Arc speed** (new routes 0.40 m/s): never
-   above the speed cap. Existing routes keep their stored speeds until they
-   are edited and saved again (re-save them after the first vehicle run at
-   the new speeds). Autonomous acceleration is 0.15 m/s² (mux `a_max`), so a
-   straight reaches 0.85 only after about 2.4 m.
+   `[pass p/P]` in the run reason. **Speed** is not a route setting
+   (2026-10-02): every forward straight runs at 0.60 m/s
+   (`route.VEHICLE_V_MAX`), every arc at 0.30 m/s (`route.ARC_V_MPS`,
+   2026-11-03), and a reverse at half the straight speed, 0.30 m/s.
+   Since 2026-11-03 every autonomous speed change is a smooth S-curve (mux
+   `auto_jerk` 0.1 m/s³, at most `a_max` 0.1 m/s² up and `d_max` 0.125 m/s²
+   down; twice as long as the first smoothing, after the field runs that
+   day): a start reaches 0.60 m/s after about 2.0 m (6.9 s). Field and
+   emergency stops are not softened: while a warning field is in force the
+   vehicle brakes at `field_d_max` 0.5 m/s² (warning 1) or the drive's ramp
+   (warning 2), and loss of authority still stops at once.
    Consecutive straights and arcs are driven as ONE continuous move (no
-   stop between them); a rotate or a reverse ends such a chain. Before a
-   slower chained step (a normal straight after a boosted one, an arc) the
-   speed tapers early enough for the mux to reach the lower speed at the
-   boundary (executor `taper_decel` 0.4 m/s², `taper_lead_s` 0.3: 0.96 m for
-   0.85 → 0.40, 0.34 m for 0.55 → 0.40); at the end of a chain the
-   controller's own ramp over the last 1.0 m brings it to the stop.
-   Routes saved before 2026-09-18 never boost until re-saved with the field
-   set. **Reverse** (2026-09-18): type a distance in mm and press *Reverse*
+   stop between them); a rotate or a reverse ends such a chain. Before an
+   arc the speed tapers early enough for the S-curve to reach 0.30 before
+   the boundary (executor `taper_decel` 0.125 m/s², `taper_jerk` 0.1 m/s³,
+   `taper_lead_s` 0.3): 0.60 → 0.30 starts 1.82 m before the arc, takes
+   1.59 m (3.5 s) and is done about 0.2 m before it; after the arc it speeds
+   back up over about 1.7 m (3.9 s). At the end of a chain the controller's own ramp over
+   the last 3.0 m (`approach_velocity_scaling_dist`) brings it to the stop. **Reverse** (2026-09-18): type a distance in mm and press *Reverse*
    to back up along the current heading, facing forward: at most 2000 mm
    and at half the speed cap (never the boost). The nanoScan3 does not
    cover the rear, so a reverse is driven blind: keep it short, keep the
@@ -432,6 +349,15 @@ The route editor moves nothing. The mode can stay `IDLE`.
    watch the cross-track on the first arcs. Above 0.40 m/s the nanoScan3 protective field must be validated for
    the speed first (stopping from 0.85 needs about 0.72 m at 0.5 m/s² plus
    the reaction time).
+   **Go home** (2026-11-03): the last step. End the route up to 5 m behind the
+   start pose (HOME), roughly facing it, and press *Go home*: the vehicle drives
+   forward to HOME and stops on HOME's heading. Already on HOME's line it is a
+   straight; otherwise the editor draws an S-curve (never tighter than R 1.0 m,
+   never more than 30° off HOME's line, at most 20° heading error at its start)
+   that runs at 0.30 m/s. The route then always closes, so a repeat count above 1
+   works without hand-tuning the last straight. When it cannot be built the log
+   says why and how far back to end the route instead. A wait (a release point)
+   may come right before it.
 5. Press **Validate**. The robot checks the route against the map, including
    the footprint along every straight and the area every turn actually sweeps
    (a 90° turn does not check behind the vehicle; a 180° does). The footprint
@@ -514,7 +440,8 @@ The route editor moves nothing. The mode can stay `IDLE`.
        as an override.
      - Executor parameters: `auto_resume_enabled` (false = the old
        Prepare resume + Start), `auto_resume_clear_s` 2.0,
-       `auto_resume_estop` false, `controller_abort_retries` 3,
+       `auto_resume_estop` false, a blocked path (controller abort) is retried
+       until it clears, never a FAULT,
        `prereq_grace_s` 0.5.
    - **Abort** ends the run. The mission must be loaded again.
 8. **Finished.** The run state is `DONE`. Load the same or another mission and
@@ -545,127 +472,72 @@ Wheel feedback that arrives but is flagged invalid counts as missing: localisati
 treats the wheels as stale, and a loaded or running route faults with
 `wheel feedback invalid`.
 
-## 3. Diagnostics and commissioning
+## 3. Diagnostics (Monitor)
 
 Use `/monitor`, `/io`, `/alarms` and `/params` for read-only diagnosis. The
 pages consume owner-published snapshots; opening more browser clients must not
 create another CAN or Modbus poller. Drive-alarm reset remains a physical power
 cycle where required by the drive procedure.
 
-`/commissioning` reuses the encoder-only straight, arc, pivot and pulse planner.
-It is an exclusive IDLE substate:
+`/monitor` (engineer view) shows, top to bottom:
 
-1. Select **MANUAL**, ensure the vehicle is stopped and the test area is clear.
+- the active map, the last saved survey and the operation id;
+- **Standing now**: every standing alarm with its code and what clears it;
+- **Readiness**: base ready, panel, drives, command source, localisation, manual
+  and autonomous available;
+- **Restart service** (the same server-side refusals as on Home);
+- the `/diagnostics` cards: `drive/left`, `drive/right`, `can/bus` and `imu/mls`.
+
+### Blind run (`/blindrun`, engineer view)
+
+Encoder-only test moves, to measure the encoders and the vehicle on the floor
+(restored 2026-11-02; the other branches had it on their Commission page). It is
+an exclusive IDLE substate: while a move is held or running,
+ordinary jog and mapping/navigation mode requests are refused. These are not the
+preset survey moves on **Maps**, which stay as they are.
+
+1. Select **MANUAL**, switch the drives on (DI09), make sure the vehicle is
+   stopped and the test area is clear.
 2. Pick the move and fill in its numbers:
    - **Straight**: forward/reverse and distance (m).
    - **Rotate**: CCW/CW and angle (°).
-   - **Arc**: left/right, angle (°) and radius (m). An arc always goes forwards, and its radius must be at least half the track (0.244 m); tighter, use Rotate.
-   - **Speed**: 0.05–0.80 m/s. Above 0.40 m/s the page warns and shows the ramped stopping distance. Confirm the nanoScan3/FX3 protective field is sized for the speed before going above 0.40.
-   - **Backend**: **PV** (profile velocity, the default) or **PP** (profile position, executed inside the drives). PP is greyed out with the reason while it is locked (see below).
+   - **Arc**: left/right, angle (°) and radius (m). An arc always goes forwards,
+     and its radius must be at least half the track (0.244 m); tighter, use Rotate.
+   - **Speed**: 0.05–0.80 m/s (`blind_run.max_speed_mps`). Above 0.40 m/s the
+     page warns and shows the ramped stopping distance. Confirm the
+     nanoScan3/FX3 protective field is sized for the speed before going above 0.40.
 3. Tick the checklist (area clear, E-stop in reach, speed within the field
    sizing), then **Hold move**. This validates the move and moves nothing.
-   Holding is refused unless the wheels are known to be still and the encoder
-   scale is fresh. Several PV segments can still be held as JSON under
-   **Advanced**. A plan `id` may use letters, digits, `_`, `.` and `-` only,
-   starts with a letter or digit, max 64.
-4. Review **Held move**: the wheel count targets, the commanded dx/dy/heading,
-   and for PP the per-wheel velocity and ramps.
+   Holding is refused unless the supervisor is in IDLE, the wheels are known to
+   be still and the encoder scale is fresh. Several segments can be held as
+   JSON under **Advanced**. A plan `id` may use letters, digits, `_`, `.` and
+   `-` only, starts with a letter or digit, max 64.
+4. Review **Held move**: the wheel count targets and the commanded dx/dy/heading.
 5. Press physical **Start** once to execute. Only a Start pressed after the plan
    was held counts. Browser input cannot start it.
-6. Use **Clear / abort** to stop and invalidate the held job. An aborted run
-   still writes its evidence, including the interrupted segment.
+6. **Clear / abort** stops and invalidates the job. So do the selector to AUTO,
+   an **E-stop**, panel loss, a supervisor restart or generation change, an
+   encoder-scale change and stale wheel counts. An aborted run still writes its
+   evidence, including the interrupted segment. `DONE` or `ABORTED` cannot
+   replay on another Start; hold the move again. An E-stop aborts a blind run
+   like a survey move, never to resume (owner, 2026-11-02): a move cut by a
+   stop measures the stop, not the move. Runs and waits on a route are held
+   instead (§2 C).
 7. Measure where the vehicle ended up, in the start frame: x forward, y left,
    heading counter-clockwise +. Measure the axle-midpoint mark, and take the
    heading from a second mark ~1 m ahead. Enter dx/dy (mm) and heading (°)
    under **Measured result** and **Save measurement**. **History** then lists
-   commanded, measured and error per run, PV and PP side by side. The
-   measurement is stored beside the evidence as `<evidence>.measured.json`;
-   saving again replaces it.
-8. Save the displayed evidence path with the commissioning record. If the reason
-   says `evidence NOT written`, the file is missing; do not record an old path.
+   commanded, measured and error per run. The measurement is stored beside the
+   evidence (`~/.amr/commissioning/<run>.measured.json`); saving again replaces it.
+8. Keep the displayed evidence path with the test record. If the reason says
+   `evidence NOT written`, the file is missing; do not record an old path.
 
-**Profile position (PP) is locked** (`pp.enabled: false` in the profile). The
-motor is a BLMR6400SKM-GFV-B (400 W, 1:30 gearhead). The BLV-R manual requires
-motion-extension mode for that combination, and no positioning type offers it.
-
-There is no vendor confirmation. Running PP is an internal decision to accept
-that risk, bounded by the drive settings below, the 0.30 m/s PP speed cap for
-the first sessions, and a bench test on blocks before the floor.
-
-Unlock PP only after all of these:
-- **Drives:** a person has set, in both drives with MEXE02, then saved and power-cycled:
-
-  | MEXE02 parameter | Object | Value |
-  |---|---|---|
-  | Max torque | 6072h | 10000 (default) |
-  | Position deviation alarm (p6) | 6065h | 36000 |
-  | IN-POS positioning completion signal range (p7) | 6067h | 1000 |
-  | Halt option | 605Dh | 1 (default) |
-  | Stopping method at alarm generation (p6) | 605Eh | 2 (default) |
-  | Quick stop rate (p7) | 6085h | 1600 (also shortens alarm stops in PV) |
-- **Profile:** those values are entered under `pp.expect`, and `pp.vendor_ref` records who decided, when and on what basis (`manuals/agent-prompts/pp-profile-fill.md` does both, reading the drives back first).
-
-Software never writes those objects. Before every PP move the drive owner
-reads them back from both drives and refuses the move on any difference.
-
-A PP move is held, not latched. It halts (controlword Halt, on the profile ramp) on any of:
-- the page's job stops re-sending it for 0.2 s;
-- the supervisor lease loses COMMISSIONING or changes generation;
-- the panel is not a fresh, valid MANUAL;
-- a drive raises a following error (6041h bit 13);
-- twice the planned time plus 2 s passes.
-
-A halt not confirmed at rest within 3 s faults the drive owner and withholds
-the PC heartbeat, so the drives' own 1016h reaction takes over. Bench first,
-on blocks:
-1. PP refused while locked.
-2. A deliberately mismatched value refused.
-3. One wheel turn at 0.1 m/s lands within the position window.
-4. Selector to AUTO mid-move halts.
-5. Closing the browser mid-move halts within 0.2 s.
-6. `kill -9` of drive_node trips 1016h.
-
-While a plan is prepared or running, ordinary jog and mapping/navigation mode
-requests are refused. Selector change, lease loss, a supervisor restart or
-generation change, an encoder-scale change, stale counts or panel loss aborts
-the job, or drops a held plan. `DONE` or `ABORTED` cannot replay on another Start edge; upload
-a new plan.
-
-### MLS marker codes (bench, 2026-10-09)
-
-Markers are short 15 mm strips of south-up tape beside the north-up track. The MLS
-decodes them itself (SICK standard mode). Codes 1–3 are used: 30 mm, 60 mm, and 60 + 30 mm
-from the track centre. The plan, the bench tests B0–B7 and the reasoning are in
-`manuals/mls-marker-plan.md`, and the layout drawing is
-`documentation/layout-reference/mls-marker-codes-standard.html`. Markers appear on Home
-beside the RFID tag and in the event log (`LINE_MARKER`). Since 2026-10-09 **the markers
-decide speed and RFID decides where to stop**: the mission's `high_zone` names an outer and an
-inner marker code (`line-a`: outer 2, inner 1), and that pair grants HIGH (`manuals/rfid-tag-table.md`,
-"Speed zones"). A zone marker counts only while RUNNING, line good and within 30 mm of the
-tape centre; the marker stream going down or losing events drops to NORMAL. To run NORMAL
-only, pick a mission without a `high_zone` (plain line following, `basic-right`). No marker
-changes the run's state.
-
-Every command below needs `amr.service` stopped, and every write goes through `guard.py`:
-
-```bash
-python3 -m agv_core.drivers.canbus.read_mls snapshot              # marker objects, polarity, teach lock
-python3 -m agv_core.drivers.canbus.read_mls markers --nmt --seconds 60   # every marker / polarity change
-python3 -m agv_core.drivers.canbus.read_mls marker-level           # Hall profile: marker peak vs the 30 % level
-python3 -m agv_core.drivers.canbus.read_mls set-markers            # dry run; --go writes, resets node 10, reads back
-```
-
-- **Always on (2026-10-23):** there is no profile switch; `mls.markers_enabled` is retired and a
-  profile that still has it is refused. When the sensor is not configured to match, drive_node
-  publishes no marker events and Home shows "sensor not set up": zone missions run NORMAL and a
-  marker run refuses Start.
-- **Polarity lock:** `set-markers --polarity-lock` (202Dh:05) only after a full lap with
-  `markers` has shown `north` everywhere. With the lock, south-up track is invisible to the
-  sensor.
-- **Teach key:** `set-markers` locks the sensor's capacitive teach key (2029h = 1). Any
-  future zero-point, inversion or offset-calibration step done on the keypad must first
-  unlock it with an SDO write of 2029h = 0. Don't run an offset calibration over tape
-  (manual p. 44).
+Profile velocity only: the software position loop runs in the commissioning
+node and goes through the mux like any other source (`blind_run.*` in the
+profile). The profile-position (PP) backend was removed on 2026-10-30 and is
+not part of this; 607Ah/6081h stay unwritable (`agv_core/drivers/canbus/guard.py`).
+Lease bit 4 and mux source 5 (COMMISSIONING) carry the job again, with their old
+meaning.
 
 ## 4. Fault recovery
 
@@ -685,28 +557,24 @@ engineer's note. Generated from `agv_core/alarms.py`.
 |---|---|---|---|---|
 | `FIELD_PROTECTIVE` | warn | Stopped: something is in the protective field | Clear the area in front of the vehicle; it continues by itself. | The mux zeroes every AUTO source while /output_paths says the protective field is violated - the software side of a stop the scanner's OSSD pair already makes. |
 | `GENERATION_MISMATCH` | warn | Motion is held after a mode change | Wait. If it stays, press Restart on the Home page. | A command or permit carries a superseded generation; the mux drops it by design. |
+| `GLS_DOWN` | warn | The floor-label camera is not answering | Nothing to do now: it never stops the vehicle. Tell the engineer if it stays. | gls_node: no reply to the read-only keepalive for 3 x gls.keepalive_s (cable, power, enp3s0 192.168.4.2, or SOPAS left in Live mode, which mutes the host port). Outside the safety path: no position fix from the camera until it answers again. |
 | `NOT_LEASED` | warn | Waiting for the supervisor | Wait. If it stays, press Restart on the Home page. | Mux has no fresh ControlLease (supervisor down, starting or in a transaction). |
-| `PATH_BLOCKED` | warn | Stopped: the way ahead is blocked | Clear the route. The vehicle tries again by itself. | Nav2 controller aborted the step (hold cause 'controller'); bounded retries, then FAULT. |
-| `PP_ABANDONED` | warn | A blind move was abandoned | Nothing to do. | Blind-run move dropped (authority lost or the owner disarmed). |
-| `PP_REFUSED` | warn | A blind move was refused | Nothing to do; ask the engineer if it was expected. | Blind-run move refused by the drive owner. |
-| `PP_VETOED` | warn | A blind move was stopped before it started | Nothing to do; ask the engineer if it was expected. | Blind-run move vetoed at start: authority re-read after the drive setup (audit R02) no longer allowed it; the veto's controlwords were sent. |
+| `PATH_BLOCKED` | warn | Stopped: the way ahead is blocked | Clear the route. The vehicle tries again by itself. | Nav2 controller aborted the step (hold cause 'controller'). Retried every few seconds for as long as the path is blocked, never a FAULT (owner 2026-11-03). |
 | `SERVICE_CRASHED` | warn | The vehicle software restarted itself | Nothing to do. Tell the engineer if it keeps happening. | A marker from THIS boot survived: the supervisor died and systemd's Restart=on-failure or the 30 s watchdog brought it back. The drives were disarmed by the teardown or by their own 1016h, so no power cycle is needed. journalctl -u amr.service has the reason. |
 | `SOURCE_TIMED_OUT` | warn | The command stopped arriving | Press and hold again. If a page is jogging, check the Wi-Fi link. | The selected stream went stale (cmd_timeout_s 0.2 s): closed tab, dropped Wi-Fi or a released button - indistinguishable to the vehicle, by design. |
 | `WEB_BUG` | warn | A page did not work | Reload the page. Save a report if it keeps happening. | Unhandled exception in the Flask app or the page script; the reference id is in the web log. |
 | `BOOT_READY` | info | The vehicle is ready | Nothing to do. | End-of-boot report from the supervisor; the text lists anything missing. |
-| `FIELD_BLOCKED` | info | Stopped: something is in the safety field | Clear the area. The vehicle starts again by itself. | Scanner OSSD -> FX3 -> STO. Executor/line hold cause 'field'; auto-resume after the hold window. |
+| `COSTMAP_CLEARED` | info | The vehicle refreshed its view of nearby obstacles | Nothing to do. | route_executor cleared the controller's local costmap: at a Continue that releases a wait, or after costmap_clear_after_s (10 s) of a blocked path. Marks behind the scanner's view never clear by themselves (2026-11-03, route-itg-02 s12). |
+| `FIELD_BLOCKED` | info | Stopped: something is in the safety field | Clear the area. The vehicle starts again by itself. | Scanner OSSD -> FX3 -> STO. Executor hold cause 'field'; auto-resume after the hold window. |
 | `FIELD_WARNING` | info | Slowed or stopped: something is in a warning field | Clear the area ahead; auto speed returns by itself when the warning fields clear. | cmd_mux scales every AUTO source while a warning field is occupied: warning 1 (outer, 1.77 m ahead) x0.5, warning 2 (inner, 0.97 m) a deceleration stop within 0.40 m, the stricter winning; the slowdown and the recovery ramp over 1 s. Paths and factors: amr_bringup/config/scanner_fields.yaml. |
+| `GLS` | info | The floor-label camera changed | Nothing to do. | gls_node: the GLS621 answers again after a GLS_DOWN. |
 | `INHIBITED` | info | Motion is held by the supervisor | Wait for the mode change to finish. | Lease allowed = 0: a transaction, a save, STARTING, FAULT or STOPPING. |
-| `LINE_LOC` | info | Tape localization event | Nothing to do in shadow mode; a LOST or unexpected-fork entry is worth a look on the Teach page. | amr_line.tape_runtime (tracked plan 3, P1 shadow): where the locator would have stopped, ordered a junction or approached the U-turn, and whether its uncertainty allowed it; LOST and re-acquired; teach passes and stations. Nothing here changes motion yet. |
-| `LINE_MARKER` | info | Track marker read | Nothing to do; this records a marker code the line sensor read beside the tape. | MLS marker codes (manuals/mls-marker-plan.md): the sensor decodes the code, drive_node publishes /amr/line_marker, the line follower logs it. The mission's high-zone codes also set the speed (2026-10-09); no marker changes the run's state. Also logged: the marker stream going up or down, and markers lost on the topic (warn). |
-| `LINE_MISSION` | info | Tape mission event | Nothing to do; this records what the mission engine did with a tag. | amr_line.tape_run events: stops, passed destinations, speed toggles, branch orders, U-turns, the run's result at Home. The text names the tag and the action. |
-| `MLS_FIELD_WEAK` | info | Weak tape signal under the line sensor | Nothing to do now; the engineer checks the tape where this keeps happening. | The MLS raised its magnetic-field event (2080h:04 = 1, manual 8.8): the field fell below the critical strength, so the unfiltered LCP is not within data-sheet spec. Worn, lifted or dirty tape, or the sensor too high. Only counted with a track under the sensor on the sample before; at most one per 2 s (the text counts the rest). History only, no motion change. Per-position record: ~/.amr/reports/tape_health (tools/tape_health_report.py). |
+| `LABEL_RECORDED` | info | A floor label was recorded on the map | Nothing to do. | Record label here, or HOME at survey start: a new label-set revision (gls-wait-coding-plan §C). New missions bind it; existing ones keep theirs. |
 | `MODE_CHANGE` | info | The vehicle changed mode | Nothing to do. | Supervisor FSM transition; the text carries from -> to. |
-| `MUX_SOURCE` | info | The vehicle is taking commands from somewhere else | Nothing to do. | Command-source edge in the mux (pendant, manual, follow, line...). |
+| `MUX_SOURCE` | info | The vehicle is taking commands from somewhere else | Nothing to do. | Command-source edge in the mux (pendant, manual, follow, rotate...). |
 | `NO_PERMIT` | info | Waiting for a mission step | Nothing to do; the executor drives this. | AUTO with no MotionPermit, or a permit whose source has no fresh /cmd_vel. |
 | `NO_SOURCE` | info | Nothing is asking the vehicle to move | Nothing to do. Press Start, or jog from the Manual page. | Selector position is fine but no fresh command stream is selected. |
 | `PANEL` | info | The control panel changed | Nothing to do. | Selector, Start/Reset edge or pendant change from panel_node. |
-| `PP_START` | info | A blind move started | Nothing to do. | Profile-position (blind-run) move accepted by the drive owner. |
 | `RUN_SUMMARY` | info | A mission finished | Nothing to do. | One line per run at DONE/ABORT/FAULT: duration, distance, holds by cause. |
 | `WAITING_FOR_PREREQ` | info | Waiting: a sensor or the panel is not ready yet | Wait a moment. If it stays, look at the Alarms page. | Hold cause 'pending': a prerequisite went stale inside the grace window. |
 
@@ -714,14 +582,23 @@ engineer's note. Generated from `agv_core/alarms.py`.
 
 | Code | Level | Operator sees | Operator does | Engineer's note |
 |---|---|---|---|---|
-| `AUTHORITY_LOST` | warn | Stopped: the vehicle lost permission to drive | Put the selector back to AUTO and press Start. | Line hold cause 'authority': lease/permit withdrawn or the selector left AUTO. |
-| `DRIVES_NOT_READY` | warn | Stopped: the motors are not powered | MANUAL: switch Manual Arm (DI08) on. AUTO: press Start (after the cabinet's safety reset if the E-stop was used). | DriveStatus not operational while something wanted to move: the hold cause 'drives', or the mux gating a command. Since 2026-10-08 the drives are powered only on demand (DriveStatus.power_reason says why not). |
-| `ESTOP` | warn | Stopped: emergency stop or safety chain | Release the E-stop, then press Reset and Start on the panel. | Hold cause 'estop'. Auto-resume only if auto_resume_estop is set in the profile. |
-| `MARKERS_LOST` | warn | Stopped: the line sensor's markers are not reporting | Check where the vehicle is (the home marker may have been passed), then press Start. | Line layer hold cause 'markers': a marker run (mission marker_run, no RFID) lost the MLS marker stream, or marker events, while driving, so the U-turn or home marker may have been driven past. Never resumes by itself; Start is refused while the stream is down. |
-| `RFID_LINK_LOST` | warn | Stopped: the RFID tag reader is not reporting | Check the reader and its cable; once it is back, check where the vehicle is, then press Start. | Line layer hold cause 'rfid': on a mission with tags the RFID stream broke while driving (link down, reconnect, encounter buffer overrun), so a stop or the U-turn may have been driven past. Never resumes by itself; Start is refused while the link is down. |
+| `DRIVES_NOT_READY` | warn | Stopped: the motors are not powered | Switch the pendant enable (arm) on. AUTO: then press Start (after the cabinet's safety reset if the E-stop was used). | DriveStatus not operational while the mux had a command to apply. Since 2026-10-08 the drives are powered only on demand (DriveStatus.power_reason says why not). |
+| `ESTOP_HOLD` | warn | Stopped by the E-stop: press Start or Continue | Make sure the area is clear, then press Start or Continue. The route continues where it stopped. | The run's 'estop' hold (owner policy 2026-10-30: an emergency is a physical stop and never ends the run). Shown once the emergency is NORMAL again; never resumes by itself. |
 | `SAFETY_RESET_NEEDED` | warn | Motors are off: the safety circuit needs a reset | Press the blue Reset button on the cabinet. | Both drives in 'Switch on disabled' (statusword 0x1270): STO held by the FX3, arming retries every 2 s and succeeds the moment the chain closes. |
-| `TRACK_LOST` | warn | Stopped: the tape is not under the sensor | Push the vehicle back onto the tape, then press Start. | Line layer hold cause 'track': MLS reports no track for longer than the loss grace. |
-| `AT_STATION` | info | Parked at a station | Press Start when the station work is done; it moves after the start delay. | Tape mission stop row (role always, or the job's destination): a measured stop over stop_distance_m after the tag, then a LineState HOLD with cause 'station'. The Home stop ends the run (DONE) instead. |
+
+### Cleared by: continue button
+
+| Code | Level | Operator sees | Operator does | Engineer's note |
+|---|---|---|---|---|
+| `CONTINUE_REFUSED` | warn | Continue did not start the vehicle | Fix what the detail says, then press Continue again. | A Continue/Start at a wait failed its gate: E-stop not reset, MANUAL, localisation not READY, wheels moving, or the vehicle moved off the wait pose (verify_position_m / verify_heading_deg). RunState.continue_refused carries the reason. |
+| `RUN_WAITING` | info | Waiting at a stop: press Continue | Hitch or release the trolley, step clear, then press Continue (or Start). | The run is WAITING at a route wait step (gls-wait-coding-plan §A.4). Drives disarmed; Continue re-checks localisation, AUTO, still wheels and the wait pose, then the pre-move warning runs. Survives an emergency (owner, 2026-10-30). |
+
+### Cleared by: reset button
+
+| Code | Level | Operator sees | Operator does | Engineer's note |
+|---|---|---|---|---|
+| `ESTOP` | error | EMERGENCY STOP | Make the area safe. Release (twist) the E-stop button, then press the blue Reset button on the cabinet. | DI08 (panel.di_estop_ok, Flexi Soft Q3) LOW, or the panel image invalid/stale. STO is the Flexi Soft's; the PC withholds power and the lease, inhibits the mux and holds a moving run (emergency-suite plan; it never ends a run or a wait). Also the executor's 'estop' hold when it can only infer it. |
+| `ESTOP_RESET_NEEDED` | warn | E-stop released: press Reset | Press the blue Reset button on the cabinet. | DI08 is HIGH again but no Reset edge has been seen since the emergency. |
 
 ### Cleared by: ack
 
@@ -734,7 +611,6 @@ engineer's note. Generated from `agv_core/alarms.py`.
 | `EXEC_POSE_INJECTED` | error | The position was changed while the vehicle was moving | Press Acknowledge on the Run page, then reload the mission. | An /initialpose arrived during EXECUTING: progress is no longer trustworthy. |
 | `EXEC_PREREQ_LOST` | error | A sensor or the panel dropped out mid-step | Press Acknowledge on the Run page, then check the Alarms page. | A prerequisite stayed bad past prereq_grace_s, or wheel feedback stopped without a safety stop. |
 | `EXEC_TURN_FAILED` | error | The turn did not come out right | Press Acknowledge on the Run page, then reload the mission. | Turn centre drift, wrong direction of rotation, or remaining angle out of tolerance. |
-| `PP_FAULTED` | warn | A blind move failed | Press Acknowledge on the Run page. | Blind-run move faulted mid-flight. |
 
 ### Cleared by: operator
 
@@ -746,6 +622,8 @@ engineer's note. Generated from `agv_core/alarms.py`.
 | `LOC_LOST` | error | The vehicle lost its position | Set the initial pose on the Run page and confirm the scans line up. | Umbrella code for a LocalizationState LOST without a more specific cause. |
 | `LOC_SCAN_MISMATCH` | error | The vehicle is not where it thinks it is | Set the initial pose on the Run page and confirm the scans line up. | Too many beams pass THROUGH mapped obstacles (scan_long over the limit): the unambiguous wrong-pose signature. |
 | `MAP_SAVE_FAILED` | error | The map was not saved | Try Save again on the Maps page. If it fails twice, call the engineer. | mapping_session save returned an error; the survey is still open. |
+| `DEST_REFUSED` | warn | The destination button did not start a run | Fix what the detail says, then press the destination button again. | A UBC/ITG/PISTON press (panel.destinations, 2026-11-03) started nothing: MANUAL, a run already under way (moving, held or WAITING), a FAULT, the E-stop, no route assigned in the profile, no saved mission for the route on the active map, or the Start refusal (off the route start pose, localisation not READY, ...). |
+| `LABEL_RECORD_FAILED` | warn | The HOME floor label was not saved with the map | Park on HOME, localise, then use Record label here. | mapping_session saw the HOME label at survey start but could not write the new map's label set (the text says why). The map itself was saved. |
 | `LOC_NOT_SET` | warn | The vehicle does not know where it is yet | On the Run page: pick the map, set the initial pose, then confirm. | LocalizationState UNLOCALIZED: no accepted initial pose since the layer started. |
 | `SAVE_UNKNOWN_OUTCOME` | warn | The map may or may not have been saved | Check the Maps page for a new revision before saving again. | The save RPC passed its deadline after the request was accepted; a late answer is ignored. |
 | `SURVEY_NOT_READY` | warn | The vehicle is not ready to survey | Fix what the Alarms page lists, then start the survey again. | mapping_session refused: sensor ages or mode preconditions not met. |
@@ -756,13 +634,13 @@ engineer's note. Generated from `agv_core/alarms.py`.
 
 | Code | Level | Operator sees | Operator does | Engineer's note |
 |---|---|---|---|---|
-| `COORDINATOR_UNAVAILABLE` | error | The survey software is not answering | Press Recover on the Status page, then start the survey again. | mapping_session service missing when the supervisor needed it. |
-| `LAYER_EXITED` | error | The mapping or navigation software stopped | Press Recover on the Status page, then load the mission again. | The mode layer's process group exited unrequested; the base is untouched. |
-| `LAYER_NO_READINESS` | error | The new software never reported ready | Press Recover on the Status page, then try the mode change again. | The layer produced no readiness signal at all: it probably died during entry. |
-| `LAYER_START_TIMEOUT` | error | The new software did not start in time | Press Recover on the Status page, then try the mode change again. | The new layer did not report ready inside layer_start_s; see ~/.amr/logs/layer.log. |
-| `LIFECYCLE_STARTUP` | error | The new software did not become ready | Press Recover on the Status page, then try the mode change again. | A lifecycle node failed to configure/activate during a transition. |
-| `LOOP_ERROR` | error | Internal error in the vehicle software | Press Recover on the Status page. If it repeats, save a report and call the engineer. | The supervisor caught an exception in its loop and failed the running operation. |
-| `MUX_ACK_TIMEOUT` | error | The mode change did not finish | Press Recover on the Status page. | The mux never acknowledged the new generation inside the barrier budget. |
+| `COORDINATOR_UNAVAILABLE` | error | The survey software is not answering | Press Recover on the Home page, then start the survey again. | mapping_session service missing when the supervisor needed it. |
+| `LAYER_EXITED` | error | The mapping or navigation software stopped | Press Recover on the Home page, then load the mission again. | The mode layer's process group exited unrequested; the base is untouched. |
+| `LAYER_NO_READINESS` | error | The new software never reported ready | Press Recover on the Home page, then try the mode change again. | The layer produced no readiness signal at all: it probably died during entry. |
+| `LAYER_START_TIMEOUT` | error | The new software did not start in time | Press Recover on the Home page, then try the mode change again. | The new layer did not report ready inside layer_start_s; see ~/.amr/logs/layer.log. |
+| `LIFECYCLE_STARTUP` | error | The new software did not become ready | Press Recover on the Home page, then try the mode change again. | A lifecycle node failed to configure/activate during a transition. |
+| `LOOP_ERROR` | error | Internal error in the vehicle software | Press Recover on the Home page. If it repeats, save a report and call the engineer. | The supervisor caught an exception in its loop and failed the running operation. |
+| `MUX_ACK_TIMEOUT` | error | The mode change did not finish | Press Recover on the Home page. | The mux never acknowledged the new generation inside the barrier budget. |
 | `SURVEY_RPC_TIMEOUT` | error | The survey command got no answer | Check the Maps page for a new revision, then press Recover. | returned/abort/save RPC passed its deadline; a late answer is ignored. |
 | `BASE_NOT_READY` | warn | Not ready: the vehicle's basics did not come up | Press the safety reset on the cabinet. The vehicle becomes ready by itself. | Boot budget expired with drives/panel/mux/wheel feedback missing. Since 2026-09-22 the supervisor leaves FAULT on its own once the base reports ready. |
 
@@ -781,7 +659,7 @@ engineer's note. Generated from `agv_core/alarms.py`.
 | Code | Level | Operator sees | Operator does | Engineer's note |
 |---|---|---|---|---|
 | `BASE_EXITED` | error | Needs service: the vehicle software stopped | Switch the drives off and on, then press Restart on the Home page. | The base process group died. Recovery cannot rebuild it: the drives must be re-armed. |
-| `BOOT_ERROR` | error | Needs service: the vehicle software failed to start | Press Restart on the Home page. If it repeats, call the engineer. | Exception while spawning the base/web/foxglove groups; see journalctl -u amr.service. |
+| `BOOT_ERROR` | error | Needs service: the vehicle software failed to start | Press Restart on the Home page. If it repeats, call the engineer. | Exception while spawning the base/web groups; see journalctl -u amr.service. |
 | `LAYER_NOT_EMPTY` | error | Needs service: old software would not go away | Press Restart on the Home page. | STOP_OLD found surviving members of the previous layer's process group. |
 | `LAYER_STOP_TIMEOUT` | error | Needs service: software would not stop | Press Restart on the Home page. | The layer did not exit inside its stop budget. |
 | `SPAWN_FAILED` | error | Needs service: a program would not start | Press Restart on the Home page. If it repeats, call the engineer. | Group.spawn failed (missing executable, bad environment). |
@@ -793,16 +671,17 @@ engineer's note. Generated from `agv_core/alarms.py`.
 
 | Code | Level | Operator sees | Operator does | Engineer's note |
 |---|---|---|---|---|
-| `DISK_FULL` | error | No storage left: new maps cannot be saved | Call the engineer: the disk is full. A route already running is not affected. | Under 200 MB free. Survey start and map save are refused; navigation and LINE are deliberately NOT gated - a full disk must not stop a vehicle that is already moving. |
+| `CAN_DOWN` | error | The motor controllers cannot be reached | Call the engineer: check the CAN adapter (USB) and its cable. | can0 cannot be opened (the CANable unplugged or not enumerated). drive_node retries every 2 s and reports link_state 'no bus'; the row clears itself once the bus opens. |
+| `DISK_FULL` | error | No storage left: new maps cannot be saved | Call the engineer: the disk is full. A route already running is not affected. | Under 200 MB free. Survey start and map save are refused; navigation is deliberately NOT gated - a full disk must not stop a vehicle that is already moving. |
+| `ESTOP_RESET_FAILED` | error | Reset did not take | Check the E-stop is released and press Reset again. If it repeats, call the engineer. | Reset edge with DI08 HIGH, but the drives stayed in 'Switch on disabled' (STO held) for panel.estop_reset_timeout_s. DI08 dropping again is a new emergency, not this. |
+| `GLS_CONFIG_MISMATCH` | error | The floor-label camera's settings changed | Call the engineer. The vehicle still runs; the camera is ignored. | gls_node read back OFtplstr1 / GlsCodeSel / DCDMVerISO15415 and they differ from the profile (gls.expect_template) or REQUIRED in gls_link.py - e.g. the device was reset to factory settings. Every frame is dropped until the next connect verifies. Re-apply the saved SOPAS parameter file; never write settings from the vehicle. |
 | `LOC_GATE_FAILED` | error | The position check stopped running | Call the engineer: the map/scan check failed. | Scan-consistency gate or the transform it needs failed; no evidence either way, so LOST. |
 | `LOC_STREAM_STALE` | error | A sensor the vehicle navigates by went quiet | Call the engineer: a sensor stopped (see the detail for which). | scan/wheels/imu/tf/amcl age over the spec 2.4 limits. |
-| `PANEL_STALE` | error | The control panel is not answering | Call the engineer: the panel wiring or the I/O island is down. | No fresh, valid PanelState: Modbus DIO at 192.168.1.30 lost, or panel_node down. No motion authority at all without it. |
+| `PANEL_STALE` | error | The control panel is not answering | Call the engineer: the panel wiring or the I/O island is down. | No fresh, valid PanelState: Modbus DIO at 192.168.1.40 lost, or panel_node down. No motion authority at all without it. |
 | `DISK_LOW` | warn | The vehicle is running out of storage | Call the engineer: old maps and reports need deleting. | Under 1 GB free on the state or maps filesystem. Surveys and saves still run; at 200 MB they are refused (DISK_FULL). |
-| `FIELD_UNKNOWN` | warn | Stopped: no safety-scanner field data | Check the scanner cable and that its driver is running (Status page). | Supervised AUTO is zeroed with no fresh /output_paths: a field state nobody can see is not clear. The OSSD stop path does not depend on this data link. |
-| `MLS_TEMP` | warn | The line sensor is outside its temperature range | Call the engineer: the line sensor is too hot or too cold. | 2070h:01 outside the sensor's own thresholds 2070h:07..2070h:06 (manual 8.7), read every 60 s and at once after a temperature event. Clears itself when back inside. |
-| `SCANNER_SILENT` | warn | The safety scanner is not sending data | The vehicle can still be driven by hand. Call the engineer before running a mission. | No /scan at all: the nanoScan3 driver could not reach 192.168.3.2:6060 (cable, power, netplan) or AMR_LIDAR=false. The driver is an OPTIONAL launch member, so nothing faults and nothing else reports it - this row is the only place it shows. The vehicle's STOP is the scanner's OSSD pair into the FX3 and is unaffected by the data link; mapping, navigation and localisation are dead without it. |
+| `FIELD_UNKNOWN` | warn | Stopped: no safety-scanner field data | Check the scanner cable and that its driver is running (Monitor page). | Supervised AUTO is zeroed with no fresh /output_paths: a field state nobody can see is not clear. The OSSD stop path does not depend on this data link. |
+| `SCANNER_SILENT` | warn | The safety scanner is not sending data | The vehicle can still be driven by hand. Call the engineer before running a mission. | No /scan at all: the nanoScan3 driver could not reach 192.168.3.1:6060 (cable, power, netplan) or AMR_LIDAR=false. The driver is an OPTIONAL launch member, so nothing faults and nothing else reports it - this row is the only place it shows. The vehicle's STOP is the scanner's OSSD pair into the FX3 and is unaffected by the data link; mapping, navigation and localisation are dead without it. |
 | `SCANNER_STALE` | warn | The safety scanner stopped sending data | The vehicle can still be driven by hand. Call the engineer before running a mission. | /scan arrived and then stopped: driver died mid-run, or the Ethernet link dropped. Expected rate is 34 Hz. |
-| `TRACK_RATE_LOW` | warn | Stopped: the tape sensor is too slow | Call the engineer: the tape sensor is not keeping up. | Line hold cause 'rate': track_hz below the PID's rate gate (SDO fallback reads ~10 Hz). |
 
 <!-- END GENERATED -->
 
@@ -821,7 +700,7 @@ engineer's note. Generated from `agv_core/alarms.py`.
   `~/.amr/logs/events.jsonl` (the operator event log, kept across restarts),
   `journalctl -u amr.service` (the supervisor itself). **Save report** on the
   Alarms page packages all of these.
-- Panel invalid: check the DIO island at `192.168.1.30`. Reconnection must not
+- Panel invalid: check the DIO island at `192.168.1.40`. Reconnection must not
   create a Start edge or replay a jog.
 - No ROS discovery in an engineering shell: source `env/vehicle.sh`. Hardware
   refuses any domain other than 10.
@@ -853,6 +732,30 @@ installer preserved current state with:
 systemctl is-enabled amr
 systemctl is-active amr
 ```
+
+### Deploying a build that removes nodes or interfaces
+
+colcon never prunes an overlay, and Humble does not refuse a peer whose message
+definition differs (there is no type hash), so a build that deletes nodes,
+launch files or message fields is deployed with a **full clean rebuild** and a
+**witnessed restart of the whole service**, never a partial one. The trackless-only
+build of 2026-10-27 is one (`manuals/trackless-only-removal-plan.md`, Phase 7):
+
+```bash
+sudo systemctl stop amr.service
+cd ~/agv_can/amr_ws && rm -rf build install log && colcon build --symlink-install
+sudo ./deploy/install.sh && ./deploy/validate.sh
+ls install/*/lib/*/ install/*/share/*/launch/ | grep -E 'rfid|tape|line_layer|p0_loc|web_panel'   # must be empty
+sudo systemctl restart amr.service      # witnessed; supervisor and web together
+```
+
+On a vehicle that ran the tracked product, archive the tape-era data to a
+tarball first, then purge it and rotate the two journals so the event history
+does not show retired codes as UNKNOWN rows: `~/amr_maps/*/tapegraph`,
+`~/.amr/teach`, `~/.amr/line_graph.json`, `~/.amr/reports/tape_health`,
+`~/.amr/mls_cal`, the tracked-era `~/.amr/runs/*`, and `~/.amr/logs/events.jsonl*`
+and `~/.amr/operations.jsonl` (moved aside after the tarball is verified). The
+exact commands are in the removal plan, Phase 7.
 
 ### Two sudo rules the operator pages need (optional, install once)
 
@@ -928,7 +831,7 @@ and the Alarms history. PASS means the operator can say what happened without he
 2. **During a map save** (press Save, cut within 1 s). Expect: no revision directory
    without a manifest; the previous revision still loads on the Run page; a
    `.staging-` or `.draft-` directory is left behind, which is evidence, not damage.
-3. **Idle with the web open.** Expect: boot to LINE (IDLE on a trackless-only profile) inside the budget with no operator
+3. **Idle with the web open.** Expect: boot to IDLE inside the budget with no operator
    action, and the Alarms history still holds the events from before the cut —
    including the last error, which is the one that is fsynced.
 
@@ -949,9 +852,16 @@ pytest tests/test_alarms.py         # fails if the catalogue and this file disag
 The first witnessed cutover from the legacy `agv_controller` unit to
 `amr.service` was done during U10, and the legacy controller (`main.py`,
 `app/`, `canworker.py`) and the interim `amr_nav.service` / `amr_mapping.service`
-units were deleted at U11 after the ported LINE mode was accepted on the vehicle
-(`manuals/vehicle-reports/2026-09-21-restructure-and-line-layer.md`). The last
-deployable legacy revision is the git tag `legacy-final`.
+units were deleted at U11 (`manuals/obsolete/vehicle-reports/2026-09-21-restructure-and-line-layer.md`).
+The last deployable legacy revision is commit `aa02ec7`, tagged `legacy-final`
+(removal plan D18).
+
+The tracked product (tape follower, MLS tape reading, RFID, tape missions) was
+removed on 2026-10-27 (`manuals/trackless-only-removal-plan.md`); its last
+build is the tag `tracked-final`. Bags recorded before then decode only against
+that build. The Foxglove bridge was removed on 2026-11-03
+(`manuals/foxglove-removal-plan.md`): nothing listens on :8765, and remote views go
+through the web app.
 
 On a vehicle that still carries the old units, retire them once:
 
@@ -970,7 +880,7 @@ while the service runs.
 
 There is no second controller to fall back to. A rollback is a rollback of the
 *build*: engage E-stop, stop the service, check out the previous known-good
-commit (tags and `manuals/vehicle-reports/` record which builds were accepted),
+commit (tags and `manuals/obsolete/vehicle-reports/` record which builds were accepted),
 rebuild, and start again:
 
 ```bash

@@ -1,10 +1,11 @@
 [Unit]
 Description=Unified AMR supervisor, hardware, web UI, mapping and navigation
 Documentation=file:///home/amrslam/agv_can/amr_ws/RUNBOOK.md
-# can0 on the AMR QR is the USB CAN adapter brought up by qr/slcan-can0.service.
-After=network-online.target sys-subsystem-net-devices-can0.device slcan-can0.service
+# No BindsTo/After on can0 (2026-10-27): the CAN owner waits for can0 and reports "no bus".
+# On the AMR QR can0 is the USB CAN adapter brought up by qr/slcan-can0.service; ordering
+# after it (not requiring it) lets the web UI come up even when the adapter is missing.
+After=network-online.target slcan-can0.service
 Wants=network-online.target
-BindsTo=sys-subsystem-net-devices-can0.device
 StartLimitIntervalSec=60
 StartLimitBurst=3
 

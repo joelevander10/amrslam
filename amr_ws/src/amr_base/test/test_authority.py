@@ -170,5 +170,5 @@ def test_hand_driven_source_changes_are_not_operator_events():
     assert not is_history("none", "manual")  # jog release
     assert not is_history("none", "pendant")
     assert is_history("none", "follow")  # the executor losing the wheels IS history
-    assert is_history("line", "none")
+    assert is_history("rotate", "none")
     assert is_history("none", "manual", inhibited=True)  # so is an inhibit

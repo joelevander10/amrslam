@@ -40,8 +40,7 @@ onState(st => {
   }
   tiles('survey-state', [
     ['Session', m.state_name, 'coordinator', SURVEY_LEVEL[m.state_name], 'key'],
-    ['Map', m.map_id ? `${m.map_id}${m.revision ? ' rev' + m.revision : ''}` : '—',
-     m.continued_from ? `continues rev${m.continued_from}` : 'id · revision'],
+    ['Map', m.map_id ? `${m.map_id}${m.revision ? ' rev' + m.revision : ''}` : '—', 'id · revision'],
   ]);
   $('survey-msg').textContent = m.message || '';
   if (m.closure_available) {
@@ -101,15 +100,12 @@ async function loadMaps() {
         `<span class="n">${Object.entries(r.routes || {}).map(([k, v]) => `${esc(k)} rev${esc(v.join(','))}`).join('; ') || 'no routes'}</span> ` +
         `<code>${esc(String(r.sha256).slice(0, 12))}</code><br>` +
         `<span class="n">${derived(r)}</span> ` +
-        `<a class="tool" href="/review?map=${encodeURIComponent(m.map_id)}&rev=${encodeURIComponent(r.revision)}" title="Mark dynamic areas (trolleys, parked forklifts) or clean up this map: saves a new revision">Edit areas</a>` +
-        (r.continuable ? ` <a class="tool" href="/survey-continue?map=${encodeURIComponent(m.map_id)}&rev=${encodeURIComponent(r.revision)}" title="Keep surveying this map from anywhere inside it: the save becomes the next revision">Continue survey</a>` : '') +
-        `</span></div>`).join('') + '</div>').join('');
+        `<a class="tool" href="/review?map=${encodeURIComponent(m.map_id)}&rev=${encodeURIComponent(r.revision)}" title="Mark dynamic areas (trolleys, parked forklifts) or clean up this map: saves a new revision">Edit areas</a></span></div>`).join('') + '</div>').join('');
 }
 // "dynamic 4.2 m² · from rev1 (3 edits: dynamic 2, unknown 1)": how a revision came to be
 function derived(r) {
   const parts = [];
   if (r.dynamic_cells) parts.push(`dynamic ${num(r.dynamic_cells * r.resolution * r.resolution, 1)} m²`);
-  if (r.review && r.review.continued_from) parts.push(`continues rev${esc(r.review.continued_from.revision)} (scan match ${num(+r.review.continued_from.match.score, 2)})`);
   if (r.edits) parts.push(`from rev${esc(r.edits.parent_revision)} (${esc(r.edits.ops)} edits: ${Object.entries(r.edits.counts || {}).map(([k, n]) => `${esc(k)} ${esc(n)}`).join(', ')})${r.edits.note ? ' ' + esc(r.edits.note) : ''}`);
   return parts.join(' · ') || 'no dynamic areas';
 }

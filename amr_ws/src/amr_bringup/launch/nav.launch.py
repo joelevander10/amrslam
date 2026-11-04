@@ -1,4 +1,4 @@
-"""nav.launch.py: standalone runtime stack = base + web + navigation_layer (+ Foxglove).
+"""nav.launch.py: standalone runtime stack = base + web + navigation_layer.
 
 sim:=true   base.launch.py real:=false with scan_synth (clutter optional)
 sim:=false  base.launch.py real:=true (drive_node on can0, panel, nanoScan3)
@@ -18,7 +18,7 @@ from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
-from amr_bringup.launch_helpers import default_world, foxglove, include
+from amr_bringup.launch_helpers import default_world, include
 
 
 def _base(context):
@@ -50,7 +50,6 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("slip_noise_std", default_value="0.02"),
             DeclareLaunchArgument("world_yaml", default_value=default_world()),
             DeclareLaunchArgument("clutter_count", default_value="0"),
-            DeclareLaunchArgument("foxglove", default_value="false"),
             DeclareLaunchArgument("web", default_value="true", description="operator pages on :5001"),
             DeclareLaunchArgument("footprint_yaml", default_value=""),
             DeclareLaunchArgument("panel_auto", default_value="false"),
@@ -71,6 +70,5 @@ def generate_launch_description() -> LaunchDescription:
                 revision=cfg("revision"),
                 footprint_yaml=cfg("footprint_yaml"),
             ),
-            foxglove(IfCondition(cfg("foxglove"))),
         ]
     )

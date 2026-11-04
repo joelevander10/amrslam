@@ -6,9 +6,9 @@ uint8 TELEOP=1          # /cmd_vel_teleop (engineering keyboard input)
 uint8 FOLLOW=2
 uint8 ROTATE=3
 uint8 MANUAL=4          # /amr/manual_command (stamped browser jog)
-uint8 COMMISSIONING=5
+uint8 COMMISSIONING=5   # /amr/commissioning_wheels (blind run, per-wheel; restored 2026-11-02)
 uint8 PENDANT=6          # physical jog pendant levels carried in PanelState
-uint8 LINE=7             # /amr/line_cmd, magnetic tape following (dual-product plan)
+# 7 retired (LINE), never reuse
 std_msgs/Header header
 string instance             # lease instance the mux is applying
 uint32 generation

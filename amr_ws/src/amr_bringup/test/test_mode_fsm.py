@@ -63,7 +63,7 @@ def test_fault_transitioning_and_pending_operation_block_everything_but_recover(
     d = fsm.admit(fsm.IDLE, fsm.REQ_NAVIGATION, cond(operation_pending=True))
     assert not d.ok and d.reason.startswith("BUSY")
     d = fsm.admit(fsm.IDLE, fsm.REQ_NAVIGATION, cond(commissioning_active=True))
-    assert not d.ok and "commissioning" in d.reason
+    assert not d.ok and "blind-run" in d.reason
 
 
 def test_duplicate_request_returns_existing_operation_and_book_is_bounded(tmp_path):
@@ -114,32 +114,24 @@ def test_mode_names_cover_every_mode_and_layer_modes_are_named():
         fsm.TRANSITIONING,
         fsm.FAULT,
         fsm.STOPPING,
-        fsm.LINE,
     }
     assert modes == set(fsm.MODE_NAMES)
     assert len(set(fsm.MODE_NAMES.values())) == len(fsm.MODE_NAMES)
     # the wire values must not drift: ModeState.msg pins these numbers
     assert (fsm.STARTING, fsm.IDLE, fsm.MAPPING, fsm.NAVIGATION) == (0, 1, 2, 3)
-    assert (fsm.TRANSITIONING, fsm.FAULT, fsm.STOPPING, fsm.LINE) == (4, 5, 6, 7)
-    assert set(fsm.LAYER_MODES) == {fsm.MAPPING, fsm.NAVIGATION, fsm.LINE}
+    assert (fsm.TRANSITIONING, fsm.FAULT, fsm.STOPPING) == (4, 5, 6)
+    # 7 was LINE: retired, never reuse
+    assert not hasattr(fsm, "LINE")
+    assert 7 not in fsm.MODE_NAMES
+    assert set(fsm.LAYER_MODES) == {fsm.MAPPING, fsm.NAVIGATION}
     assert all(m in fsm.MODE_NAMES for m in fsm.LAYER_MODES)
 
 
-def test_line_mode_is_admitted_and_an_active_follower_blocks_leaving_it():
-    assert fsm.admit(fsm.IDLE, fsm.REQ_LINE, cond()).ok
-    assert fsm.admit(fsm.NAVIGATION, fsm.REQ_LINE, cond(run_state=fsm.RUN_IDLE)).ok
-    # an unknown kind is still refused
+def test_unknown_request_kinds_are_refused():
     assert not fsm.admit(fsm.IDLE, "tape", cond()).ok
-    # leaving LINE while the follower holds the vehicle is refused, like a held mission
-    busy = fsm.admit(fsm.LINE, fsm.REQ_IDLE, cond(line_active=True))
-    assert not busy.ok and "disarm" in busy.reason
-    assert fsm.admit(fsm.LINE, fsm.REQ_IDLE, cond(line_active=False)).ok
-    # the stillness and emergency rules apply to a LINE request like any other;
-    # the selector does not (AUTO or MANUAL alike)
-    assert not fsm.admit(fsm.IDLE, fsm.REQ_LINE, cond(wheels_still_since=None)).ok
-    assert fsm.admit(fsm.IDLE, fsm.REQ_LINE, cond(panel_manual=False)).ok
-    assert not fsm.admit(fsm.IDLE, fsm.REQ_LINE, cond(drives_ok=False)).ok
-    assert not fsm.admit(fsm.IDLE, fsm.REQ_LINE, cond(commissioning_active=True)).ok
+    # "line" was LINE mode's request: retired, now unknown like any other kind
+    d = fsm.admit(fsm.IDLE, "line", cond())
+    assert not d.ok and "unknown request" in d.reason
 
 
 def test_drive_standby_is_not_an_emergency():

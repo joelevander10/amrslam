@@ -47,11 +47,31 @@ $('btn-pose-survey').onclick = () => {
 };
 $('btn-loc-confirm').onclick = () => api('/api/localization/confirm').then(r => log(r.data.message, r.status === 200 ? '' : 'bad'));
 $('btn-loc-reset').onclick = () => api('/api/localization/reset').then(r => log(r.data.message));
+// "Record label here" (engineer only: the button is absent for the operator)
+if ($('btn-gls-record')) $('btn-gls-record').onclick = () => {
+  const role = $('gls-role').value, name = $('gls-name').value.trim();
+  if (role === 'dest' && !name) { log('name the destination first (e.g. UBC)', 'bad'); return; }
+  api('/api/labels/record', { role, name }).then(r => log(r.data.message, r.status === 200 ? '' : 'bad'));
+};
+// The floor-label camera's last reading: what "Record label here" would see.
+function glsTiles(g) {
+  if (!g) { tiles('gls-state', [['Camera', '–', 'no reading', 'warn', 'key']]); return; }
+  const stale = g.age_s > 1.0;
+  const health = !g.comms_ok ? ['NOT ANSWERING', 'bad'] : g.config_ok === false ? ['SETTINGS DIFFER', 'bad'] : stale ? ['STALE', 'warn'] : ['OK', ''];
+  const rows = [['Camera', health[0], g.fps ? `${num(g.fps, 1)} frames/s` : '—', health[1], 'key'],
+    ['Label', g.valid && !stale ? g.label_id : 'none', g.valid && !stale ? `${g.n_codes} codes` : 'no label in view', g.valid && !stale ? '' : 'warn']];
+  if (g.valid && !stale) rows.push(g.calibrated
+    ? ['Offset', `${num(g.x_m * 1000, 1)}, ${num(g.y_m * 1000, 1)}`, `mm · ${num(g.yaw_rad * 180 / Math.PI, 1)}°`]
+    : ['Raw', `${num(g.x_counts, 0)}, ${num(g.y_counts, 0)}`, `counts · ${num(g.angle_deg, 1)}° · NOT CALIBRATED`, 'warn']);
+  tiles('gls-state', rows);
+}
 $('btn-run-load').onclick = () => api('/api/mission/run', { mission_id: $('run-mission').value }).then(r => log(r.data.message, r.status === 200 ? '' : 'bad'));
 $('btn-run-pause').onclick = () => api('/api/mission/pause').then(r => log(r.data.message));
 $('btn-run-resume').onclick = () => api('/api/mission/resume').then(r => log(r.data.message));
 $('btn-run-abort').onclick = () => api('/api/mission/abort').then(r => log(r.data.message));
 $('btn-run-ack').onclick = () => api('/api/mission/ack').then(r => log(r.data.message));
+// AMR QR only (run.html): releases a route wait step, the panel's START does the same
+if ($('btn-run-continue')) $('btn-run-continue').onclick = () => api('/api/mission/continue').then(r => log(r.data.message));
 
 const age = (v) => [num(v, 2), 's', v > 1.0 ? 'warn' : ''];
 
@@ -89,6 +109,8 @@ onState(st => {
   } else runMission = nowRun;
   const onActive = viewIsActive();
   $('tool-initialpose').disabled = !onActive; $('btn-loc-confirm').disabled = !onActive;
+  if ($('btn-gls-record')) $('btn-gls-record').disabled = !onActive;
+  glsTiles(st.gls);
   $('btn-pose-survey').disabled = !onActive || !(view.meta && view.meta.start && view.meta.start.x_m !== undefined);
   if (!onActive && view.tool === 'initialpose') dropPoseTool();
   if (view.tool === 'initialpose' && m && m.generation !== poseGen) dropPoseTool();
@@ -116,19 +138,31 @@ onState(st => {
     tiles('loc-state', [['State', st.localization_stale ? 'STALE' : '–', st.localization_stale ? 'from a replaced layer' : 'activate a map', st.localization_stale ? 'bad' : '', 'key']]);
     $('loc-detail').innerHTML = ''; $('loc-reason').textContent = '';
   }
+  // Not NORMAL (alarms.banner): no load, no resume; the server refuses them too (409).
+  // An emergency holds the run (owner policy 2026-10-30): after NORMAL, Start or Continue resumes it.
+  const emg = st.banner ? (st.banner.reason || 'E-stop active') : '';
+  ['btn-run-load', 'btn-run-resume'].forEach(id => { $(id).disabled = !!emg; $(id).title = emg; });
+  $('run-emg').hidden = !emg; $('run-emg').textContent = emg;
   const r = st.run;
+  if ($('btn-run-continue')) {
+    const waiting = !!r && r.state_name === 'WAITING';
+    $('btn-run-continue').disabled = !!emg || !waiting;
+    $('btn-run-continue').title = emg || (waiting ? 'Release the wait: the vehicle moves after the pre-move warning' : 'Nothing is waiting');
+  }
   if (r) {
     tiles('run-state', [
       // a BLOCKED run is a hold with a cause (auto-resume plan 2026-09-19): say whether it continues by itself
       ['State', r.state_name, r.resume_prepared ? 'resume prepared'
-        : (r.state_name === 'BLOCKED' && r.hold_cause ? `${HOLD_NAMES[r.hold_cause] || r.hold_cause} · ${r.auto_resume ? 'resumes by itself' : 'press Start'}` : '—'),
+        : r.state_name === 'BLOCKED' && r.hold_cause ? `${HOLD_NAMES[r.hold_cause] || r.hold_cause} · ${r.auto_resume ? 'resumes by itself' : 'press Start'}`
+        // a route wait step (gls-wait-coding-plan §A.5): Continue/Start releases it (the AMR QR: the web Continue too)
+        : r.state_name === 'WAITING' ? `${r.wait_name || 'wait'} · ${Math.round(r.waiting_s || 0)} s · press Continue` : '—',
         RUN_LEVEL[r.state_name], 'key'],
       ['Run', r.run_id || '—', r.mission_id || '—'],
       ['Step', r.step_id ? `${r.step_index} ${r.step_id}` : String(r.step_index), r.step_type && r.step_type !== 'rotate' && r.step_v_mps > 0 ? `${r.step_type} ${num(r.step_v_mps, 2)} m/s` : (r.step_type || '—')],
       ['Cross-track', num(r.cross_track_m, 3), 'm'],
       ['Remaining turn', num(r.remaining_turn_rad * 180 / Math.PI, 1), '°'],
     ]);
-    $('run-reason').textContent = r.reason || '';
+    $('run-reason').textContent = (r.reason || '') + (r.continue_refused ? ` — Continue refused: ${r.continue_refused}` : '');
   } else {
     tiles('run-state', [['State', st.run_stale ? 'STALE' : '–', st.run_stale ? 'from a replaced layer' : 'activate a map', st.run_stale ? 'bad' : '', 'key']]);
     $('run-reason').textContent = '';
@@ -151,6 +185,7 @@ view.overlays.push((c, v) => {
       const pts = Array.from({ length: n + 1 }, (_, k) => { const yaw = s.start[2] + sign * th * k / n; return [s.centre[0] + sign * s.radius_m * Math.sin(yaw), s.centre[1] - sign * s.radius_m * Math.cos(yaw)]; });
       v.polyline(pts, INK.route, 2); v.dot(s.end[0], s.end[1], INK.turn, 4);
     }
+    else if (s.type === 'home' && s.samples) { v.polyline(s.samples.map(p => [p[0], p[1]]), INK.route, 2); v.dot(s.end[0], s.end[1], INK.pose, 5); }
     else v.dot(s.start[0], s.start[1], INK.turn, 5);
   });
 });

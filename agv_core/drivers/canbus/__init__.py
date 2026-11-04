@@ -3,7 +3,7 @@
 `guard`, `alarms`, `bus_health`, `rpdo` and `drive_forward` are libraries — the
 bus owner (`amr_base.canopen`) imports them.
 
-`verify_bus`, `verify_drivers`, `read_imu`, `read_mls` and `lss` are ALSO
+`verify_bus`, `verify_drivers`, `read_imu` and `lss` are ALSO
 runnable on a bench against a live can0:
 
     python3 -m agv_core.drivers.canbus.verify_drivers

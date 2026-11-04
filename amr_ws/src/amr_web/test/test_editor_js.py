@@ -95,3 +95,27 @@ def test_browser_jog_caps_are_the_2026_10_02_manual_speeds():
     from amr_web import jog
 
     assert (jog.V_MAX, jog.W_MAX) == (0.50, 0.39)  # = the pendant's pendant_v / pendant_w
+
+
+@pytest.mark.skipif(NODE is None, reason="node not installed")
+def test_measure_tool_snaps_reads_out_mm_and_never_edits_the_route():
+    harness = pathlib.Path(__file__).with_name("editor_harness.js")
+    r = subprocess.run([NODE, str(harness)], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    assert "error" not in out, out
+    assert out["measure_on"] is True and out["pan_tools"] == ["measure"]  # a drag still pans
+    assert out["geometry_calls"] == 1  # saved routes fetched once, when the tool is selected
+    assert "click point A" in out["measure_idle"]
+    assert "B?" in out["measure_live"] and "other r2 · s2 wait UBC" in out["measure_live"]
+    rows = out["measure_rows"]
+    # A = the s7 arc centre (10.3, 1), B = the saved wait (3, 5): B - A = (-7.3, +4.0), 8.324 m
+    assert "draft · s7 arc centre" in rows and "other r2 · s2 wait UBC" in rows
+    assert "<b>8324</b>" in rows and "<b>-7300</b>" in rows and "<b>+4000</b>" in rows
+    assert "B?" not in rows
+    assert out["result_untouched"] is True
+    free = out["free_rows"]
+    assert "free point" in free and "<b>500</b>" in free and "<b>+500</b>" in free and "<b>0</b>" in free
+    assert "on draft · s3" in out["path_rows"] and "5.000, 0.000" in out["path_rows"]
+    assert "select Measure" in out["measure_cleared"]
+    assert out["after_undo_ids"] == ["s1", "s2", "s3", "s4", "s5", "s6", "s7"]

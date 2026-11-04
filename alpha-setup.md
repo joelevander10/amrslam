@@ -18,8 +18,7 @@ between units are in the table below; everything else is the same on every unit.
 | Wi-Fi address on `agv_field` | `192.168.2.20/24` | `192.168.2.30/24` |
 | Web UI from the tablet | `http://192.168.2.20:5001` | `http://192.168.2.30:5001` |
 | CANable serial (udev rule, section 3) | `2087327F5548` | **TBD**: read it at section 3 |
-| Profile | `profiles/agv-01.json` | the same file (identical hardware, same `line-a` mission; `AGV_PROFILE` unset) |
-| Mission | `missions/line-a.json` | the same |
+| Profile | `profiles/agv-01.json` | the same file (identical hardware; `AGV_PROFILE` unset) |
 | Wired addresses (LAN1, LAN2, `can0` nodes) | section 0 | the same: each unit's wired peers are on its own private links |
 | ROS domain | 10 | 10: DDS is bound to `lo` only (`cyclonedds-local.xml`), so two units on `agv_field` never see each other's topics |
 
@@ -94,7 +93,7 @@ checks find where you left off.
 ### Rules for Claude Code (and for you)
 
 **Files.** When a step shows a file's content (a code block under a path such
-as `/etc/netplan/60-rfid-lan1.yaml`), Claude Code writes it, exactly as shown,
+as `/etc/netplan/60-lan1-dio-maint.yaml`), Claude Code writes it, exactly as shown,
 to `~/host-staging/<file name>`; the install command is then run from there
 (`cd ~/host-staging` first). Values marked "per unit" use the unit-2 column of
 the table above.
@@ -110,7 +109,7 @@ the table above.
 **NEVER**, on this machine:
 - `sudo systemctl enable` or `start amr` before step 15;
 - run any command with `--go`, or any `set-*` bench command (they write to the drives or sensors);
-- edit anything under `amr_ws/deploy/`, `profiles/`, `missions/` or `agv_core/`
+- edit anything under `amr_ws/deploy/`, `profiles/` or `agv_core/`
   (if a step seems to need it, the guide is wrong: STOP);
 - `git push`, `git commit`, `git reset`, `git clean`;
 - delete anything under `~/.amr` or `~/amr_maps`.
@@ -129,12 +128,12 @@ tether come **before** the wired ports, so the PC never loses its internet).
 | 4 | Never sleep, power key ignored | 1 | `systemctl is-enabled sleep.target` = `masked`; `ls /etc/systemd/logind.conf.d/` lists both files |
 | 5 | NetworkManager, no 2-min boot wait | 2.1 | `systemctl is-enabled systemd-networkd-wait-online` = `masked`; `systemctl is-active NetworkManager` = `active` |
 | 6 | Second uplink: Wi-Fi, then phone tether | 2.3, 2.2 (tether file only) | `nmcli -g IP4.ADDRESS dev show wlp1s0` = `192.168.2.30/24`; with the phone plugged in, `ip -br addr show usb0` has an address |
-| 7 | Wired ports + installer file cleaned | 2.2 | `ip -br addr` shows `enp2s0 … 192.168.1.10/24`, `enp3s0 … 192.168.3.2/24`; `ip route \| grep default` has no `enp`; `ls /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg` exists |
+| 7 | Wired ports + installer file cleaned | 2.2 | `ip -br addr` shows `enp1s0 … 192.168.1.100/24`, `enp2s0 … 192.168.3.1/24`, `enp3s0 … 192.168.4.2/24`; `ip route \| grep default` has no `enp`; `ls /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg` exists |
 | 8 | CANable → `can0` | 3 | `ls -l /dev/canable0` is a link; `ip -br link show can0` says `UP`; serial written into the top table (tell the engineer) |
 | 9 | ROS 2 Humble | 4 | `ls /opt/ros/humble/setup.bash`; `dpkg -s ros-humble-rosbag2-storage-mcap ros-humble-sick-safetyscanners2 \| grep -c 'install ok'` = `2` |
 | 10 | Python packages | 5.2 | `python3 -c "import can, pymodbus, flask, numpy; print(numpy.__version__)"` prints `2.2.6` |
 | 11 | Shell environment | 5.3 | `bash -ic 'echo $ROS_DOMAIN_ID $RMW_IMPLEMENTATION'` = `10 rmw_cyclonedds_cpp` |
-| 12 | Build and offline tests | 5.4 | `ls ~/agv_can/amr_ws/install/setup.bash`; `python3 tests/run_all.py` ends with every check passing (706 at the time of writing) |
+| 12 | Build and offline tests | 5.4 | `ls ~/agv_can/amr_ws/install/setup.bash`; `python3 tests/run_all.py` ends with every check passing |
 | 13 | Service files, sudo rules, data volume | 6, 6.1, 6.2 | `systemctl is-enabled amr` = `disabled` (installed, not enabled); `ls /etc/sudoers.d/amr-web`; `findmnt /data/amr` shows `data=journal` |
 | 14 | Operator display (kiosk). **Do it over SSH** (`ssh gvipc-evo-01@192.168.2.30`): when lightdm restarts, the local screen becomes the kiosk and there is no text console behind it any more (by design) | 7 (not 7.8) | `systemctl is-active nginx lightdm` = `active active`; `curl -s http://127.0.0.1/ \| grep -c 'AMR system starting'` = `1`; the panel shows the orange "AMR system starting" page |
 | 15 | **STOP: engineer.** Device read-back, then first start | 9.1, 6 (cutover) | every row of 9.1 matches; `systemctl is-active amr` = `active`; the panel shows the UI in IDLE |
@@ -169,15 +168,16 @@ under another username means editing `amr.service` (`User=`, `Group=`,
 
 | Interface | Driver | Managed by | Address | Peer |
 |---|---|---|---|---|
-| `enp2s0` (LAN1) | `igc` (Intel i226, `8086:125c`) | netplan → networkd | `192.168.1.10/24`, no gateway, no DNS | DIO island `192.168.1.30:502` (Modbus TCP), RFID reader `192.168.1.200:2022` |
-| `enp3s0` (LAN2) | `igc` | netplan → networkd | `192.168.3.2/24`, no gateway, no DNS | nanoScan3 `192.168.3.10` (CoLa2 TCP 2122, UDP data → host `:6060`) |
+| `enp1s0` (LAN1) | `igc` | netplan → networkd | `192.168.1.100/24`, no gateway, no DNS | DIO island `192.168.1.40:502` (Modbus TCP); maintenance SSH |
+| `enp2s0` (LAN2) | `igc` | netplan → networkd | `192.168.3.1/24`, no gateway, no DNS | nanoScan3 `192.168.3.10` (CoLa2 TCP 2122, UDP data → host `:6060`) |
+| `enp3s0` (LAN3) | `igc` | netplan → networkd | `192.168.4.2/24`, no gateway, no DNS | SICK GLS621 `192.168.4.1` |
 | `wlp1s0` | `iwlwifi` (Intel 7260) | NetworkManager | per unit (`192.168.2.20/24` unit 1, `192.168.2.30/24` unit 2), gw `192.168.2.10`, DNS 1.1.1.1/8.8.8.8, metric 700 | SSID `agv_field` — the operator tablet reaches `http://<unit address>:5001` here |
 | `usb0` | `cdc_ether`/`rndis` | netplan → networkd | DHCP, metric 100 | phone tether: maintenance uplink and remote SSH |
 | `can0` | `slcan` (CANable 2.0, USB `16d0:117e`) | `canable@can0.service` | 125 kbps, txqueuelen 1000 | BLV-R node 1 (left), node 2 (right), SICK MLS node 10 |
 | `lo` | | | | **all ROS 2 DDS traffic** (loopback-only CycloneDDS) |
 
 Two default routes on purpose (`usb0` metric 100 first, then `wlp1s0` 700). The
-two wired LANs never carry a default route — a third would blackhole traffic.
+three wired LANs never carry a default route — a third would blackhole traffic.
 **`nmcli` silently does nothing on the ethernet ports**; they belong to netplan.
 
 ### Devices on the vehicle whose addresses are configured *on the device*, not on the PC
@@ -185,10 +185,9 @@ two wired LANs never carry a default route — a third would blackhole traffic.
 | Device | Setting | Tool |
 |---|---|---|
 | Oriental Motor BLV-R ×2 | CANopen node IDs 1 (left) / 2 (right), 125 kbps, `1016h` volatile | MEXE02 over USB |
-| SICK MLS | node ID 10, 125 kbps, TPDO1 `0x18A` @100 Hz track; yaw-rate TPDO disabled | CANopen SDO (no SOPAS used); 2006h:01 = 3 Standard enhanced for flush diverters, set with `read_mls set-variant --value 3 --go` (2026-10-07) |
+| SICK MLS | node ID 10, 125 kbps; gyro SDO-polled; TPDO1 `0x18A` no longer used; yaw-rate TPDO disabled | CANopen SDO (no SOPAS used) |
 | SICK nanoScan3 | IP `192.168.3.10`; fields, monitoring cases | Safety Designer (read-only for us) |
-| Modbus I/O island | IP `192.168.1.30`, unit 1 | vendor web page |
-| RFID reader (Chafon CF821, CP-203910_V1.13 / RN370MU-910) | IP `192.168.1.200`/24, GW `192.168.1.1`, TCP 2022, MAC `8C:4B:41:3B:CC:A4`, device addr 1. Read back 2026-10-08: WorkMode 1 active, Interface `0x80` RS232 (tags still stream over TCP), Region 1 US 902.75–927.25 MHz (49 × 500 kHz), 30 dBm, Q 4, S0, filter 0, buffer off, remote push off. The profile's `rfid.expect_*` must match; the driver warns on drift. Region change to Indonesia 920–923 MHz (custom region 0) is pending | "UHF Even Reader" V1.6.3, a **Windows** program: `tools/uhf-even/Software/UHF Even Reader V1.6.3/UHF Even Reader.exe` in the repo, run from a laptop on LAN1's subnet; the driver only queries |
+| Modbus I/O island | IP `192.168.1.40`, unit 1 | vendor web page |
 | Jog pendant / panel | DI1 Start, DI2 Reset, DI3 AUTO/MANUAL, DI4–7 FWD/RVS/LEFT/RIGHT, DO0 horn | wiring, `profiles/agv-01.json` |
 
 Nothing in this guide changes those. The profile (`profiles/agv-01.json`) must
@@ -287,10 +286,19 @@ Wi-Fi power save is left at the Ubuntu default (`wifi.powersave = 3` in
 
 ### 2.2 netplan — the wired ports and the tether
 
-All four files are `root:root 0600`. `renderer: networkd` is scoped **inside**
-the `ethernets:` block on purpose (see `manuals/obsolete/rfid-setup/rfid-link-notes.txt`
-§1): if cloud-init ever regenerates `50-cloud-init.yaml` with a global renderer, a
-scoped one cannot fight it and take Wi-Fi down.
+All five files are `root:root 0600`. One /24 per wired port, no gateway, no
+DNS, `optional: true`, and none of them on 192.168.2.0/24 (the Wi-Fi). Why:
+
+- **No gateway or routes.** The PC already carries two default routes (`usb0`,
+  `wlp1s0`); a third pointing at a device subnet would blackhole traffic. Each
+  wired peer is a direct link and needs only its /24.
+- **`optional: true`** renders as `RequiredForOnline=no`, so boot does not wait
+  for an unplugged peer.
+- **`renderer: networkd` is scoped inside the `ethernets:` block.** If
+  cloud-init ever regenerates `50-cloud-init.yaml` with a global renderer
+  (NetworkManager), a scoped one cannot fight it and take Wi-Fi down.
+- **netplan, not nmcli.** NetworkManager is restricted to Wi-Fi, so every
+  ethernet port is invisible to `nmcli` by design.
 
 `/etc/netplan/50-cloud-init.yaml` — the installer's file. **This is what causes
 the 2-minute "Wait for Network to be Configured" at boot on a fresh install**:
@@ -344,18 +352,33 @@ network:
       optional: true
 ```
 
-`/etc/netplan/60-rfid-lan1.yaml` — **exact**, the tracked reference copy is
-`manuals/obsolete/rfid-setup/60-rfid-lan1.yaml`:
+The three wired files below are **RECONSTRUCTED** from the live addresses on
+unit 1 (`ip -br addr`, 2026-10-27; the files themselves are root-only). Diff
+them against `sudo cat /etc/netplan/*.yaml` on unit 1 and fold in any difference.
+
+`/etc/netplan/60-lan1-dio-maint.yaml`:
 
 ```yaml
-# LAN1 (enp2s0) -> RFID reader at 192.168.1.200
-#
-# Link-local subnet ONLY. Deliberately no gateway4/routes and no nameservers:
-# this box already has two default routes (usb0, wlp1s0) and this interface
-# must never compete with them. The reader is a direct peer on 192.168.1.0/24.
-#
-# optional: true  -> boot does not block waiting for this link if the
-#                    reader is unplugged or powered off.
+# LAN1 (enp1s0) -> DIO island at 192.168.1.40 (Modbus TCP 502) and maintenance SSH.
+# Direct link only: no gateway, no nameservers.
+network:
+  version: 2
+  ethernets:
+    renderer: networkd
+    enp1s0:
+      dhcp4: no
+      dhcp6: no
+      addresses:
+        - 192.168.1.100/24
+      optional: true
+```
+
+`/etc/netplan/70-lan2-nanoscan3.yaml`:
+
+```yaml
+# LAN2 (enp2s0) -> SICK nanoScan3 at 192.168.3.10
+# Host 192.168.3.1 receives the UDP scan stream on :6060 (sick_safetyscanners2)
+# and opens CoLa2 on the scanner's TCP 2122. No gateway, no DNS.
 network:
   version: 2
   ethernets:
@@ -364,17 +387,14 @@ network:
       dhcp4: no
       dhcp6: no
       addresses:
-        - 192.168.1.10/24
+        - 192.168.3.1/24
       optional: true
 ```
 
-`/etc/netplan/70-nanoscan3.yaml` — **RECONSTRUCTED** (627 bytes on the vehicle,
-same shape as LAN1; addresses from `nanoscan3.yaml` and `profiles/agv-01.json`):
+`/etc/netplan/80-lan3-gls621.yaml`:
 
 ```yaml
-# LAN2 (enp3s0) -> SICK nanoScan3 at 192.168.3.10
-# Host 192.168.3.2 receives the UDP scan stream on :6060 (sick_safetyscanners2)
-# and opens CoLa2 on the scanner's TCP 2122. No gateway, no DNS: link-local peer.
+# LAN3 (enp3s0) -> SICK GLS621 at 192.168.4.1. No gateway, no DNS.
 network:
   version: 2
   ethernets:
@@ -383,7 +403,7 @@ network:
       dhcp4: no
       dhcp6: no
       addresses:
-        - 192.168.3.2/24
+        - 192.168.4.2/24
       optional: true
 ```
 
@@ -401,15 +421,15 @@ ip route get 1.1.1.1        # "dev usb0" or "dev wlp1s0": internet no longer nee
 ```
 
 Step 7, the wired ports and the cleaned installer file (only once
-`ip route get 1.1.1.1` above does **not** say `enp2s0`/`enp3s0`):
+`ip route get 1.1.1.1` above does **not** say `enp1s0`/`enp2s0`/`enp3s0`):
 
 ```bash
 cd ~/host-staging
-sudo install -m 600 -o root -g root 50-cloud-init.yaml 60-rfid-lan1.yaml 70-nanoscan3.yaml /etc/netplan/
+sudo install -m 600 -o root -g root 50-cloud-init.yaml 60-lan1-dio-maint.yaml 70-lan2-nanoscan3.yaml 80-lan3-gls621.yaml /etc/netplan/
 sudo netplan generate && sudo netplan apply
-ip -br addr                 # enp2s0 192.168.1.10, enp3s0 192.168.3.2
-ip route                    # NO "default via ... enp2s0/enp3s0"
-networkctl list             # enp2s0/enp3s0 "configured", wlp1s0 "unmanaged" (NM's)
+ip -br addr                 # enp1s0 192.168.1.100, enp2s0 192.168.3.1, enp3s0 192.168.4.2
+ip route                    # NO "default via ... enp1s0/enp2s0/enp3s0"
+networkctl list             # enp1s0/enp2s0/enp3s0 "configured", wlp1s0 "unmanaged" (NM's)
 ping -c2 1.1.1.1            # still online
 sudo reboot
 ```
@@ -421,18 +441,16 @@ systemd-analyze                              # "... reached after" well under a 
 systemd-analyze blame | head -5              # no systemd-networkd-wait-online
 ```
 
-If the PC is on a bench and not in the vehicle, LAN1/LAN2 have no cable: that is
-fine, both are `optional: true` and show `no-carrier`.
+If the PC is on a bench and not in the vehicle, LAN1–LAN3 have no cable: that is
+fine, all are `optional: true` and show `no-carrier`.
 
 The `WARNING: Cannot call Open vSwitch` line from netplan is benign.
 
 Port assignment was determined by **carrier and ARP, not by the case label**;
 if a rebuilt vehicle has the cables the other way round, swap the interface
-names in the two files rather than re-cabling. The probe for that,
-`rfid-test.sh`, is **not in the repo** (`.gitignore` negates `*.sh` only at the
-old `manuals/rfid-setup/` path); without it, check by hand: plug one cable at a
-time and watch `ip -br link` for which port gets carrier, then
-`ping -c2 -I enp2s0 192.168.1.200`.
+names in the three files rather than re-cabling. Check by hand: plug one cable
+at a time and watch `ip -br link` for which port gets carrier, then
+`ping -c2 -I enp1s0 192.168.1.40`.
 
 ### 2.3 Wi-Fi — `agv_field`
 
@@ -559,7 +577,7 @@ sudo apt install -y \
   ros-humble-slam-toolbox ros-humble-robot-localization \
   ros-humble-sick-safetyscanners2 \
   ros-humble-robot-state-publisher ros-humble-xacro \
-  ros-humble-foxglove-bridge ros-humble-teleop-twist-keyboard ros-humble-tf2-tools \
+  ros-humble-teleop-twist-keyboard ros-humble-tf2-tools \
   ros-humble-rosbag2-storage-mcap \
   ros-humble-launch-testing ros-humble-launch-testing-ros \
   ros-humble-ament-lint-auto ros-humble-ament-lint-common \
@@ -690,7 +708,7 @@ colcon build --symlink-install
 source install/setup.bash
 
 # Offline checks — no hardware, ~1 min
-cd ~/agv_can && python3 tests/run_all.py                            # 706 checks at 9243ff6; pinned in EXPECTED_CHECKS
+cd ~/agv_can && python3 tests/run_all.py                            # pinned in EXPECTED_CHECKS
 cd ~/agv_can/amr_ws && env AMR_SIM_TESTS=0 ROS_DOMAIN_ID=89 python3 -m pytest -q src/*/test
 ruff check ~/agv_can/agv_core ~/agv_can/tests && (cd ~/agv_can/amr_ws && ruff check src)
 ```
@@ -706,7 +724,7 @@ The repo carries the unit and its helpers under `amr_ws/deploy/`:
 | File | Role |
 |---|---|
 | `amr.service` | the **only** application boot unit; `BindsTo` can0; `EnvironmentFile=amr.env`; `ExecStartPre` creates `/run/lock/amr` (1777), `~/.amr`, `~/amr_maps`; `KillSignal=SIGINT`, `TimeoutStopSec=55`; `Restart=on-failure` 3×/60 s |
-| `amr.env` | `AMR_MAPS_DIR`, `AMR_STATE_DIR`, feature flags `AMR_WEB/AMR_FOXGLOVE/AMR_LIDAR=true`, `AMR_LOC_BLANK_DYNAMIC=false`. **Paths and switches only; boot never selects a map or resumes a job.** |
+| `amr.env` | `AMR_MAPS_DIR`, `AMR_STATE_DIR`, feature flags `AMR_WEB/AMR_LIDAR=true`, `AMR_LOC_BLANK_DYNAMIC=false`. **Paths and switches only; boot never selects a map or resumes a job.** |
 | `amr-supervisor.sh` | `ExecStart`: sources ROS + overlay + `env/vehicle.sh`, runs `amr_bringup.supervisor_node -p real:=true ...` |
 | `amr-launch.sh` | the same overlay for `ros2 launch` children; exports `PYTHONPATH=<repo root>` |
 | `validate.sh` | no-side-effect check: paths, `bash -n`, `systemd-analyze verify`, every `${VAR}` in Exec lines defined in `amr.env`, `agv_core/` present |
@@ -760,20 +778,18 @@ Cutover is a **witnessed** step (RUNBOOK §5–§6): E-stop engaged, a person at
 vehicle, drives powered, `can0` up, scanner and I/O island reachable.
 
 ```bash
-ping -c1 192.168.1.30 && ping -c1 192.168.3.10          # DIO island, scanner
+ping -c1 192.168.1.40 && ping -c1 192.168.3.10          # DIO island, scanner
 python3 -m agv_core.drivers.canbus.verify_bus            # nodes 1, 2, 10 answer (service stopped)
 sudo systemctl enable --now amr.service
 journalctl -u amr.service -f                             # reaches IDLE; web on :5001
 ```
 
 Boot check (RUNBOOK §1): Status page Mode `IDLE`, Selector `MANUAL`/`AUTO` not
-`STALE`, Drives `ARMED`/`OFF` without a red bar, Command `none`. A profile with
-`"tracked": true` enters `LINE` by itself after IDLE.
+`STALE`, Drives `ARMED`/`OFF` without a red bar, Command `none`.
 
 What the supervisor owns from here: `base.launch.py real:=true` (drive_node =
 `can0` owner, panel_node = I/O island owner, nanoScan3 driver, mux, odom, EKF),
-`amr_web.web_node` on `0.0.0.0:5001`, `foxglove_bridge` on `:8765`, and one
-mode layer at a time. Bench tools take the `/run/lock/amr` owner lock and refuse
+`amr_web.web_node` on `0.0.0.0:5001`, and one mode layer at a time. Bench tools take the `/run/lock/amr` owner lock and refuse
 while the service holds it — **stop the service before any bench work.**
 
 ---
@@ -1212,7 +1228,7 @@ NoDisplay=true
 | 3 | `NetworkManager` + `nm-online` | `agv_field`; `network-online.target` after link or ~30 s | yes, bounded |
 | 4 | `canable@can0.service` | `slcand` + `can0` UP @125 kbps → `sys-subsystem-net-devices-can0.device` | yes — `amr.service` `BindsTo` it |
 | 5 | `nginx` | `:80` holding page | no |
-| 6 | `amr.service` | lock dir, state/maps dirs, supervisor → base (can0, DIO, scanner), web `:5001`, foxglove `:8765`; **IDLE** | |
+| 6 | `amr.service` | lock dir, state/maps dirs, supervisor → base (can0, DIO, scanner), web `:5001`; **IDLE** | |
 | 7 | `lightdm` → `amr-kiosk-session` | Chromium on `http://127.0.0.1/`; independent of 6 | |
 
 Stop path: `systemctl stop amr` sends SIGINT → supervisor revokes lease, stops
@@ -1233,16 +1249,13 @@ reads, no writes: none of these takes `--go`.
 
 | Device | Command | Expect (same as unit 1) |
 |---|---|---|
-| CAN bus | `candump -n 20 can0` (drives and MLS powered) | frames from `0x181`, `0x182`, `0x18A`; nothing else unexpected |
+| CAN bus | `candump -n 20 can0` (drives and MLS powered) | frames from `0x181` and `0x182`; `0x18A` only if the MLS is still Operational from boot; nothing else unexpected |
 | Nodes | `python3 -m agv_core.drivers.canbus.verify_bus` | nodes 1, 2, 10 answer at 125 kbps |
 | BLV-R ×2 | `python3 -m agv_core.drivers.canbus.verify_drivers` | BLV-R identity on both; left = node 1, right = node 2 (the first witnessed jog proves the sides) |
 | BLV-R PP objects | read back by the drive owner before every PP move; compare with `pp.expect` in the profile | `6065h` 36000, `6067h` 1000, `6085h` 1600, `6072h` 10000, `605Dh` 1, `605Eh` 2 (RUNBOOK section 3). A mismatch refuses PP, it does not move |
-| MLS | `python3 -m agv_core.drivers.canbus.read_mls snapshot` | variant `2006h:01` = 3 (Standard enhanced); TPDO1 COB-ID `0x18A` enabled, type and event timer as unit 1 (100 Hz) |
-| MLS markers | after 9.2 item 6: the Home marker tile / drive_node's start check | the same as unit 1: markers OK if unit 1's sensor was written with `set-markers --go`, else "sensor not set up". Either way motion is unaffected; with markers not OK a zone mission runs NORMAL |
 | MLS IMU | `python3 -m agv_core.drivers.canbus.read_imu show` | answers with plausible gyro/accel (vehicle still: yaw rate ~0, accel ~1 g); TPDO mapping as unit 1 (the IMU is SDO-polled by drive_node) |
-| I/O island | `ping -c3 -I enp2s0 192.168.1.30` | 0 % loss; panel edges in 9.2 item 7 |
-| RFID reader | `ping -c3 -I enp2s0 192.168.1.200`; then the driver's start log (`journalctl -u amr \| grep -i rfid` after 9.2 item 6) | 0 % loss; **no** `expect_*` drift warning: WorkMode 1, region 1, 30 dBm |
-| nanoScan3 | `ping -c3 -I enp3s0 192.168.3.10`; Safety Designer: the project uploaded is the one unit 1 runs (compare the checksum Safety Designer shows) | fields and cases match unit 1; then 9.2 item 8 |
+| I/O island | `ping -c3 -I enp1s0 192.168.1.40` | 0 % loss; panel edges in 9.2 item 7 |
+| nanoScan3 | `ping -c3 -I enp2s0 192.168.3.10`; Safety Designer: the project uploaded is the one unit 1 runs (compare the checksum Safety Designer shows) | fields and cases match unit 1; then 9.2 item 8 |
 
 ### 9.2 System acceptance
 
@@ -1250,16 +1263,16 @@ Run all of these once, in order, before the vehicle leaves the bench.
 
 1. **Cold boot with the monitor unplugged.** `systemctl status amr lightdm canable@can0 nginx` all `active`. Plug the monitor in after 2 min → UI appears, full-screen, native size.
 2. **`ip route`** shows exactly two defaults (`usb0` 100, `wlp1s0` 700) and none via the wired ports. `networkctl list` shows `enp2s0/enp3s0 configured`, `wlp1s0 unmanaged`.
-3. **Peers**: `ping -c3 -I enp2s0 192.168.1.30`, `ping -c3 -I enp2s0 192.168.1.200`, `ping -c3 -I enp3s0 192.168.3.10` all 0 % loss.
-4. **CAN** (service stopped): `candump -n 20 can0` shows TPDOs from `0x181/0x182` and `0x18A`; `python3 -m agv_core.drivers.canbus.verify_bus` → nodes 1, 2, 10 answer; `verify_drivers` → BLV-R identity.
+3. **Peers**: `ping -c3 -I enp1s0 192.168.1.40`, `ping -c3 -I enp2s0 192.168.3.10`, `ping -c3 -I enp3s0 192.168.4.1` all 0 % loss.
+4. **CAN** (service stopped): `candump -n 20 can0` shows TPDOs from `0x181/0x182` (`0x18A` only if the MLS is still Operational from boot); `python3 -m agv_core.drivers.canbus.verify_bus` → nodes 1, 2, 10 answer; `verify_drivers` → BLV-R identity.
 5. **Bench tools refuse while the service runs** (`/run/lock/amr` owner named in the error).
-6. **`amr.service` reaches IDLE** (RUNBOOK §1 boot check) with `journalctl -u amr.service` free of tracebacks; `pgrep -af 'amr_|nav2|slam_toolbox|foxglove'` empty after `systemctl stop amr`.
+6. **`amr.service` reaches IDLE** (RUNBOOK §1 boot check) with `journalctl -u amr.service` free of tracebacks; `pgrep -af 'amr_|nav2|slam_toolbox'` empty after `systemctl stop amr`.
 7. **Panel**: on the I/O page each Start/Reset press produces one edge, the selector tracks, a held Start produces one edge (RUNBOOK T12).
 8. **Scanner**: `ros2 topic hz /scan` ≈ 34 Hz; `/output_paths` publishes; contamination warning absent.
 9. **Kiosk escape table** (7.7) passes; `sudo pkill -9 Xorg` does not touch `amr.service` (`journalctl -u amr -u canable@can0 --since -2min` shows nothing new).
 10. **Unplug the CANable** → `amr.service` stops (`BindsTo`); replug → both come back; drives may show `8130h` and need a power cycle (expected, RUNBOOK §4).
 11. **20 min idle** → no screen blanking, no sleep.
-12. **Tests**: `python3 tests/run_all.py` = 706 / 706 at `9243ff6` (the pinned `EXPECTED_CHECKS`; a later commit may change it); per-package pytest green.
+12. **Tests**: `python3 tests/run_all.py` passes every check (the pinned `EXPECTED_CHECKS`); per-package pytest green.
 13. **Two units on `agv_field`** (unit 2 onwards): with both vehicles powered, the tablet opens `http://192.168.2.20:5001` and `http://192.168.2.30:5001`; `sudo systemctl stop amr` on unit 2 drops only the `.30` page (proves the two addresses are not crossed), then start it again.
 14. **Recorder**: `tools/run_log.sh` with the service up, Ctrl-C once after ~10 s; `~/.amr/runs/<stamp>/bag/` exists and the report it runs at the end prints (proves the MCAP plugin from section 4).
 
@@ -1272,7 +1285,7 @@ is reproduced above; if any of them changes on the vehicle, update this document
 
 | Path | Section |
 |---|---|
-| `/etc/netplan/{50-cloud-init,55-usb-tether,60-rfid-lan1,70-nanoscan3}.yaml` | 2.2 |
+| `/etc/netplan/{50-cloud-init,55-usb-tether,60-lan1-dio-maint,70-lan2-nanoscan3,80-lan3-gls621}.yaml` | 2.2 |
 | `/etc/NetworkManager/system-connections/agv-net.nmconnection` | 2.3 |
 | `/etc/udev/rules.d/70-canable.rules`, `/etc/systemd/system/canable@.service` | 3 |
 | `/etc/systemd/system/amr.service` (installed copy of `amr_ws/deploy/amr.service`) | 6 |
@@ -1309,8 +1322,6 @@ Added 2026-10-12 (second unit; unit 1 was not reachable to check):
 - **The kiosk files are still only on unit 1** (`~/xfce-kiosk-staging/`). This file
   reproduces them in full, so unit 2 does not need them; copy them into the repo
   (section 10) the next time unit 1 is reachable.
-- **`manuals/obsolete/rfid-setup/rfid-test.sh`** is lost from the repo (old-path
-  `.gitignore` negation); recover it from unit 1 if it is still there.
 - **`agv_core/config.py`'s docstring** says the systemd unit sets
   `AGV_PROFILE=agv-01`; it does not, the default does. Harmless while both units
   share `agv-01.json`.
@@ -1319,11 +1330,9 @@ Added 2026-10-12 (second unit; unit 1 was not reachable to check):
 
 Carried from 2026-09-21:
 
-- The three `/etc/netplan` files marked RECONSTRUCTED have not been diffed against
+- The five `/etc/netplan` files marked RECONSTRUCTED have not been diffed against
   the vehicle (root-only). `sudo cat /etc/netplan/*.yaml` and fold in any difference.
 - `50-amr.conf` (logind lid/idle ignores) is staged but not installed on the vehicle; only `ignore-power-key.conf` is.
-- `manuals/obsolete/rfid-setup/*.sh` are untracked because `.gitignore` negates
-  `manuals/rfid-setup/*.sh` (the old path). Fix the negation or the scripts will be lost.
 - The CANable udev rule matches one adapter's serial; a spare adapter needs its own line.
 - `sick_safetyscanners2` writes the scanner's channel-0 data-output settings over
   CoLa2 at every start; the *safety* configuration (fields, monitoring cases) is

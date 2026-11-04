@@ -13,12 +13,12 @@ motion, not achieved wheel motion, and the error lands as heading error on every
 direction reversal. The standard fix is gyro-odometry: let the gyro own heading
 and wheel odometry own translation only.
 
-  see manuals/slam-generalized-plan/hardware-reconciliation.md, D-2 and D-3
+  see manuals/obsolete/slam-generalized-plan/hardware-reconciliation.md, D-2 and D-3
 
-*** So the gyro is a NAVIGATION component that happens to live inside the line
-sensor. *** Tape following is back as the LINE layer (amr_line, 2026-09-21), so
-the MLS now serves both products: its track reading (TPDO1 0x18A, mls_track.py)
-and this gyro. Neither product may retire the hardware.
+*** So the gyro is a NAVIGATION component that happens to live inside a line
+sensor. *** Tape following was removed (2026-10-27), so the MLS is now the gyro
+and nothing else; its track reading (TPDO1 0x18A) has no reader. Retiring tape
+following does not retire the hardware.
 
 WHAT IS MEASURED, AND WHAT IS ASSUMED
 -------------------------------------
@@ -95,8 +95,9 @@ IMU_OFFSET_FROM_LED_MM = (89.1, 2.5, -9.4)
 
 # TPDO slots, as probed on this sensor. The MLS allows at most FOUR TPDOs active
 # at once, and only these COB-ID bases are valid: 0x180, 0x280, 0x380, 0x480,
-# each plus the node id. TPDO1 (0x18A) carries track data and stays: line
-# following is back as an engineering feature (read_mls.py, amr_base/mls_track.py).
+# each plus the node id. TPDO1 (0x18A) carries track data and is no longer used.
+# Nothing starts it any more: it streams only while the MLS is still Operational
+# from its own boot, until a Pre-operational reaches node 10 (removal plan D7).
 #
 #   1803h TPDO4  Euler         COB-ID 0x48A, DISABLED (raw 0x8000048A)
 #   1804h TPDO5  quaternion    COB-ID 0x000, disabled

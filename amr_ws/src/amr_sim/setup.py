@@ -23,8 +23,8 @@ setup(
             "fake_imu_node = amr_sim.fake_imu_node:main",
             "scan_synth_node = amr_sim.scan_synth_node:main",
             "fake_panel_node = amr_sim.fake_panel_node:main",
+            "fake_gls_node = amr_sim.fake_gls_node:main",
             "square_drive = amr_sim.square_drive:main",
-            "tape_synth_node = amr_sim.tape_synth_node:main",
         ],
     },
 )

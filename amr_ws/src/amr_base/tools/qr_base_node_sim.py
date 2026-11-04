@@ -185,14 +185,15 @@ mod("std_srvs.srv", Trigger=object)
 mod("amr_interfaces")
 EV = msgclass("Event", {})
 EV.INFO, EV.WARN, EV.ERROR = 0, 1, 2
+PS = msgclass("PanelState", {})
+PS.EMG_NORMAL, PS.EMG_ACTIVE = 0, 1
 mod(
     "amr_interfaces.msg",
     ControlLease=Msg,
     DriveStatus=msgclass("DriveStatus", {}),
     Event=EV,
     IoImage=msgclass("IoImage", {}),
-    LineState=msgclass("LineState", {"drive_power": False}),
-    PanelState=msgclass("PanelState", {}),
+    PanelState=PS,
     RunState=msgclass("RunState", {"drive_power": False}),
     WheelStates=msgclass("WheelStates", {"left_counts": 0, "right_counts": 0, "counts_valid": False}),
     WheelVelocities=Msg,
@@ -406,7 +407,7 @@ check(
     st and st.left_state,
 )
 ps = last("/amr/panel_state")
-check("panel valid, MANUAL at boot", ps.valid and not ps.mode_auto)
+check("panel valid, MANUAL at boot, no emergency", ps.valid and not ps.mode_auto and ps.emergency == 0)
 
 cmd(2.0, 2.0, 2.5)
 with lock:
@@ -512,11 +513,15 @@ check(
     "E-stop: not operational, 0 V despite a command",
     not st.operational and st.left_state == "E-STOP" and v == [0.0, 0.0],
 )
+ps = last("/amr/panel_state")
+check("E-stop: panel says emergency ACTIVE, estop_ok false", ps.emergency == 1 and not ps.estop_ok)
 time.sleep(0.6)
 with lock:
     state["di"][0] = True
 time.sleep(0.4)
 check("E-stop released: operational again", last("/drives/status").operational)
+ps = last("/amr/panel_state")
+check("E-stop released: emergency NORMAL at once (no Reset on the QR)", ps.emergency == 0 and ps.estop_ok)
 
 node.stop()
 with lock:

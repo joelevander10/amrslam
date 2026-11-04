@@ -4,8 +4,14 @@ Day-to-day operation of the AMR QR (profile `amr-qr-01`) once
 [INSTALL_AMR_QR.md](INSTALL_AMR_QR.md) is done. This is the AMR QR version of
 [RUNBOOK.md](RUNBOOK.md) §2; the RUNBOOK has the full detail for every page. The
 differences: the AMR QR has **two buttons instead of a selector switch**, no Manual Arm
-switch, no horn, a **push mode** for the brakes, and it does not use the scanner's field
-outputs (§6).
+switch, no horn, no Reset or Continue button (the Run page has a **Continue** instead), a
+**push mode** for the brakes, and it drives slower (about 0.27 m/s).
+
+The software is gvievo-01 **KYB trackless** (2026-11-03) with the AMR QR hardware on top:
+route **wait steps** with Continue, a **Go home** last step, smooth **S-curve** speed
+changes, the route editor's **Measure** tool and the new page layout (Home instead of
+Status). The GLS floor-label camera, the destination buttons and the Flexi Soft emergency
+reset of KYB are switched off: the AMR QR has none of that hardware.
 
 ## 0. The panel in one table
 
@@ -13,14 +19,18 @@ outputs (§6).
 |---|---|---|
 | **START** (green) | switch to **AUTO** (nothing moves) | **Start**: run the loaded route / resume |
 | **STOP** | **Reset**: acknowledge a route FAULT | back to **MANUAL** (a running route is aborted) |
-| **E-stop** | motors 0 V + brake | same; the route waits (BLOCKED), continue with START after release |
+| **E-stop** | motors 0 V + brake | same; the route is held (BLOCKED), continue with START after release |
 
 - **After power-up the vehicle is always in MANUAL.**
 - To run a route: START once to switch to AUTO, then START again to start it.
 - A button already held at power-up, or when the I/O link comes back, does nothing until
   it is released and pressed again.
-- The web page can never start motion by itself. Motion needs either a held jog key in
-  MANUAL, or START in AUTO.
+- The web page never starts a run by itself. Motion needs either a held jog key in
+  MANUAL, or START in AUTO. The one exception is **Continue** on the Run page, which only
+  releases a route that is already WAITING at a wait step (§5).
+- **No Reset after the E-stop.** The red banner and the Alarms page may say "release it and
+  press Reset" (KYB's text, for its Flexi Soft): on the AMR QR, releasing the E-stop is
+  enough. The banner clears by itself; a held run continues with START.
 
 **Drive power** (the gvievo power model, 2026-10-08):
 
@@ -38,11 +48,14 @@ outputs (§6).
 
 1. Check the area is clear and the E-stop is released. Switch the vehicle on.
 2. The service starts by itself (`amr.service`). Open `http://<robot-ip>:5001/` on the
-   tablet or laptop. The page opens in the **operator** view (Home · Run · Manual ·
-   Alarms); **Home** must say `READY`. For Maps, Routes, Status and the rest, switch to the
-   **engineer** view: press `Op` in the header and type the PIN (**2809** by default,
-   kept in `~/.amr/web.json`).
-3. The **Status** page and the left rail should show:
+   tablet or laptop. The page opens on **Home**. The **operator** view has Home · Run ·
+   Manual · Alarms. The **engineer** view adds Maps and Routes (under Run), Monitor, I/O,
+   Params and Blind run: press `Op` in the header and type the PIN (**2809** by default,
+   kept in `~/.amr/web.json`). The old Status and Commission pages are gone: **Home**
+   shows the mode, its reason, the fault banner, Return to idle and Recover; **Monitor**
+   has the rest. After a software update press **↻** (top right) once so the browser
+   loads the new pages.
+3. **Home** and the left rail should show:
 
    | Tile | Should read |
    |---|---|
@@ -143,12 +156,32 @@ ros2 run amr_mission map_edit --map block_c --rev 1 --despeckle-rect -50 -50 50 
    - **CCW / CW** 45 / 90 / 180 / 270: turn in place.
    - **Arc** (radius ≥ 1 m) or a short **Reverse** (driven blind: the scanner does not
      see the rear).
-4. **Speed cap**: on the AMR QR use **0.15–0.20 m/s** for the first runs. Keep every
-   speed at or below the vehicle's top speed (Params page, `MAX_SPEED_MPS`); anything
-   above is only clamped.
-5. **Validate**. Red steps mean the footprint hits a wall or unknown (grey) cells. Move
+   - **Wait**: type a name the operator will read (for example `load pallet`) and press
+     **Wait**. The route stops there at the end of the step before it, drives off
+     (brakes held), and waits until someone presses **START** on the panel or **Continue**
+     on the Run page. Use it for loading / unloading points.
+   - **Go home** (last step): end the route up to 5 m behind the start pose, roughly
+     facing it, and press **Go home**. The vehicle drives forward back to the start pose
+     and stops on its heading: a straight if it is already on the start's line, otherwise
+     a smooth S-shaped curve (never tighter than R 1 m, at most 20° heading error at its
+     start). The route then always closes, so a **repeat count** above 1 works without
+     hand-tuning the last straight. If it cannot be built, the log says why and how far
+     back to end the route. A Wait may come right before it.
+4. **Measure** (view only, never changes the route): press **Measure**, click point A,
+   then point B. The panel and the map show the distance, ΔX and ΔY in mm. A click snaps
+   to a wait point, an arc centre, a step end or a route line (of this route and the
+   saved ones on this map); untick **Snap** or hold Shift to measure exactly where you
+   click. A third click starts a new measurement; Esc clears it.
+5. **Speed** is not a route setting. On the AMR QR every straight and arc runs at
+   **0.27 m/s** (95 % of its top speed, from `vehicle.motor_max_rpm`), a reverse at half
+   that, spins at 0.37 rad/s. Every speed change is a smooth **S-curve** (start ≈ 0.1 m/s²,
+   braking ≈ 0.125 m/s², jerk 0.1 m/s³): from standstill it reaches 0.27 m/s in about
+   3.7 s and 0.6 m. Consecutive straights and arcs are driven as one continuous move with
+   no stop between them; a turn in place, a reverse or a wait ends such a chain. Field
+   stops and the E-stop are **not** softened.
+6. **Validate**. Red steps mean the footprint hits a wall or unknown (grey) cells. Move
    the step or the start pose away.
-6. **Save revision**, then **Create mission from saved revision**.
+7. **Save revision**, then **Create mission from saved revision**.
 
 ## 5. Run the route (Run page)
 
@@ -179,10 +212,19 @@ Keep the vehicle in **MANUAL** until step 6.
    - **E-stop** puts the route in `BLOCKED`. Release the E-stop, then press **START** to
      continue from where it stopped.
    - **Pause** (web) keeps progress. To continue: **Prepare resume**, then **START**.
+   - **At a wait step** the run state is `WAITING` with the wait's name and how long it
+     has waited; the drives are off and the brakes held. Do the job, step clear, then
+     press **Continue** on the Run page (bottom of the left column; it is only enabled
+     while WAITING) or **START** on the panel. Everything is checked again first: AUTO,
+     localisation READY, the vehicle still and within 0.15 m / 8° of the wait point (if it
+     was nudged in MANUAL, put it back or Abort). Then the 2 s pre-move warning, then it
+     drives on. A refused Continue says why under the run state.
    - Something in front: the scanner's warning fields slow the vehicle and the
      protective field stops it (**lidar stop**, `BLOCKED`); it continues by itself once
-     clear. Nav2's own collision check can also stop it (**controller stop**, `BLOCKED`,
-     continues by itself, at most 3 times per step, then FAULT) - see §6.
+     clear. Nav2's own collision check can also stop it (**path blocked**, `BLOCKED`): it
+     retries by itself until the path is clear, with no limit, and after 10 s blocked it
+     refreshes its view of nearby obstacles (stale marks of someone who walked past) -
+     see §6.
    - **Abort** (web) ends the run; the mission must be loaded again.
 8. **Finished**: run state `DONE`. For another run, **Load** again and press **START**
    (you are still in AUTO). To leave navigation, press **STOP** (MANUAL), **Abort** any
@@ -197,7 +239,9 @@ PAUSED or BLOCKED. Abort it first.
 |---|---|---|
 | Run `BLOCKED`, E-stop | E-stop pressed during a run | Release E-stop, press **START** |
 | Run `BLOCKED`, lidar stop | Something in the nanoScan3 protective field | Clear the area in front; continues by itself. Stops with nothing there: check the field set (§8) |
-| Run `BLOCKED`, controller stop | Nav2 saw something in the path ("collision ahead") | Clear it; continues by itself (3 tries per step, then FAULT) |
+| Run `BLOCKED`, path blocked / controller stop | Nav2 saw something in the path ("collision ahead") | Clear it; it retries by itself until clear |
+| Run `WAITING` | A wait step in the route | Do the job, step clear, press **Continue** (Run page) or **START** |
+| Continue refused | AUTO off, not localised, vehicle moved off the wait point, or E-stop | Read the reason under the run state; fix it and press Continue again |
 | Run `FAULT`, "drives did not power up" | No torque within 8 s of START (E-stop, push mode, I/O lost) | Fix it, then START again |
 | Run `FAULT` | Sensor, drive, localisation or a tolerance exceeded | Read the reason. With the vehicle still, press **STOP** in MANUAL (= Reset) or **Acknowledge fault**. Then localise / reposition / load / START again |
 | Localisation `LOST` | Sensor stale, pose uncertain or jumped | Set the initial pose again and **Confirm** |
@@ -235,5 +279,6 @@ real stop.
   all `True` with the area empty and index 0 `False` with a hand 0.3 m in front.
   The analog drives have no torque feedback, so a stop the scanner's OSSD makes in
   hardware is seen as a stall (see AMR_QR.md §5 no. 8).
-- **No Manual Arm switch, no horn, no pendant, no RFID, no tape mode** (profile
-  `tracked: false`).
+- **No Manual Arm switch, no horn, no pendant, no Reset / Continue / destination buttons,
+  no GLS floor camera** (`gls.enabled: false`), no RFID and no tape mode (both removed
+  from the code in KYB trackless).

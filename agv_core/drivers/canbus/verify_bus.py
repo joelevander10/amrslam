@@ -116,7 +116,8 @@ def identity(bus, found):
         # device name is optional (1008h) but useful for identifying the sensor
         st, val, _, _ = sdo_read(bus, nid, 0x1008, 0)
         if st and val:
-            print(f"    device name   {val.decode('ascii', 'replace').strip()}")
+            name = val.decode("ascii", "replace").strip(" \0")
+            print(f"    device name   {name}")
 
 
 def bus_dead_help():

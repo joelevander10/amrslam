@@ -46,7 +46,13 @@ class PanelFrame:
     comms_ok: bool
     changed: str | None = None  # human-readable transition for the log, if any
     pendant: panel_core.PendantIntent = panel_core.PENDANT_IDLE
-    manual_arm: bool = False  # panel.di_manual_arm, debounced; False while invalid
+    manual_arm: bool = False  # panel.di_manual_arm, manual_arm_scans either way; False while invalid
+    # panel.di_estop_ok: HIGH for debounce_scans, LOW for estop_low_scans; False at once while invalid
+    estop_ok: bool = False
+    continue_edge: bool = False  # panel.di_continue rising edge (PB Continue), Start's rules
+    # panel.destinations: 1-based index of the destination button pressed on THIS frame, 0 = none.
+    # Start's rules, and only while it is the one destination button held (core/panel.single_press)
+    dest_edge: int = 0
 
 
 class PanelAdapter:
@@ -57,8 +63,14 @@ class PanelAdapter:
         debounce_scans: int | None = None,
         pendant: bool | None = None,
         coincidence_hold_scans: int | None = None,
+        estop_low_scans: int | None = None,
+        manual_arm_scans: int | None = None,
     ) -> None:
         scans = config.PANEL_DEBOUNCE_SCANS if debounce_scans is None else debounce_scans
+        if estop_low_scans is None:
+            estop_low_scans = config.PANEL_ESTOP_LOW_SCANS
+        if manual_arm_scans is None:
+            manual_arm_scans = config.PANEL_MANUAL_ARM_SCANS
         # Coincidence guard: the selector and the pendant changing in the SAME debounced scan
         # is not a hand (2026-09-17: MANUAL+FWD appeared together for 1.02 s mid-route with
         # nobody at the box, aborting the run and handing the mux a phantom FWD). Both changes
@@ -76,6 +88,7 @@ class PanelAdapter:
             config.PANEL_DI_AUTO,
             scans,
             auto_when_on=config.PANEL_AUTO_WHEN_ON,
+            continue_ch=config.PANEL_DI_CONTINUE,
         )
         self.pendant = None
         if config.PENDANT_ENABLED if pendant is None else pendant:
@@ -88,10 +101,23 @@ class PanelAdapter:
                 ),
                 scans,
             )
-        # Manual Arm (DI08): a debounced LEVEL, like the pendant. A switch already on at
-        # power-on powers the drives once the image is valid - power is not motion.
-        self.manual_arm = panel_core.DebouncedLevels((config.PANEL_DI_MANUAL_ARM,), scans)
+        # Pendant enable / arm (DI09): a debounced LEVEL, like the pendant. A switch already on at
+        # power-on powers the drives once the image is valid - power is not motion. Its own
+        # filter (panel.manual_arm_scans), both directions.
+        self.manual_arm = panel_core.DebouncedLevels((config.PANEL_DI_MANUAL_ARM,), manual_arm_scans)
+        # Destination buttons (DI10-12 on MCQ4-4, 2026-11-03): momentary, Start's rules.
+        self.destinations = tuple(config.PANEL_DESTINATIONS)
+        self.dest = panel_core.ButtonEdges(tuple(ch for _n, ch, _r in self.destinations), scans)
         self._last_arm: bool | None = None
+        # E-stop OK (DI08, Flexi Soft Q3): HIGH needs debounce_scans, LOW needs estop_low_scans
+        # (2026-11-02: one-scan Q3 test pulses were tripping it). An invalid image or a comms
+        # gap is still an emergency at once (emergency plan §4.1).
+        self.estop_scans = scans
+        self.estop_low_scans = max(1, int(estop_low_scans))
+        self._estop_high = 0
+        self._estop_low = 0
+        self._estop_believed = False
+        self._last_estop: bool | None = None
         self.seq = 0
         self._last_scans: int | None = None  # DIO acquisition count behind the last evaluated frame
         self._last_frame: PanelFrame | None = None
@@ -129,6 +155,7 @@ class PanelAdapter:
                 comms_ok=True,
                 pendant=self._last_frame.pendant,
                 manual_arm=self._last_frame.manual_arm,
+                estop_ok=self._last_frame.estop_ok,
             )
         self._last_scans = scans
         intent = self.scan.scan(snapshot.get("di"), comms)
@@ -144,6 +171,19 @@ class PanelAdapter:
             notes.append("START edge")
         if intent.reset:
             notes.append("RESET edge")
+        if intent.cont:
+            notes.append("CONTINUE edge")
+        dest_edge = 0
+        if self.destinations:
+            got = self.dest.scan(snapshot.get("di"), comms)
+            if intent.valid and got is not None:
+                edges, held = got
+                k = panel_core.single_press(edges, held)
+                if k is not None:
+                    dest_edge = k + 1
+                    notes.append(f"DEST {self.destinations[k][0]} edge")
+                elif any(edges):
+                    notes.append("destination buttons pressed together: ignored")
 
         pend = panel_core.PENDANT_IDLE
         if self.pendant is not None:
@@ -157,6 +197,21 @@ class PanelAdapter:
             if self._last_arm is not None or arm:
                 notes.append(f"Manual Arm {'on' if arm else 'off'}")
             self._last_arm = arm
+        # HIGH scans are counted from the first fresh image, so the one that completes the
+        # baseline is already believed: a boot with DI08 HIGH is never a one-scan "LOW".
+        high = comms and _bit(snapshot.get("di"), config.PANEL_DI_ESTOP_OK)
+        self._estop_high = self._estop_high + 1 if high else 0
+        self._estop_low = 0 if high else self._estop_low + 1
+        if not intent.valid:
+            self._estop_believed = False
+        elif self._estop_believed:
+            self._estop_believed = self._estop_low < self.estop_low_scans
+        else:
+            self._estop_believed = self._estop_high >= self.estop_scans
+        estop_ok = self._estop_believed
+        if estop_ok != self._last_estop:
+            notes.append(f"E-stop OK (DI{config.PANEL_DI_ESTOP_OK}) {'HIGH' if estop_ok else 'LOW'}")
+            self._last_estop = estop_ok
         if self.pendant is not None and pend != self._last_pendant:
             held = [n for n in pend._fields if getattr(pend, n)]
             notes.append("pendant " + (" ".join(held).upper() if held else "released"))
@@ -171,6 +226,9 @@ class PanelAdapter:
             changed="; ".join(notes) or None,
             pendant=pend,
             manual_arm=arm,
+            estop_ok=estop_ok,
+            continue_edge=bool(intent.cont),
+            dest_edge=dest_edge,
         )
         self._last_frame = frame
         return frame
@@ -206,35 +264,59 @@ class PanelAdapter:
         return intent.mode, pend
 
 
-# AUTO runs that count for the alarm horn: tracked line RUNNING / HOLD, trackless
-# EXECUTING / BLOCKED (amr_interfaces LineState / RunState values).
-LINE_ACTIVE = (2, 3)
+def _bit(di, ch: int) -> bool:
+    try:
+        return bool(di[ch])
+    except (IndexError, TypeError):
+        return False
+
+
+# AUTO runs that count for the alarm horn: EXECUTING / BLOCKED (amr_interfaces RunState values).
 RUN_ACTIVE = (2, 4)
-LINE_PREMOVE = 1  # LineState.ARMED: the pre-move warning after a Start
 
 
 def alarm_wanted(
-    mode_auto: bool, line_state: int | None, run_state: int | None,
+    mode_auto: bool, run_state: int | None,
     field_fresh: bool, protective_clear: bool, warning_active: bool,
     run_premove: bool = False,
 ) -> bool:
     """dio.alarm_on (operator, 2026-10-02): AUTO RUNNING and (protective stop, warning 1 or
     warning 2). Field state comes from the mux; stale field data does not sound it.
 
-    And the pre-move warning (2026-10-08): from a Start until the vehicle moves (line ARMED,
-    RunState.premove) the alarm horn sounds whatever the fields say, then gives way to the
+    And the pre-move warning (2026-10-08): from a Start until the vehicle moves
+    (RunState.premove) the alarm horn sounds whatever the fields say, then gives way to the
     movement horn once the wheels turn."""
-    if mode_auto and (line_state == LINE_PREMOVE or run_premove):
+    if mode_auto and run_premove:
         return True
-    running = mode_auto and (line_state in LINE_ACTIVE or run_state in RUN_ACTIVE)
+    running = mode_auto and run_state in RUN_ACTIVE
     return running and field_fresh and (not protective_clear or warning_active)
 
 
 def motion_outputs(turning: bool, alarm: bool, channels, movement_horn) -> dict[int, bool]:
     """dio.motion_on with the horn switch (operator, 2026-10-07): while the alarm horn sounds
-    (protective, warning 1 or warning 2 in an AUTO run) the movement horn is OFF, so the
-    sound changes; the other motion outputs (DO08) keep following the motors."""
-    return {ch: turning and not (alarm and ch in movement_horn) for ch in channels}
+    (pre-move warning, or protective / warning 1 / warning 2 in an AUTO run) the movement
+    horn is OFF, so the sound changes. The other motion outputs - the rotary lamp, DO00 on
+    MCQ4-4 - are on while the motors turn AND while the alarm sounds, so the lamp already
+    turns during the 2 s pre-move warning (operator, 2026-10-27)."""
+    return {ch: (turning and not alarm) if ch in movement_horn else (turning or alarm) for ch in channels}
+
+
+def coil_image(
+    normal: bool, alarm: bool, turning: bool, horn: bool,
+    alarm_on=None, motion_on=None, movement_horn=None, horn_ch=None,
+) -> dict[int, bool]:
+    """Every DIO coil panel_node drives this tick, by channel. While the emergency state is
+    not NORMAL every one is LOW - no lamp, no horn, no alarm horn (owner, 2026-10-30)."""
+    alarm_on = config.DIO_ALARM_ON if alarm_on is None else alarm_on
+    motion_on = config.DIO_MOTION_ON if motion_on is None else motion_on
+    movement_horn = config.DIO_MOVEMENT_HORN if movement_horn is None else movement_horn
+    if horn_ch is None and config.HORN_ENABLED:
+        horn_ch = config.HORN_DO_CHANNEL
+    outs = {ch: alarm for ch in alarm_on}
+    outs.update(motion_outputs(turning, alarm, motion_on, movement_horn))
+    if horn_ch is not None:
+        outs[horn_ch] = horn
+    return outs if normal else dict.fromkeys(outs, False)
 
 
 def horn_wanted(

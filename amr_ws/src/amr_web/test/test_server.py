@@ -37,9 +37,8 @@ class Stub:
         self.ops["op-mode"] = {"operation_id": "op-mode", "status": 0, "status_name": "PENDING"}
         return True, "op-mode", "accepted"
 
-    def survey_request(self, operation, map_id, description, request_id, cont=None):
-        args = (operation, map_id, description, request_id) + ((cont,) if cont is not None else ())
-        self.calls.append(("survey_request", args))
+    def survey_request(self, operation, map_id, description, request_id):
+        self.calls.append(("survey_request", (operation, map_id, description, request_id)))
         return True, "op-survey", "accepted"
 
     def get_operation(self, oid):
@@ -258,6 +257,28 @@ def test_push_mode_brake_endpoints_delegate(env):
     assert client.get("/api/brakes/release").status_code == 405  # a GET never changes the brakes
 
 
+def test_web_continue_is_the_amr_qr_only(env, tmp_path, monkeypatch):
+    """The Run page's Continue (a route wait step) exists on the AMR QR only: its panel has no
+    Continue button. Elsewhere the endpoint refuses and the button is not on the page."""
+    client, stub, maps, *_ = env
+    assert client.post("/api/mission/continue", json={}).status_code == 403
+    page = client.get("/run").get_data(as_text=True)
+    assert '<div class="bar" hidden><button id="btn-run-continue"' in page
+    from agv_core import config  # noqa: PLC0415
+
+    monkeypatch.setattr(config, "PLATFORM", config.PLATFORM_QR)
+    monkeypatch.setattr(config, "GLS_ENABLED", False)
+    app = create_app(stub, maps, str(tmp_path / "footprint.yaml"), state_dir=str(tmp_path / "state"))
+    app.config["TESTING"] = True
+    qr = app.test_client()
+    r = qr.post("/api/mission/continue", json={})
+    assert r.status_code == 200 and r.json["ok"] and stub.calls[-1][0] == "continue_wait"
+    assert qr.get("/api/mission/continue").status_code == 405  # a GET never moves anything
+    page = qr.get("/run").get_data(as_text=True)
+    assert '<div class="bar"><button id="btn-run-continue"' in page
+    assert 'id="btn-gls-record"' not in page  # no camera fitted
+
+
 def test_mode_and_survey_are_asynchronous_operations(env):
     client, stub, *_ = env
     r = client.post(
@@ -278,49 +299,6 @@ def test_mode_and_survey_are_asynchronous_operations(env):
     r = client.post("/api/survey/save", json={"note": "seams ok"})
     assert r.status_code == 202 and stub.calls[-1][1][:3] == (2, "", "seams ok")
     assert client.post("/api/survey/bogus", json={}).status_code == 404
-
-
-def test_continue_survey_start_forwards_revision_and_hint(env):
-    client, stub, *_ = env
-    body = {"map_id": "hall", "description": "by rack C", "continue_revision": 2,
-            "hint": {"x_m": 51.8, "y_m": -38.9, "yaw_rad": 0.03}}
-    r = client.post("/api/survey/start", json=body)
-    assert r.status_code == 202 and stub.calls[-1] == (
-        "survey_request", (0, "hall", "by rack C", stub.calls[-1][1][3], (2, 51.8, -38.9, 0.03))
-    )
-    n = len(stub.calls)
-    for bad in (
-        {**body, "hint": None},
-        {**body, "hint": {"x_m": 1.0, "y_m": "x", "yaw_rad": 0.0}},
-        {**body, "hint": {"x_m": float("inf"), "y_m": 0.0, "yaw_rad": 0.0}},
-        {**body, "continue_revision": -1},
-        {**body, "continue_revision": True},
-    ):
-        assert client.post("/api/survey/start", json=bad).status_code == 422
-    assert len(stub.calls) == n  # nothing refused reached the robot
-    # continue_revision 0 is an ordinary new map
-    r = client.post("/api/survey/start", json={**body, "continue_revision": 0})
-    assert r.status_code == 202 and len(stub.calls[-1][1]) == 4
-
-
-def test_maps_say_which_revisions_can_be_continued(env, tmp_path):
-    client, stub, maps, rev_dir, manifest = env
-    assert client.get("/api/maps").json[0]["revisions"][0]["continuable"] is False  # no pose graph
-    pg = tmp_path / "pg"
-    (tmp_path / "pg.posegraph").write_bytes(b"graph")
-    (tmp_path / "pg.data").write_bytes(b"data")
-    stage = mb.staging_dir(maps, "hall", 1)
-    m, g = mb.load(maps, "sim_factory", 1)
-    m.map_id = "hall"
-    mb.stage_bundle(stage, g, str(pg), m)
-    mb.publish(stage, maps, "hall", 1)
-    idx = {x["map_id"]: x for x in client.get("/api/maps").json}
-    assert idx["hall"]["revisions"][0]["continuable"] is True
-    one = client.get("/api/maps/hall/1").json
-    assert one["continuable"] is True and one["review"]["note"] == "t"
-    page = client.get("/survey-continue?map=hall&rev=1")
-    assert page.status_code == 200
-    assert b'id="btn-cs-start"' in page.data and b"survey_continue.js" in page.data
 
 
 def test_state_and_footprint(env):
@@ -476,18 +454,17 @@ def test_pages_fonts_and_style_guards(env):
 
     client = env[0]
     for page in (
-        "/status",
+        "/home",
         "/manual",
         "/maps",
         "/editor",
         "/review",
         "/run",
-        "/run-tracked",
         "/monitor",
         "/io",
         "/alarms",
         "/params",
-        "/commissioning",
+        "/blindrun",
     ):
         r = client.get(page)
         assert r.status_code == 200, page
@@ -534,7 +511,7 @@ def test_one_layout_three_sizes(env):
     assert base.index("dataset.ui") < base.index('href="/static/amr.css"')
     assert "(pointer:coarse)" in base and "amr.ui" in base
     client = env[0]
-    for page in ("/status", "/manual", "/run", "/alarms"):
+    for page in ("/home", "/manual", "/run", "/alarms"):
         html = client.get(page).data.decode()
         assert 'id="ui-size"' in html and 'id="pill-link"' in html, page
 
@@ -554,7 +531,7 @@ def test_every_element_id_a_page_script_uses_exists_on_that_page(env):
     from amr_web import role as rolemod  # noqa: PLC0415
 
     for page in (
-        "/status",
+        "/home",
         "/manual",
         "/maps",
         "/editor",
@@ -564,7 +541,7 @@ def test_every_element_id_a_page_script_uses_exists_on_that_page(env):
         "/io",
         "/alarms",
         "/params",
-        "/commissioning",
+        "/blindrun",
     ):
         client.post("/api/role", json={"role": "operator"})
         html = client.get(page).data.decode()
@@ -641,8 +618,8 @@ def test_validate_route_with_an_arc_and_a_reverse(env):
     assert steps[1]["radius_m"] == 1.5 and steps[1]["centre"] == pytest.approx([5.0, 1.5])
     q = math.pi / 4
     assert steps[1]["end"] == pytest.approx([5.0 + 1.5 * math.sin(q), 1.5 - 1.5 * math.cos(q), q])
-    assert steps[1]["v_mps"] == pytest.approx(0.60)  # R 1.5 allows the full trackless speed (cap 0.6075)
-    assert steps[2]["v_mps"] == pytest.approx(0.30)  # reverse: half
+    assert steps[1]["v_mps"] == pytest.approx(0.30)  # arcs: ARC_V_MPS 0.30 (R 1.5 cap 0.6075)
+    assert steps[2]["v_mps"] == pytest.approx(0.30)  # reverse: half the trackless 0.60
     assert steps[2]["end"][0] == pytest.approx(steps[1]["end"][0] - math.cos(q))
     assert len(stub.previews) == 1  # the preview carries the arc and reverse samples too
     # a 90 deg arc of the same radius turns the nose into the racks: clearance fails on that step
@@ -785,10 +762,7 @@ def test_survey_move_endpoints_forward_to_the_node_and_validate(env):
         assert client.post("/api/survey_move", json=bad).status_code == 422
     assert client.post("/api/survey_move/stop", json={}).status_code == 200
     page = client.get("/maps").data
-    for el in (
-        b'id="sm-dist"', b'id="sm-fwd"', b'id="sm-rev"', b'id="sm-stop"',
-        b'data-deg="-135"', b'data-deg="20"', b'data-deg="-30"',
-    ):
+    for el in (b'id="sm-dist"', b'id="sm-fwd"', b'id="sm-rev"', b'id="sm-stop"', b'data-deg="-135"'):
         assert el in page
 
 
@@ -867,3 +841,39 @@ def test_survey_move_value_must_be_a_finite_number(env):
     )
     assert r.status_code == 422
     assert not any(c[0] == "survey_move" for c in stub.calls)
+
+
+def test_route_geometry_for_the_measure_tool_is_compiled_only(env):
+    """Measure tool (2026-11-03): the newest revision of every saved route, with arc centres and
+    wait points; never validated, never previewed; a broken file is listed, not fatal."""
+    client, stub, maps, rev_dir, manifest = env
+    arc = {"id": "s3", "type": "arc", "direction": "ccw", "angle_deg": 45, "radius_m": 1.5}
+    wait = {"id": "s2", "type": "wait", "name": "hitch"}
+    r = client.post("/api/maps/sim_factory/1/routes/save", json=route_payload([S("s1", 5.0, 0.0), wait, arc]))
+    assert r.status_code == 200, r.json
+    r = client.post("/api/maps/sim_factory/1/routes/save", json=route_payload([S("s1", 4.0, 0.0), wait, arc]))
+    assert r.json["revision"] == 2
+    from amr_navigation import store
+
+    bad = store.route_path(maps, "sim_factory", "broken", 1)
+    import os
+
+    os.makedirs(os.path.dirname(bad))
+    with open(bad, "w") as f:
+        f.write("not: [a route")
+    previews = len(stub.previews)
+    r = client.get("/api/maps/sim_factory/1/routes/geometry")
+    assert r.status_code == 200 and r.json["truncated"] is False
+    by_id = {x["route_id"]: x for x in r.json["routes"]}
+    assert "error" in by_id["broken"]
+    g = by_id["r1"]
+    assert g["revision"] == 2 and g["map_revision"] == 1  # the newest revision only
+    assert g["start"] == pytest.approx([0.0, 0.0, 0.0])
+    steps = {s["id"]: s for s in g["steps"]}
+    assert steps["s1"]["end"][:2] == pytest.approx([4.0, 0.0])
+    assert steps["s2"]["type"] == "wait" and steps["s2"]["name"] == "hitch"
+    assert steps["s2"]["end"][:2] == pytest.approx([4.0, 0.0])
+    assert steps["s3"]["centre"] == pytest.approx([4.0, 1.5]) and steps["s3"]["radius_m"] == 1.5
+    assert steps["s3"]["signed_angle_deg"] == pytest.approx(45.0)
+    assert len(stub.previews) == previews  # nothing published to ROS
+    assert client.get("/api/maps/nope/1/routes/geometry").status_code == 404

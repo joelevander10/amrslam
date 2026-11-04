@@ -23,6 +23,7 @@ from amr_base.canopen import (
     decode_tpdo1,
     decode_tpdo2,
     heartbeat_consumer_value,
+    torque_feedback,
     tpdo_configuration_steps,
     unwrap_i32,
 )
@@ -32,19 +33,24 @@ from amr_base.canopen import (
 
 def test_tpdo_steps_disable_remap_enable_and_pass_the_guard():
     steps = tpdo_configuration_steps(1, 20)
-    # Two PDOs, each: disable, count=0, 2 entries, count=2, type, inhibit, timer, enable.
-    assert len(steps) == 18
-    for pdo, (comm, mapping, cob) in enumerate(((0x1800, 0x1A00, 0x181), (0x1801, 0x1A01, 0x281))):
-        s = steps[pdo * 9 : pdo * 9 + 9]
+    # Each PDO: disable, count=0, its entries, count, type, inhibit, timer, enable.
+    # TPDO1 carries 3 (statusword, velocity, torque), TPDO2 2 (position, error register).
+    assert len(steps) == 10 + 9
+    pdos = ((0x1800, 0x1A00, 0x181, 3, steps[:10]), (0x1801, 0x1A01, 0x281, 2, steps[10:]))
+    for comm, mapping, cob, n, s in pdos:
         assert s[0][:3] == (comm, 1, canopen.COB_DISABLED | cob)
         assert s[1][:3] == (mapping, 0, 0)
-        assert s[4][:3] == (mapping, 0, 2)
-        assert s[5][:3] == (comm, 2, 255)
-        assert s[6][:3] == (comm, 3, 200)  # inhibit 20 ms in 100 us units
-        assert s[7][:3] == (comm, 5, 20)
+        assert s[2 + n][:3] == (mapping, 0, n)
+        assert s[3 + n][:3] == (comm, 2, 255)
+        assert s[4 + n][:3] == (comm, 3, 200)  # inhibit 20 ms in 100 us units
+        assert s[5 + n][:3] == (comm, 5, 20)
         assert s[-1][:3] == (comm, 1, cob)
+    tpdo1 = [v for i, sub, v, _, _ in steps if i == 0x1A00 and sub]
+    assert tpdo1 == [0x60410010, 0x606C0020, 0x60770010]  # 16 + 32 + 16 bits: exactly 8 bytes
     mapped = {(v >> 16) for i, sub, v, _, _ in steps if 0x1A00 <= i <= 0x1A01 and sub}
-    assert mapped == {0x6041, 0x606C, 0x6064, 0x1001}
+    assert mapped == {0x6041, 0x606C, 0x6077, 0x6064, 0x1001}
+    old = tpdo_configuration_steps(1, 20, torque=False)
+    assert [v for i, sub, v, _, _ in old if i == 0x1A00 and sub] == [0x60410010, 0x606C0020]
     for index, sub, value, _, _ in steps:
         guard.check(index, value, sub)  # would raise
     with pytest.raises(ValueError):
@@ -52,8 +58,9 @@ def test_tpdo_steps_disable_remap_enable_and_pass_the_guard():
 
 
 def test_tpdo_decoders_match_the_mapping_order():
-    sw, rpm = decode_tpdo1(struct.pack("<Hi", 0x0637, -1200))
-    assert (sw, rpm) == (0x0637, -1200)
+    assert decode_tpdo1(struct.pack("<Hih", 0x0637, -1200, -455)) == (0x0637, -1200, -455)
+    # A drive still on the 6-byte mapping: wheel feedback intact, torque absent.
+    assert decode_tpdo1(struct.pack("<Hi", 0x0637, -1200)) == (0x0637, -1200, None)
     pos, err = decode_tpdo2(struct.pack("<iB", -5, 0x81))
     assert (pos, err) == (-5, 0x81)
     with pytest.raises(ValueError):
@@ -159,6 +166,7 @@ class FakeBus:
         self.rx: list[can.Message] = []
         self.objects = {}
         self.writes = []
+        self.refuse = set()  # (index, sub, value) downloads answered with an SDO abort
         self.statusword = statusword
         for n in (1, 2):
             self.objects[(n, 0x1000, 0)] = 0x00020192
@@ -185,7 +193,11 @@ class FakeBus:
                     self._reply(node, bytes([0x4B, idx & 0xFF, idx >> 8, sub]) + struct.pack("<I", val))
             else:  # download
                 size = {0x2F: 1, 0x2B: 2, 0x27: 3, 0x23: 4}[cs]
-                self.writes.append((node, idx, sub, int.from_bytes(bytes(m.data[4 : 4 + size]), "little")))
+                val = int.from_bytes(bytes(m.data[4 : 4 + size]), "little")
+                if (idx, sub, val) in self.refuse:
+                    self._reply(node, bytes([0x80, idx & 0xFF, idx >> 8, sub]) + b"\x00\x00\x02\x06")
+                    return
+                self.writes.append((node, idx, sub, val))
                 self._reply(node, bytes([0x60, idx & 0xFF, idx >> 8, sub, 0, 0, 0, 0]))
 
     def recv(self, timeout=None):
@@ -219,8 +231,8 @@ def test_arm_configures_pdos_guard_and_enables_both_drives():
     ]
     assert (1, 0x60FF, 0, 0) in w  # armed with a zero target
     # PDO config happened while pre-operational (NMT 0x80 PER DRIVE came before;
-    # a broadcast would also silence the MLS on node 10, whose TPDO1 only flows
-    # in Operational)
+    # a broadcast would also reach the MLS gyro on node 10, whose state is not the
+    # drive link's to change)
     nmt = [(m.data[0], m.data[1]) for m in bus.sent if m.arbitration_id == 0]
     assert nmt[:2] == [(0x80, 1), (0x80, 2)] and (0x01, 1) in nmt and (0x01, 2) in nmt
     assert all(node in (1, 2) for _, node in nmt)  # never a broadcast, never node 10
@@ -331,6 +343,33 @@ def test_wheel_feedback_is_valid_in_standby():
     assert fb[1][2] and fb[2][2]
 
 
+def test_a_drive_refusing_the_torque_mapping_still_links_without_it():
+    bus = FakeBus(statusword=0x0221)
+    bus.refuse.add((0x1A00, 3, canopen.MAP_TORQUE_ACTUAL))
+    link = _link(bus)
+    link.prepare(20, None, 0, 30.0, False, False)
+    assert link.state == STANDBY
+    for n in (1, 2):
+        counts = [v for node, i, sub, v in bus.writes if node == n and (i, sub) == (0x1A00, 0)]
+        assert counts[-1] == 2  # the torque-less layout, after the refused attempt
+        assert (n, 0x1800, 1, 0x180 + n) in bus.writes  # and TPDO1 is enabled again
+
+
+def test_torque_feedback_signs_like_velocity_and_needs_a_fresh_tpdo1():
+    bus = FakeBus(statusword=0x0221)
+    link = _link(bus)
+    link.prepare(20, None, 0, 30.0, True, False)  # left inverted
+    now = 1000.0
+    t1, t2 = link.telemetry[1], link.telemetry[2]
+    t1.statusword, t1.torque, t1.t_status = 0x8637, 455, now  # TLC set
+    t2.statusword, t2.torque, t2.t_status = 0x0637, 120, now - 1.0  # stale
+    fb = torque_feedback(link, now, 0.05, ((1, True), (2, False)))
+    assert fb[1] == (pytest.approx(-45.5), True, True)
+    assert fb[2] == (0.0, False, False)
+    t2.t_status, t2.torque = now, None  # fresh, but a 6-byte TPDO1
+    assert torque_feedback(link, now, 0.05, ((2, False),))[2] == (0.0, False, False)
+
+
 def test_preflight_refuses_a_fault_or_remote_clear():
     bus = FakeBus(statusword=0x0008)  # FAULT, remote clear
     ok, report = _link(bus).preflight()
@@ -353,12 +392,13 @@ def test_send_target_is_rpdo_and_never_carries_fault_reset():
 def test_router_decodes_pushed_frames_and_tracks_liveness():
     bus = FakeBus()
     link = _link(bus)
-    bus.rx.append(can.Message(arbitration_id=0x181, data=struct.pack("<Hi", 0x0637, 150)))
+    bus.rx.append(can.Message(arbitration_id=0x181, data=struct.pack("<Hih", 0x0637, 150, 321)))
     bus.rx.append(can.Message(arbitration_id=0x282, data=struct.pack("<iB", 4242, 0)))
     bus.rx.append(can.Message(arbitration_id=0x081, data=bytes([0x10, 0x31, 0x04, 0, 0, 0, 0, 0])))
     bus.rx.append(can.Message(arbitration_id=0x702, data=bytes([0x05])))
     link.router.pump(0.01)
     assert link.telemetry[1].statusword == 0x0637 and link.telemetry[1].rpm == 150
+    assert link.telemetry[1].torque == 321 and link.telemetry[1].torque_limited is False
     assert link.telemetry[1].operation_enabled is True
     assert link.telemetry[2].position == 4242 and link.telemetry[2].nmt == "Operational"
     assert link.telemetry[1].alarm is not None and 1 in link.faulted_nodes()

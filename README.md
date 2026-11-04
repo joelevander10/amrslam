@@ -11,22 +11,23 @@
 
 Control software for a 150 kg differential-drive vehicle. Two Oriental Motor
 BLV-R drivers in CiA 402 Profile Velocity mode share one `can0` with a SICK MLS
-magnetic line sensor (track reading and IMU); a SICK nanoScan3 safety scanner,
-a Chafon RFID reader and a Modbus I/O island sit on Ethernet. The vehicle runs
+whose built-in gyro carries the heading; a SICK nanoScan3 safety scanner and a
+Modbus I/O island sit on Ethernet. The vehicle runs
 as one systemd unit, `amr.service`: a supervisor, the hardware nodes, a web UI
 on port 5001, and one *mode layer* at a time.
 
-> ### Status (2026-09-21)
-> **Two products on one stack.** The vehicle is a magnetic-tape AGV (the
-> `LINE` mode: `amr_line`, ported from the tape controller that drove it
-> before) with the SLAM AMR (`MAPPING`/`NAVIGATION`: slam_toolbox, AMCL, Nav2)
-> as the upgrade. Which one a vehicle is comes from its profile.
+> ### Status (2026-10-27)
+> **One product: the trackless SLAM AMR** (`MAPPING`/`NAVIGATION`:
+> slam_toolbox, AMCL, Nav2). The tracked product (the `LINE` mode, `amr_line`,
+> the MLS tape reading, the RFID reader and the tape missions) was removed on
+> 2026-10-27 (`manuals/trackless-only-removal-plan.md`); its last build is the
+> tag `tracked-final` (removal plan D18).
 >
 > **The legacy standalone controller is gone (U11).** `main.py`, `app/` and
-> `canworker.py` were deleted on 2026-09-21 after the ported LINE mode was
-> accepted on the vehicle; the last deployable revision is tagged
-> `legacy-final`. Its offline run logs are archived under
-> `manuals/obsolete/legacy-runs/`. Nothing else on the vehicle owns `can0`.
+> `canworker.py` were deleted on 2026-09-21; the last deployable revision is
+> `aa02ec7` (tag `legacy-final`, removal plan D18). Its offline run logs are
+> archived under `manuals/obsolete/legacy-runs/`. Nothing else on the vehicle
+> owns `can0`.
 >
 > **The nanoScan3 is owned by the ROS stack** (`sick_safetyscanners2`); its
 > liveness is read from `/amr/localization_state`. The protective-field
@@ -37,10 +38,10 @@ on port 5001, and one *mode layer* at a time.
 |---|---|
 | Runtime | `amr.service` → `deploy/amr-supervisor.sh` → ROS 2 Humble, `amr_ws/` |
 | Bus | CANopen 125 kbps, 50 Hz feedback by TPDO, setpoint by RPDO |
-| Nodes | 1 left driver, 2 right driver, 10 SICK MLS (track at 100 Hz + gyro) |
+| Nodes | 1 left driver, 2 right driver, 10 SICK MLS (gyro only) |
 | Manual | pendant 0.50 m/s, web jog 0.40 m/s, only under selector MANUAL |
-| Auto | tracked NORMAL 0.50 m/s, HIGH 0.85 m/s (`auto_high_ratio` 1.7) only inside an RFID high zone; trackless 0.60 m/s |
-| Tests | `tests/run_all.py` 531 checks + `pytest` per ROS package, no hardware |
+| Auto | 0.60 m/s on a route, only under selector AUTO after a physical Start |
+| Tests | `tests/run_all.py` (pinned check count) + `pytest` per ROS package, no hardware |
 
 ---
 
@@ -51,8 +52,7 @@ can reach port 5001 can drive it. Keep it on a trusted network.
 
 **The panel owns every entry into motion.** Manual jog (browser or pendant)
 works only while the selector rests in MANUAL and the supervisor has granted
-the manual lease; every autonomous start — a route, a survey move, the tape
-follower — needs the selector in AUTO *and* a fresh physical Start press. No
+the manual lease; every autonomous start — a route, a survey move — needs the selector in AUTO *and* a fresh physical Start press. No
 web page can start the vehicle.
 
 **A manual direction is HELD, not latched.** The jog pad re-POSTs while a
@@ -95,7 +95,6 @@ Bench work with the service stopped:
 ```bash
 python3 -m agv_core.drivers.canbus.verify_bus       # nodes 1, 2, 10 answer
 python3 -m agv_core.drivers.canbus.verify_drivers   # BLV-R identity and state
-python3 -m agv_core.drivers.canbus.read_mls stream --nmt   # the track reading
 python3 -m agv_core.drivers.canbus.read_imu show
 ```
 
@@ -121,26 +120,24 @@ agv_core/          The vehicle library. No ROS, no Flask, no web tier.
   config.py          Loads and validates the profile. Everything imports this.
   kinematics.py      Wheel <-> body conversions from the profile geometry.
   ownerlock.py       The can/dio owner locks (fcntl); one owner per device.
-  panel.py, canmon.py, events.py, motion.py, blindrun.py, lidarframe.py
-  drivers/           dio.py (Modbus I/O island), rfid.py (Chafon reader)
+  panel.py, canmon.py, events.py, motion.py, lidarframe.py
+  drivers/           dio.py (Modbus I/O island)
   drivers/canbus/    CANopen decoders, the write deny-list (guard.py), RPDO
                      setup, and the bench tools listed above.
 
 amr_ws/            The ROS 2 workspace (colcon, symlink install).
   src/amr_base         drive_node (the can0 owner), panel_node, cmd_mux,
-                       odometry, commissioning, the MLS track reader
+                       odometry, the MLS gyro reader
   src/amr_bringup      the supervisor, launch files, deploy/ and env/
-  src/amr_line         LINE mode: the tape engine (autopilot.py, branch.py are
-                       the verbatim port), the follower node, its authority
   src/amr_mission      routes, the run FSM, survey moves, the executor
   src/amr_navigation   route compiler, validation, Nav2 parameters
   src/amr_localization SLAM/AMCL glue, readiness, the localisation monitor
   src/amr_maps         map bundles and revisions
   src/amr_web          the Flask UI on 5001 and its ROS adapter
-  src/amr_sim          fake base/panel/IMU, synthetic scan and tape
+  src/amr_sim          fake base/panel/IMU, synthetic scan
   src/amr_interfaces   messages and services
 
-tests/             531 offline checks for agv_core. run_all.py runs them.
+tests/             Offline checks for agv_core. run_all.py runs them.
 profiles/          One JSON per vehicle. Every tunable parameter lives here.
 manuals/           Device documentation, the SLAM plan, vehicle reports.
 pyproject.toml     Packages agv_core; also the shared ruff and pytest config.
@@ -167,14 +164,14 @@ pins the package boundary.
 `amr_base.drive_node` is the only process that opens `can0`, `panel_node` the
 only one that writes the I/O island; each takes its owner lock at start. Inside
 `drive_node`, one bus thread does every CAN transaction: feedback arrives by
-TPDO at 50 Hz, the setpoint leaves by RPDO, and the MLS track reading rides on
-TPDO1 `0x18A` at 100 Hz. Everything above it — mux, executor, follower — sends
+TPDO at 50 Hz, the setpoint leaves by RPDO, and the MLS gyro is SDO-polled at
+50 Hz. Everything above it — mux, executor, survey moves — sends
 stamped commands on topics and holds a *permit*; nothing else touches the bus.
 
 ### Authority
 
-The supervisor grants one **lease** at a time (manual, autonomous, commissioning
-or line), the command mux applies only the source that lease allows, and the
+The supervisor grants one **lease** at a time (manual or autonomous),
+the command mux applies only the source that lease allows, and the
 physical panel gates every transition: MANUAL for jog, AUTO plus a Start edge
 for anything autonomous, Reset to end a run. A lease is bound to a
 *generation* that rotates on every mode swap, so a replaced layer's commands
@@ -187,8 +184,8 @@ deny-list on every write path of the bus owner (`amr_base.canopen`):
 
 | | |
 |---|---|
-| **permitted** | `6040h` controlword, `6060h` modes, `6083h`/`6084h` ramps, `60FFh` target velocity, `607Ah`/`6081h` for PP, `1017h` heartbeat, PDO communication parameters |
-| **refused** | `403Eh` (bit 6 is **FREE** — releases the holding brake on *both* drive wheels), `40D0h` clear ETO, `40C0h` alarm reset, `6040h` bit 7 fault reset, `1010h`/`1011h` store/restore, all `4xxxh` parameters, the PP safety objects |
+| **permitted** | `6040h` controlword, `6060h` modes, `6083h`/`6084h` ramps, `60FFh` target velocity, `1017h` heartbeat, PDO communication parameters |
+| **refused** | `403Eh` (bit 6 is **FREE** — releases the holding brake on *both* drive wheels), `40D0h` clear ETO, `40C0h` alarm reset, `6040h` bit 7 fault reset, `1010h`/`1011h` store/restore, all `4xxxh` parameters, `607Ah`/`6081h` and the position-mode safety objects (profile position was removed 2026-10-30) |
 
 A denied write raises rather than being silently dropped. RPDO mappings are
 admitted only if the mapped object is itself writable — a mapping is a write
@@ -196,14 +193,15 @@ path by another name. Clearing ETO or resetting an alarm automatically would
 be an automatic restart, which ISO 3691-4 prohibits: a latched drive alarm is
 cleared by a power cycle, not by software.
 
-### The MLS
+### The MLS gyro
 
-The line sensor serves both products: its **track reading** (LCP positions,
-`#LCP`, marker) feeds the tape follower, and its **gyro** carries the heading
-for SLAM (the EKF weights it far above the wheels). Tape to the vehicle's left
-reads *positive* millimetres. The reader starts the node by NMT so TPDO1 flows
-and falls back to SDO polling (monitor only, ~10 Hz) if it does not; the
-follower refuses to run on SDO samples or below `line_min_track_hz`.
+The SICK MLS on node 10 is used only for its **gyro**, which carries the
+heading for SLAM (the EKF weights it far above the wheels). `drive_node` reads
+the yaw rate by SDO (2034h:03), which works whether node 10 is Operational or
+Pre-operational, and publishes it on `/imu/data_raw`; `imu_bias_node` turns it
+into `/imu/data`. The sensor's TPDO1 (`0x18A`) is no longer used: it may still
+be on the bus if the MLS has stayed Operational since power-up, and nothing
+listens to it.
 
 ---
 
@@ -217,11 +215,8 @@ Everything tunable lives in `profiles/<name>.json`, selected by `AGV_PROFILE`.
 3. **Validation runs before anything is published.**
 4. **`profile_name` must match the filename.**
 
-Speeds, ramps, the jog and pendant limits, the PP lock and the tape engine's
-35 gains (`autopilot`) are all there — and the product: top-level
-`"tracked": false` is the SLAM AMR, `true` the tape AGV that boots into LINE
-and refuses maps and routes, `null` both: boots into LINE, trackless by the Home
-switch (RUNBOOK §1). The web UI's Params page shows every
+Speeds, ramps and the jog and pendant limits are all there. The
+vehicle boots into IDLE. The web UI's Params page shows every
 value the running nodes actually use beside the profile's.
 
 ---
@@ -229,7 +224,7 @@ value the running nodes actually use beside the profile's.
 ## Testing
 
 ```bash
-python3 tests/run_all.py                                   # 531 checks, no hardware
+python3 tests/run_all.py                                   # pinned check count, no hardware
 cd amr_ws && source install/setup.bash && source env/vehicle.sh
 env AMR_SIM_TESTS=0 ROS_DOMAIN_ID=89 python3 -m pytest -q src/*/test   # per package
 ruff check agv_core tests && (cd amr_ws && ruff check src)
@@ -241,9 +236,9 @@ Raise `EXPECTED_CHECKS` deliberately, with a note, when adding checks; never
 lower it to get a green run.
 
 Simulation launch tests are opt-in (`AMR_SIM_TESTS=1`) and check mechanisms,
-not tolerances. Vehicle acceptance is a witnessed session from a
-`VEHICLE-TEST-*.txt` file at the repo root; reports go to
-`manuals/vehicle-reports/`.
+not tolerances. Vehicle acceptance is a witnessed session (for the removal,
+the V1-V12 table in `manuals/trackless-only-removal-plan.md` §6); earlier
+reports are archived under `manuals/obsolete/vehicle-reports/`.
 
 ---
 
@@ -266,31 +261,10 @@ the MLS on the vehicle (2026-09-21).
 forward. If you swap a motor, re-flash a driver or remount a wheel, re-verify
 on blocks and set `vehicle.invert_left` / `invert_right`.
 
-**`autopilot.py` and `branch.py` are the port.** They are the engine that drove
-this vehicle on tape and are not edited; if the gains look wrong, the gains
-move in the profile.
-
 ---
 
 ## Known gaps
 
-- **Tracked jobs are sim-tested only** (2026-10-08): the mission is the site's RFID
-  tag table (`missions/line-a.json`, schema in `agv_core/mission.py`) - Home, an
-  always-stop, destination stops (MRU1-4), a track-end U-turn and a speed toggle.
-  The job (mission + destination) is set on Run tracked; the vehicle may start anywhere
-  on the line, then the physical Start runs it. Tag ids `0010`... are assumed to be what the RFID
-  panel shows; stop positions, the 2 s speed change, the tape-end overshoot and the
-  pivot reacquisition angle are settled on the floor.
-- **No floor run of the tape follower yet** (LINE acceptance section 4).
-- **0.85 m/s (tracked HIGH) runs with no software gate, unvalidated** (operator
-  decision 2026-10-08, manuals/tracked-speed-plan-1-no-slam.md D2): the nanoScan3
-  field set (`lidar.zones_validated` false) and the STO stopping distance from 0.85 m/s
-  are a floor check before the first HIGH run. There is no FX3 encoder speed monitoring
-  yet. HIGH needs a mission `high_zone`; `line-a` has none until the shortest straight
-  is surveyed, so it runs at NORMAL.
-- **`6064h` scaling is unverified** beyond the commissioning runs.
+- **`6064h` scaling is unverified** beyond the (retired) blind-run commissioning runs.
 - **Backlash is unmeasured.** The encoders are motor-side of a 30:1 gearhead.
-- **RFID reader is still on the US region (902.75–927.25 MHz)** and every read so far reports channel 0;
-  Indonesia permits 920–923 MHz. Protocol is captured and CRC-verified (2026-10-08). The 0x0050
-  heartbeat ships off (`rfid.heartbeat_s` 0) until a bench run shows it does not disturb streaming.
 - MEXE02 load inertia is still `0: Small (2×)`; should be `1: Medium (7.5×)`.

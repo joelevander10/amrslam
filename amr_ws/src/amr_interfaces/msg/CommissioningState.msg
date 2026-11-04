@@ -1,5 +1,6 @@
-# Encoder-only commissioning job (unified plan §7.2), from commissioning_node.
-# Latched; on change and 2 Hz. An exclusive substate of supervisor IDLE.
+# Encoder-only commissioning (blind-run) job (unified plan §7.2), from commissioning_node.
+# Latched; on change and 2 Hz. An exclusive substate of supervisor IDLE. PV only on this
+# vehicle (profile position removed 2026-10-30; blind run restored 2026-11-02).
 uint8 IDLE=0
 uint8 PREPARED=1     # a validated plan is loaded; a fresh physical Start under MANUAL executes it
 uint8 RUNNING=2
@@ -23,5 +24,3 @@ float64 gyro_heading_deg   # integrated corrected yaw rate since the job started
 uint32 completed
 string reason
 string results_path        # evidence file after DONE/ABORTED
-string backend             # pv | pp (profile position, executed inside the drives)
-string run_id              # pp: the run id held at the drive owner for this Start

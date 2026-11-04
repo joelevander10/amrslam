@@ -53,18 +53,14 @@ ALLOWED = {
     # reaction (605Eh) with nothing on the PC involved. It cannot start motion,
     # and the alarm it raises is cleared by an operator, not by us (40C0h).
     0x1016: "consumer heartbeat time",
-    # Profile position (pp) blind moves: the SET-POINT of a move and nothing
-    # about how the drive reacts to one. Only reached while profile pp.enabled
-    # is true. The pp safety configuration - 6072h max torque, 6065h following
-    # error window, 6067h position window, 605Dh halt option, 605Eh fault
-    # reaction, 6085h quick stop, 60F2h positioning option - is deliberately NOT
-    # here: a human sets it with MEXE02 (RUNBOOK section 3), and the
-    # drive owner only READS it back and refuses a move on any difference.
-    0x607A: "target position",
-    0x6081: "profile velocity",
+    # Profile position (pp) was removed with the commissioning page (2026-10-30):
+    # 607Ah target position and 6081h profile velocity are no longer writable.
 }
 
-# Named so a test can assert that none of them ever becomes writable.
+# The drive's position-mode safety configuration (max torque, following error and
+# position windows, halt option, fault reaction, quick stop, positioning option):
+# set by a human with MEXE02, never by this code. Named so a test can assert that
+# none of them ever becomes writable.
 PP_CONFIG_READ_ONLY = (0x6072, 0x6065, 0x6067, 0x605D, 0x605E, 0x6085, 0x60F2)
 
 # Named purely so a refusal can say WHY, rather than "not allowed".
@@ -212,51 +208,3 @@ def is_allowed(index, value=None, sub=None):
     except ForbiddenWrite:
         return False
 
-
-# ---------------------------------------------------------------------------
-# THE LINE SENSOR (SICK MLS, can.sensor_node) - a separate, node-specific list
-# ---------------------------------------------------------------------------
-# The MLS is configured by the bench tool read_mls (set-variant, set-markers), never
-# by the bus owner, which only reads its configuration. The one runtime write is
-# 2080h:01, the reset of the latched event flag (manuals/mls-diagnostics-plan.md
-# E2): a status object, not configuration. Those bench writes used to go straight through
-# drive_forward.sdo_write with no check at all (set-variant even attempted 1010h,
-# which FORBIDDEN names). They now pass check_sensor().
-#
-# Kept apart from check() on purpose: the drive allow-list stays exactly the set of
-# objects motion writes, and nothing here can make a drive object writable - these
-# indices mean something else on the drives (2xxxh is manufacturer-specific). Only
-# configuration of the TRACK reading is reachable: marker detection (mls-marker-plan
-# section 2), the TPDO1 variant and the event-flag reset. Zero point, offset
-# calibration, factory reset, inversion, store and the event/temperature thresholds
-# (2070h:06/07) are not.
-SENSOR_ALLOWED = {
-    (0x2006, 1): "variant TPDO1 (track data packing, diverter detection)",
-    (0x2028, 1): "use markers",
-    (0x2028, 2): "marker style",
-    (0x2028, 3): "marker FailSafe mode",
-    (0x202D, 5): "tape polarity",
-    (0x2029, 0): "lock teach key",
-    (0x2080, 1): "reset the latched event flag",
-}
-
-
-def check_sensor(index, sub=0):
-    """Raise ForbiddenWrite unless the line sensor's (index, sub) may be written."""
-    if index in FORBIDDEN:
-        raise ForbiddenWrite(
-            f"write to MLS {index:04X}h refused: {FORBIDDEN[index]} "
-            f"(can-monitoring-plan.txt section 8)")
-    if (index, sub) not in SENSOR_ALLOWED:
-        raise ForbiddenWrite(
-            f"write to MLS {index:04X}h:{sub:02X} refused: not on the line-sensor list "
-            f"{sorted(f'{i:04X}h:{s:02X}' for i, s in SENSOR_ALLOWED)}")
-    return None
-
-
-def is_sensor_allowed(index, sub=0):
-    try:
-        check_sensor(index, sub)
-        return True
-    except ForbiddenWrite:
-        return False

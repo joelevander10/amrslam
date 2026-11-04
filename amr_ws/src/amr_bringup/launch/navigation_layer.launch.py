@@ -2,7 +2,7 @@
 localization monitor, controller, behaviors, route executor (unified plan U1).
 
 The bundle <maps_dir>/<map_id>/rev<revision>/ is verified (hashes) before
-anything starts. No base, no web, no Foxglove, no SLAM. A map change is a
+anything starts. No base, no web, no SLAM. A map change is a
 new instance of this launch; nothing here is reused across maps.
 
     revision:=N        exact revision; "latest" is resolved ONCE here for the
@@ -48,12 +48,14 @@ def executor_overrides() -> dict:
         the default was hard to hit. 0.20 m is the most the executor tolerates anyway - within
         the first converge_m of a step the cross-track limit is 2 x cross_track_limit_m (0.10
         by default), so a wider gate would only fault a moment after START.
+      * web_continue true: its panel has only START and STOP, so the Run page's Continue
+        releases a route wait step (START does too).
     The protective field is used again (use_protective_field false 2026-09-24..11-02, while
     the QR ran on a broken nanoScan3)."""
     from agv_core import config  # noqa: PLC0415 - the vehicle profile (AGV_PROFILE)
 
     if config.PLATFORM == config.PLATFORM_QR:
-        return {"start_gate_m": 0.20, "start_gate_deg": 10.0}
+        return {"start_gate_m": 0.20, "start_gate_deg": 10.0, "web_continue": True}
     return {}
 
 

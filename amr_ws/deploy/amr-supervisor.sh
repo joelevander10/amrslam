@@ -21,5 +21,4 @@ exec python3 -m amr_bringup.supervisor_node --ros-args \
   -p maps_dir:="${AMR_MAPS_DIR:-$HOME/amr_maps}" \
   -p state_dir:="$AMR_STATE_DIR" \
   -p web:="${AMR_WEB:-true}" \
-  -p foxglove:="${AMR_FOXGLOVE:-true}" \
   -p lidar:="${AMR_LIDAR:-true}"

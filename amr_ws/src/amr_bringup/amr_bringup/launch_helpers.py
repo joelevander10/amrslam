@@ -38,16 +38,5 @@ def include(package: str, launch_file: str, **launch_arguments) -> IncludeLaunch
     )
 
 
-def foxglove(condition) -> IncludeLaunchDescription:
-    return IncludeLaunchDescription(
-        AnyLaunchDescriptionSource(
-            os.path.join(
-                get_package_share_directory("foxglove_bridge"), "launch", "foxglove_bridge_launch.xml"
-            )
-        ),
-        condition=condition,
-    )
-
-
 def default_world() -> str:
     return os.path.join(get_package_share_directory("amr_maps"), "worlds", "sim_factory", "world.yaml")

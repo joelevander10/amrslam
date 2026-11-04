@@ -11,8 +11,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/WheelVelocities.msg"
   "msg/WheelStates.msg"
   "msg/DriveStatus.msg"
+  "msg/DriveTorque.msg"
   "msg/SafetyFieldStatus.msg"
-  "msg/StationDetection.msg"
   "msg/MappingState.msg"
   "msg/LocalizationState.msg"
   "msg/MotionPermit.msg"
@@ -26,11 +26,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/IoImage.msg"
   "msg/Event.msg"
   "msg/CommissioningState.msg"
-  "msg/PpMove.msg"
-  "msg/PpStatus.msg"
-  "msg/LineTrack.msg"
-  "msg/LineState.msg"
-  "msg/MarkerEvent.msg"
+  "msg/GlsReading.msg"
   "msg/SurveyMoveState.msg"
   "srv/RunMission.srv"
   "srv/StartSurvey.srv"
@@ -42,8 +38,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/GetOperation.srv"
   "srv/PlanCommissioning.srv"
   "srv/SurveyMove.srv"
-  "srv/SelectMission.srv"
-  "srv/LineTeach.srv"
+  "srv/RecordLabel.srv"
   DEPENDENCIES std_msgs geometry_msgs builtin_interfaces
 )
 

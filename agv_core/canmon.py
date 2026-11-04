@@ -18,8 +18,9 @@ objects completes in about 220 ms at 50 Hz - inside the 1-5 Hz the plan asks
 for Tier 3, and the values are slow-moving anyway.
 
 The doc's own advice is the same: "do not poll aggressively by SDO when a TPDO
-will do". We are not remapping TPDOs (that needs driver reconfiguration and the
-bus already carries the MLS stream at 100 Hz), so the poll has to be polite.
+will do". We are not remapping TPDOs (that needs driver reconfiguration; the MLS
+gyro is SDO-polled at 50 Hz and its TPDO1 0x18A may still stream - removal plan
+D7), so the poll has to be polite.
 
 DATA TYPES COME FROM THE MANUAL, NOT THE PLAN
 ---------------------------------------------

@@ -1,7 +1,7 @@
 """Operator / engineer roles for the pages.
 
 The panel in the hall is an operator's tool: Home, Run, Alarms and nothing else.
-The engineering pages (Monitor, I/O, Params, Commission, Routes, Maps) stay one
+The engineering pages (Monitor, I/O, Params, Blind run, Routes, Maps) stay one
 PIN away, because operators tap things and a tapped Params page is a changed
 vehicle.
 

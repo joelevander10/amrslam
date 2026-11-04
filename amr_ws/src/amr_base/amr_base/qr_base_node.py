@@ -10,7 +10,7 @@ odometry, EKF, IMU bias, executor, supervisor and web run unchanged:
                                        -> /amr/io (IoImage, 5 Hz)
     arm / power / fault / E-stop      -> /drives/status (DriveStatus, 10 Hz)
     5 Hz / 10 Hz display copies       -> /wheel_states_ui, /amr/panel_state_ui
-    /amr/run_state, /amr/line_state   -> drive_power asks (amr_base.arm_policy)
+    /amr/run_state                    -> drive_power asks (amr_base.arm_policy)
     /diagnostics (1 Hz), /amr/events (transitions only)
 
 Services (std_srvs/Trigger): /drives/arm, /drives/disarm, /drives/ack_fault.
@@ -22,6 +22,12 @@ Drive power (gvievo 2026-10-08 power model, read in QR terms - qr_motor.DriveLog
 arm_policy decides power: under MANUAL always (the QR panel has no Manual Arm input, so
 PanelState.manual_arm is the panel's validity), under AUTO only while a run asks for it
 (RunState.drive_power, from the pre-move warning after Start until the run ends).
+
+Emergency (gvievo's emergency suite, read in QR terms): PanelState.emergency is ACTIVE while
+the E-stop input is open or the panel image is not trusted, NORMAL otherwise. There is no
+RESET_NEEDED step: the QR has no Flexi Soft and no STO to reset, and releasing the E-stop
+moves nothing - a held run still needs START (or the web's Continue at a wait step).
+PanelState.continue_edge and dest_edge stay false/0: the QR panel has only START and STOP.
 Push mode is reported as link "standby" with both states "Ready to switch on" - power off
 on purpose, not an emergency - and the reason in power_reason.
 
@@ -75,7 +81,6 @@ from amr_interfaces.msg import (
     DriveStatus,
     Event,
     IoImage,
-    LineState,
     PanelState,
     RunState,
     WheelStates,
@@ -138,7 +143,7 @@ class QrBaseNode(Node):
         dp("imu_frame", "imu_frame")
         dp("can_retry_s", 2.0)
         dp("power_panel_timeout_s", 1.0)  # arm_policy: a panel image older than this = no power
-        dp("power_ask_timeout_s", 2.5)  # arm_policy: a LineState/RunState request older than this
+        dp("power_ask_timeout_s", 2.5)  # arm_policy: a RunState request older than this
         p = self.get_parameter
         self.period = 1.0 / float(p("rate_hz").value)
         self.cmd_timeout = float(p("cmd_timeout_s").value)
@@ -232,7 +237,6 @@ class QrBaseNode(Node):
         self._pub_io = self.create_publisher(IoImage, "/amr/io", 5)
         self.create_subscription(WheelVelocities, "/cmd_wheel_vel", self._on_cmd, RELIABLE_1)
         self.create_subscription(ControlLease, "/amr/control_lease", self._on_lease, RELIABLE_1)
-        self.create_subscription(LineState, "/amr/line_state", lambda m: self._on_ask("line", m), LATCHED)
         self.create_subscription(RunState, "/amr/run_state", lambda m: self._on_ask("run", m), LATCHED)
         self.create_service(Trigger, "/drives/arm", lambda q, r: self._request("arm", r))
         self.create_service(Trigger, "/drives/disarm", lambda q, r: self._request("disarm", r))
@@ -447,7 +451,7 @@ class QrBaseNode(Node):
                     asks = tuple(self._asks.values())
                 power = arm_policy.want_power(
                     now,
-                    arm_policy.Panel(now, frame.valid, frame.mode_auto, frame.valid),
+                    arm_policy.Panel(now, frame.valid, frame.mode_auto, frame.valid, self._emergency(frame)),
                     asks,
                     self._power_params,
                 )
@@ -577,6 +581,13 @@ class QrBaseNode(Node):
         m.seq = self._event_seq
         self._safe_publish(self._pub_event, m)
 
+    @staticmethod
+    def _emergency(frame) -> int:
+        """PanelState.emergency for the QR: ACTIVE while the E-stop is open or the image is not
+        trusted (fail-safe, as at boot), NORMAL as soon as both clear - no Reset step (see the
+        module docstring)."""
+        return PanelState.EMG_NORMAL if frame.valid and not frame.estop else PanelState.EMG_ACTIVE
+
     def _publish_panel(self, frame) -> None:
         m = PanelState()
         m.header.stamp = self.get_clock().now().to_msg()
@@ -588,6 +599,10 @@ class QrBaseNode(Node):
         m.pendant_fwd, m.pendant_rvs, m.pendant_left, m.pendant_right = frame.pendant
         # No Manual Arm input on the QR panel: MANUAL is armed whenever the image is trusted.
         m.manual_arm = bool(frame.valid)
+        m.estop_ok = bool(frame.valid and not frame.estop)
+        m.emergency = self._emergency(frame)
+        m.continue_edge = False  # no Continue push button on the QR panel
+        m.dest_edge = 0  # no destination buttons
         self._safe_publish(self._pub_panel, m)
         now = time.monotonic()
         if now - self._ui_panel_t >= 0.1:

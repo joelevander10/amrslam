@@ -12,7 +12,7 @@ real drives on the same /cmd_wheel_vel, /wheel_states and /tf.
 Launch files call require_vehicle_domain() / refuse_vehicle_domain() at
 description-generation time, so a wrong shell fails before any process starts.
 The DDS side is amr_bringup/config/cyclonedds-local.xml (loopback only): nothing
-off this host can join either graph; Foxglove goes through its bridge.
+off this host can join either graph; the web app on :5001 is the only way in from outside.
 """
 
 from __future__ import annotations

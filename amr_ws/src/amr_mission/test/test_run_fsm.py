@@ -169,3 +169,24 @@ def test_auto_resume_only_from_blocked():
     m.start(True, True)
     m.fault("drive")
     assert not m.auto_resume("x") and m.state == f.FAULT
+
+
+def test_wait_and_continue():
+    """gls-wait-coding-plan §A.3: WAITING is entered from EXECUTING only, is not ACTIVE, and
+    Continue moves PAST the wait step."""
+    m = loaded()
+    assert not m.wait("UBC hitch") and m.state == f.READY
+    m.start(True, True)
+    m.step_done()
+    assert m.wait("UBC hitch") and m.state == f.WAITING and m.step_index == 1
+    assert f.WAITING not in f.ACTIVE and "UBC hitch" in m.reason
+    assert not m.pause() and not m.block("x") and not m.start(True, True)
+    assert m.continue_() and m.state == f.EXECUTING and m.step_index == 2
+    assert not m.continue_() and "Continue ignored" in m.reason
+
+
+def test_abort_from_waiting():
+    m = loaded()
+    m.start(True, True)
+    m.wait("w")
+    assert m.abort("aborted by operator") and m.state == f.IDLE and m.step_index == -1

@@ -2,14 +2,12 @@
 # Record one AUTO run for analysis: pre-flight checks, a bag of every control-relevant
 # topic, a snapshot of the logs/code/profile, then tools/bag_report.py on the result.
 #
-#   tools/run_log.sh [mission] [destination]      e.g. tools/run_log.sh line-a MRU4
+#   tools/run_log.sh
 #
 # Start it BEFORE pressing Start on the panel; Ctrl-C once when the run is over.
 # Read-only towards the vehicle: it never starts/stops amr.service and sends nothing
 # to the vehicle. Output: ~/.amr/runs/<stamp>/
 set -u
-MISSION="${1:-}"
-DEST="${2:-}"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 OUT="$HOME/.amr/runs/$STAMP"
@@ -32,7 +30,7 @@ echo "pre-flight ($OUT)" | tee "$OUT/preflight.txt"
 if systemctl is-active --quiet amr.service; then
     since=$(systemctl show amr.service -p ActiveEnterTimestamp --value)
     since_s=$(date -d "$since" +%s 2>/dev/null || echo 0)
-    newest=$(find "$REPO/agv_core" "$REPO/amr_ws/src" "$REPO/profiles" "$REPO/missions" \
+    newest=$(find "$REPO/agv_core" "$REPO/amr_ws/src" "$REPO/profiles" \
              -name '*.py' -o -name '*.json' -o -name '*.yaml' 2>/dev/null \
              | grep -v -e /test/ -e __pycache__ | xargs stat -c '%Y %n' 2>/dev/null | sort -n | tail -1)
     newest_s=${newest%% *}
@@ -45,26 +43,24 @@ else
     warn "amr.service is not active"
 fi
 
-# 2. What the line layer says right now.
-ls=$(timeout 6 ros2 topic echo --once /amr/line_state 2>/dev/null)
-if [ -z "$ls" ]; then
-    warn "no /amr/line_state (not in LINE mode?)"
+# 2. What the run and localization say right now.
+rs=$(timeout 6 ros2 topic echo --once /amr/run_state 2>/dev/null)
+if [ -z "$rs" ]; then
+    warn "no /amr/run_state (not in NAVIGATION mode?)"
 else
-    m=$(field "$ls" mission); d=$(field "$ls" destination); st=$(field "$ls" state)
-    h=$(field "$ls" at_home); hd=$(field "$ls" home_detail); msg=$(field "$ls" message)
-    ok "line: state=$st mission='${m:-plain}' destination='${d}' at_home=$h ${hd:+($hd)}"
-    ok "line message: $msg"
-    [ -n "$MISSION" ] && [ "$m" != "$MISSION" ] && warn "mission is '${m:-plain}', expected '$MISSION': Set job on Run tracked"
-    [ -n "$DEST" ] && [ "$d" != "$DEST" ] && warn "destination is '$d', expected '$DEST'"
-    # Only a mission with an RFID Home says why not (home_detail); a marker run has none.
-    [ -n "$MISSION" ] && [ "$h" != "true" ] && [ -n "$hd" ] && warn "not at Home ($hd)"
+    ok "run: state=$(field "$rs" state) mission='$(field "$rs" mission_id)' route='$(field "$rs" route_id)' reason='$(field "$rs" reason)'"
+fi
+lz=$(timeout 6 ros2 topic echo --once /amr/localization_state 2>/dev/null)
+if [ -z "$lz" ]; then
+    warn "no /amr/localization_state"
+else
+    lst=$(field "$lz" state)
+    [ "$lst" = "2" ] && ok "localization READY" || warn "localization state $lst (2 = READY): $(field "$lz" reason)"
 fi
 
-# 3. RFID link, mode, drives.
-rf=$(timeout 6 ros2 topic echo --once /amr/rfid 2>/dev/null)
-[ "$(field "$rf" comms_ok)" = "true" ] && ok "RFID link up" || warn "RFID link down or silent"
+# 3. Mode, drives.
 md=$(timeout 6 ros2 topic echo --once /amr/mode_state 2>/dev/null)
-ok "mode: $(field "$md" mode) (7 = LINE) phase=$(field "$md" phase)"
+ok "mode: $(field "$md" mode) (3 = NAVIGATION) phase=$(field "$md" phase)"
 dr=$(timeout 6 ros2 topic echo --once /drives/status 2>/dev/null)
 ok "drives: operational=$(field "$dr" operational) link=$(field "$dr" link_state) power_reason='$(field "$dr" power_reason)'"
 
@@ -74,30 +70,26 @@ free_g=$(df -BG --output=avail "$HOME" | tail -1 | tr -dc 0-9)
 
 # 5. Snapshot of what is being tested.
 {
-    echo "stamp $STAMP"; echo "mission ${MISSION:-?} destination ${DEST:-?}"
+    echo "stamp $STAMP"
     git -C "$REPO" rev-parse HEAD; git -C "$REPO" status --short
 } > "$OUT/code_state.txt" 2>&1
 git -C "$REPO" diff > "$OUT/code.diff" 2>/dev/null
 cp "$REPO/profiles/${AGV_PROFILE:-agv-01}.json" "$OUT/profile.json" 2>/dev/null
-[ -n "$MISSION" ] && cp "$REPO/missions/$MISSION.json" "$OUT/mission.json" 2>/dev/null
-cp "$REPO/missions/empty.json" "$OUT/empty.json" 2>/dev/null
 
 # Every control-relevant topic. Not recorded: scans/raw scanner data, map, particle cloud
-# (CPU and size); /output_paths carries the field states. line_cmd is generation-private.
-# Localization (tracked plan 3, P0 tool T2): /amcl_pose, /tf (map->odom; odom->base is small
-# beside it) and the readiness state, whenever AMCL runs (p0_localization or tape_loc).
-TOPICS='^/amr/(line_state|line_track|line_marker|rfid|mux_state|panel_state|io|events|mode_state|control_lease|run_state|localization_state)$'
-TOPICS+='|^/amr/layers/g[0-9]+/amr/line_cmd$'
-TOPICS+='|^/(cmd_wheel_vel|wheel_states|drives/status|imu/data|odom_raw|output_paths|rosout|diagnostics)$'
+# (CPU and size); /output_paths carries the field states. Localization: /amcl_pose, /tf
+# (map->odom; odom->base is small beside it) and the readiness state.
+TOPICS='^/amr/(mux_state|panel_state|io|events|mode_state|control_lease|run_state|localization_state)$'
+TOPICS+='|^/(cmd_wheel_vel|wheel_states|drives/status|drives/torque|imu/data|odom_raw|output_paths|rosout|diagnostics)$'
 TOPICS+='|^/(amcl_pose|tf)$'
 
-# CPU and temperature beside the bag (P0 M5): pidstat per process every 5 s, the package
+# CPU and temperature beside the bag: pidstat per process every 5 s, the package
 # temperature every 5 s. Both stop with the recorder.
 if command -v pidstat >/dev/null; then
     pidstat -u -h 5 > "$OUT/pidstat.txt" 2>&1 &
     PIDSTAT=$!
 else
-    warn "pidstat not installed (apt install sysstat): no per-process CPU for P0 M5"
+    warn "pidstat not installed (apt install sysstat): no per-process CPU"
     PIDSTAT=
 fi
 (

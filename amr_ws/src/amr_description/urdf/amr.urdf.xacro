@@ -43,6 +43,13 @@
   <xacro:arg name="imu_y" default="0.0"/>    <!-- VERIFY -->
   <xacro:arg name="imu_z" default="0.0"/>    <!-- VERIFY -->
 
+  <!-- GLS621 floor-label camera: where its optical axis meets the floor (T_BC). The real
+       values are the profile's gls.mount_*; description.launch.py passes them, so these
+       defaults only matter for a bare `xacro` run. Placeholders until the calibration spin. -->
+  <xacro:arg name="gls_x" default="0.0"/>    <!-- MEASURE -->
+  <xacro:arg name="gls_y" default="0.0"/>    <!-- MEASURE -->
+  <xacro:arg name="gls_yaw" default="0.0"/>  <!-- MEASURE -->
+
   <xacro:property name="wheel_radius" value="$(arg wheel_radius)"/>
   <xacro:property name="track_width"  value="$(arg track_width)"/>
   <xacro:property name="wheel_width"  value="$(arg wheel_width)"/>
@@ -114,6 +121,14 @@
     <origin xyz="$(arg imu_x) $(arg imu_y) $(arg imu_z)" rpy="0 0 0"/>
   </joint>
 
-  <!-- floor_cam_frame (spec §2.3) is deliberately absent: no camera on this vehicle (D-4). -->
+  <!-- GLS621 floor-label camera (spec §2.3's floor_cam_frame, named gls_frame): on the floor
+       under the lens, so its parent is base_footprint (z = 0), yaw fixed to the housing
+       (gls-wait-coding-plan §B.5). -->
+  <link name="gls_frame"/>
+  <joint name="gls_joint" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="gls_frame"/>
+    <origin xyz="$(arg gls_x) $(arg gls_y) 0" rpy="0 0 $(arg gls_yaw)"/>
+  </joint>
 
 </robot>

@@ -1,9 +1,9 @@
 """amr_supervisor: the main process of amr.service (unified plan §3, §5, §8).
 
-Owns four process groups - web, base, an optional Foxglove bridge, and at most
-one mode layer (mapping or navigation) - and the single source of motion
+Owns three process groups - web, base, and at most one mode layer (mapping or
+navigation) - and the single source of motion
 authority, /amr/control_lease. Boots STARTING -> IDLE with base and web up and
-no layer, then on to LINE unless the profile is trackless-only (tracked false).
+no layer, and stays in IDLE until a client asks for a mode.
 Mode changes and survey operations are asynchronous operations (OperationState)
 driven by one serial loop; every step has a deadline and a
 failure lands in FAULT with motion inhibited, never in a half-switched stack.
@@ -30,8 +30,6 @@ import time
 import uuid
 
 import rclpy
-from agv_core import config
-from geometry_msgs.msg import Pose2D
 from nav2_msgs.srv import ManageLifecycleNodes
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
@@ -49,7 +47,6 @@ from amr_interfaces.msg import (
     ControlLease,
     DriveStatus,
     Event,
-    LineState,
     LocalizationState,
     MappingState,
     ModeState,
@@ -71,8 +68,10 @@ SENSOR = QoSProfile(
     depth=5, reliability=QoSReliabilityPolicy.BEST_EFFORT, durability=QoSDurabilityPolicy.VOLATILE
 )
 
-LEASE_MANUAL, LEASE_AUTONOMOUS, LEASE_COMMISSIONING, LEASE_LINE = 1, 2, 4, 8
-# The web (and foxglove) come back by themselves: 10 s apart, three tries, then the
+# ControlLease.allowed bits. Bit 8 retired (LINE), never reuse. Bit 4 (COMMISSIONING) was
+# retired on 2026-10-30 and came back with the blind run on 2026-11-02, same meaning.
+LEASE_MANUAL, LEASE_AUTONOMOUS, LEASE_COMMISSIONING = 1, 2, 4
+# The web comes back by itself: 10 s apart, three tries, then the
 # operator is told to restart the service rather than watching a dead page for ever.
 RESPAWN_BACKOFF_S = 10.0
 RESPAWN_TRIES = 3
@@ -85,12 +84,10 @@ DEFER_EVENT_S = 60.0
 _REQUEST_OF_TARGET = {
     ModeState.IDLE: fsm.REQ_IDLE,
     ModeState.NAVIGATION: fsm.REQ_NAVIGATION,
-    ModeState.LINE: fsm.REQ_LINE,
 }
 _MODE_OF_REQUEST = {
     fsm.REQ_IDLE: fsm.IDLE,
     fsm.REQ_NAVIGATION: fsm.NAVIGATION,
-    fsm.REQ_LINE: fsm.LINE,
 }
 INTERNAL = "/amr/internal/survey"
 
@@ -103,7 +100,6 @@ class Supervisor(Node):
         dp("maps_dir", os.path.expanduser("~/amr_maps"))
         dp("state_dir", os.path.expanduser("~/.amr"))
         dp("web", True)
-        dp("foxglove", True)
         dp("lidar", True)
         dp("slip_noise_std", 0.02)  # sim
         dp("clutter_count", 0)  # sim
@@ -115,9 +111,6 @@ class Supervisor(Node):
         dp("still_wait_s", 5.0)
         dp("save_s", 60.0)
         dp("survey_rpc_s", 15.0)  # returned / abort answer budget (review R27)
-        # continue-survey: added to layer_start_s while slam_toolbox loads a saved pose graph
-        # (boiacca-map-1 rev1 is 94 MB; the session's own load timeout is 120 s)
-        dp("continue_load_s", 150.0)
         p = self.get_parameter
         self.real = bool(p("real").value)
         self.maps_dir = os.path.expanduser(str(p("maps_dir").value))
@@ -133,18 +126,9 @@ class Supervisor(Node):
                 "still_wait_s",
                 "save_s",
                 "survey_rpc_s",
-                "continue_load_s",
             )
         }
 
-        # The product, from the profile's top-level `tracked` (config.py note 5):
-        # a tape AGV enters LINE by itself once the base is up and refuses maps and
-        # routes; a trackless one boots to IDLE and refuses LINE; a vehicle carrying
-        # both boots to LINE too (2026-10-08: tracked is the default product, trackless
-        # is the operator's switch on Home). Read once, here.
-        self.tracked = config.TRACKED  # True tape | False slam | None both
-        self.admit_params = fsm.Params(tracked=self.tracked)
-        self._auto_line_done = False
         self._boot_reported = False  # the end-of-boot operator event fires once per boot
         self._verdict: uptime.Verdict | None = None  # how the PREVIOUS run ended
         self.disk = rd.DiskStatus(-1, rd.DISK_OK, "")
@@ -174,7 +158,6 @@ class Supervisor(Node):
         self.survey_op: tuple[str, str] | None = None  # (operation_id, kind) in flight
         self.inhibit_manual = False  # during a save
         self._pending_future = None
-        self._continue_hint: tuple[float, float, float] | None = None  # START of a continued survey
         self._worker: threading.Thread | None = None
         self._worker_result: bool | None = None
         self._lock = threading.RLock()
@@ -194,12 +177,6 @@ class Supervisor(Node):
             MappingState, "/amr/mapping_state", self.snap.on_mapping, LATCHED, callback_group=g
         )
         self.create_subscription(RunState, "/amr/run_state", self.snap.on_run, LATCHED, callback_group=g)
-        # Without this the LINE transaction can never COMMIT: _ready_line waits
-        # on snap.line_state_for(generation) and nothing would ever feed it, so
-        # a swap into LINE would sit there until LAYER_START_TIMEOUT.
-        self.create_subscription(
-            LineState, "/amr/line_state", self.snap.on_line, LATCHED, callback_group=g
-        )
         self.create_subscription(
             LocalizationState, "/amr/localization_state", self.snap.on_loc, LATCHED, callback_group=g
         )
@@ -324,14 +301,10 @@ class Supervisor(Node):
             return 0
         if self.inhibit_manual:
             return 0
+        if self.snap.emergency(self._now()):
+            return 0  # E-stop (emergency plan §4.5): a second no-motion layer above the mux; no mode change
         if self.mode == fsm.NAVIGATION:
             return LEASE_MANUAL | LEASE_AUTONOMOUS
-        if self.mode == fsm.LINE:
-            # The selector decides who drives (2026-10-02): MANUAL jogs (pendant, browser)
-            # in LINE mode too, AUTO is the tape follower's. The two cannot fight - the mux
-            # reads the panel first, and the follower ends its run when the selector
-            # leaves AUTO.
-            return LEASE_MANUAL | LEASE_LINE
         if self.mode == fsm.IDLE and self.snap.commissioning_active(self._now()):
             return LEASE_COMMISSIONING  # exclusive IDLE substate: no ordinary jog meanwhile
         return LEASE_MANUAL
@@ -350,7 +323,8 @@ class Supervisor(Node):
         self.lease_seq += 1
         m.seq = self.lease_seq
         m.allowed = self._allowed()
-        m.inhibit_reason = "" if m.allowed else (self.phase or fsm.MODE_NAMES[self.mode])
+        why = self.phase or fsm.MODE_NAMES[self.mode]
+        m.inhibit_reason = "" if m.allowed else "emergency stop" if self.snap.emergency(self._now()) else why
         return m
 
     def _publish_lease(self) -> None:
@@ -375,10 +349,8 @@ class Supervisor(Node):
             allowed = self._allowed()
             m.manual_available = bool(allowed & LEASE_MANUAL)
             m.autonomous_available = bool(allowed & LEASE_AUTONOMOUS)
-            m.line_available = bool(allowed & LEASE_LINE)
             m.fault_code = self.fault_code
             m.reason = self.reason
-            m.product = {True: "tape", False: "slam"}.get(self.tracked, "both")
             m.last_survey_map_id, m.last_survey_revision = self.last_survey
         self._pub_mode.publish(m)
 
@@ -401,7 +373,7 @@ class Supervisor(Node):
             if kind is None:
                 res.accepted, res.message = (
                     False,
-                    "target must be IDLE, NAVIGATION or LINE (MAPPING is a survey START)",
+                    "target must be IDLE or NAVIGATION (MAPPING is a survey START)",
                 )
                 return res
             existing = (
@@ -410,7 +382,7 @@ class Supervisor(Node):
             if existing is not None:
                 res.accepted, res.operation_id, res.message = True, existing.operation_id, "duplicate request"
                 return res
-            d = fsm.admit(self.mode, kind, self._conditions(), self.admit_params)
+            d = fsm.admit(self.mode, kind, self._conditions())
             if not d.ok:
                 res.accepted, res.message = False, d.reason
                 return res
@@ -456,7 +428,7 @@ class Supervisor(Node):
             if existing is not None:
                 res.accepted, res.operation_id, res.message = True, existing.operation_id, "duplicate request"
                 return res
-            d = fsm.admit(self.mode, kind, self._conditions(), self.admit_params)
+            d = fsm.admit(self.mode, kind, self._conditions())
             if not d.ok:
                 res.accepted, res.message = False, d.reason
                 return res
@@ -469,22 +441,15 @@ class Supervisor(Node):
                     "delete old maps or reports first",
                 )
                 return res
-            cont_rev, cont_sha = int(req.continue_revision), ""
             if kind == fsm.REQ_SURVEY_START:
                 try:
                     rd.check_map_id(req.map_id)
-                    if cont_rev > 0:  # refused here, before the running layer is torn down
-                        cont_sha = rd.continuable(self.maps_dir, req.map_id, cont_rev)
-                        rd.check_hint(req.hint.x, req.hint.y, req.hint.theta)
                 except ValueError as e:
                     res.accepted, res.message = False, str(e)
                     return res
             op, _ = self.book.submit(req.request_id, kind, map_id=req.map_id, message=req.description)
             if kind == fsm.REQ_SURVEY_START:
-                self._continue_hint = (
-                    (float(req.hint.x), float(req.hint.y), float(req.hint.theta)) if cont_rev > 0 else None
-                )
-                self._begin_transaction(op, fsm.MAPPING, req.map_id, cont_rev, cont_sha)
+                self._begin_transaction(op, fsm.MAPPING, req.map_id, 0, "")
             else:
                 self.survey_op = (op.operation_id, kind)
                 if kind == fsm.REQ_SURVEY_SAVE:
@@ -556,21 +521,6 @@ class Supervisor(Node):
         self.requested = target
         self._set(fsm.TRANSITIONING, "inhibiting")
 
-    def _auto_enter_line(self) -> None:
-        """LINE is the default mode of every vehicle that carries the tape product
-        (tracked true, and since 2026-10-08 tracked null = both): start the swap right
-        after boot, once. Only a trackless-only vehicle (tracked false) stays in IDLE.
-        No panel rule here - nothing can be moving at boot, the mux inhibits
-        through the transition, and the follower still needs the physical Start under
-        AUTO before a wheel turns. Leaving LINE later (the Home switch to trackless) is
-        the operator's request and is not undone."""
-        if self.tracked is False or self._auto_line_done or self.txn is not None:
-            return
-        self._auto_line_done = True
-        op, _ = self.book.submit(f"boot-line-{self.instance[:8]}", fsm.REQ_LINE)
-        self.get_logger().info(f"profile tracked={self.tracked}: entering LINE (the default mode)")
-        self._begin_transaction(op, fsm.LINE, "", 0, "")
-
     def _mark(self) -> None:
         """Rewrite the running marker (power-loss plan W1). One small atomic write per
         mode change; a cut between writes costs at most the last transition."""
@@ -615,6 +565,7 @@ class Supervisor(Node):
             return
         actions = {
             "drives": "press the safety reset on the cabinet",
+            "CAN bus": "check the CAN adapter (USB) and its cable; it recovers by itself once plugged in",
             "panel": "check the control panel and its I/O island",
             "wheel feedback": "press the safety reset on the cabinet",
             "mux": "call the engineer: the command mux did not start",
@@ -735,7 +686,7 @@ class Supervisor(Node):
             except Exception as e:  # noqa: BLE001
                 self._fail(op, "SPAWN_FAILED", str(e))
                 return
-            t.deadline = now + self._layer_start_budget(t)
+            t.deadline = now + self.budget["layer_start_s"]
             t.notes.append("lm:none")
             self.book.phase(op, "starting new layer")
             t.advance()
@@ -751,7 +702,7 @@ class Supervisor(Node):
                 return
             if now > t.deadline:
                 self._fail(
-                    op, "LAYER_START_TIMEOUT", f"new layer not ready in {self._layer_start_budget(t):.0f} s"
+                    op, "LAYER_START_TIMEOUT", f"new layer not ready in {self.budget['layer_start_s']:.0f} s"
                 )
                 return
             ready = self._LAYER_READY.get(t.target)
@@ -777,11 +728,6 @@ class Supervisor(Node):
             self._set(t.target, "", "")
             return
 
-    def _layer_start_budget(self, t: fsm.Transaction) -> float:
-        """A continued survey also loads a saved pose graph before it is ready."""
-        extra = self.budget["continue_load_s"] if t.target == fsm.MAPPING and t.map_revision > 0 else 0.0
-        return self.budget["layer_start_s"] + extra
-
     def _start_mapping(self, t: fsm.Transaction):
         return self._launch(
             "layer",
@@ -802,18 +748,6 @@ class Supervisor(Node):
             autostart="false",
         )
 
-    def _start_line(self, t: fsm.Transaction):
-        return self._launch(
-            "layer", "line_layer.launch.py", generation=self.generation, real=str(self.real).lower()
-        )
-
-    def _ready_line(self, t: fsm.Transaction, now: float) -> None:
-        """The line layer is ready as soon as it reports its own state on THIS generation.
-        No RPC: unlike a survey, nothing has to be handed to it to start (Increment 1)."""
-        if not self.snap.line_state_for(self.generation):
-            return
-        t.step = fsm.COMMIT
-
     def _ready_mapping(self, t: fsm.Transaction, now: float) -> None:
         if not self.snap.mapping_state_for(self.generation):
             return  # coordinator not up yet
@@ -823,10 +757,6 @@ class Supervisor(Node):
             req = StartSurvey.Request()
             req.map_id = t.map_id
             req.description = self.book.get(t.operation_id).message
-            if t.map_revision > 0 and self._continue_hint is not None:
-                req.continue_revision = int(t.map_revision)
-                hx, hy, hyaw = self._continue_hint
-                req.hint = Pose2D(x=hx, y=hy, theta=hyaw)
             self._pending_future = self._cli["start"].call_async(req)
             self.book.phase(t.operation_id, "starting survey")
             return
@@ -895,12 +825,10 @@ class Supervisor(Node):
     _LAYER_START = {
         fsm.MAPPING: _start_mapping,
         fsm.NAVIGATION: _start_navigation,
-        fsm.LINE: _start_line,
     }
     _LAYER_READY = {
         fsm.MAPPING: _ready_mapping,
         fsm.NAVIGATION: _ready_navigation,
-        fsm.LINE: _ready_line,
     }
 
     # ---------------------------------------------------------- survey follow-ups
@@ -1010,12 +938,6 @@ class Supervisor(Node):
             if p("world_yaml").value:
                 base_args["world_yaml"] = p("world_yaml").value
         self.groups["base"] = self._launch("base", "base.launch.py", **base_args)
-        if p("foxglove").value:
-            argv = ["ros2", "launch", "foxglove_bridge", "foxglove_bridge_launch.xml"]
-            self._respawnable["foxglove"] = argv
-            self.groups["foxglove"] = Group.spawn(
-                "foxglove", argv, env=self._env(), log_path=os.path.join(self._logs, "foxglove.log")
-            )
         self._boot_deadline = self._now() + self.budget["base_ready_s"]
         self._boot_reported = False
 
@@ -1114,7 +1036,6 @@ class Supervisor(Node):
             if rd.base_ready(self.snap, now) and self.snap.mux_acknowledged(self.generation, now):
                 self._boot_report(now, "")
                 self._set(fsm.IDLE, "", "")
-                self._auto_enter_line()
             elif now > self._boot_deadline:
                 missing = rd.base_missing(self.snap, now)
                 self._boot_report(now, missing)
@@ -1131,7 +1052,6 @@ class Supervisor(Node):
                 self.get_logger().info("base ready after the boot budget")
                 self._boot_report(now, "")
                 self._set(fsm.IDLE, "", "")
-                self._auto_enter_line()
                 return
         if self.txn is not None:
             self._step_transaction(now)
@@ -1166,7 +1086,7 @@ class Supervisor(Node):
             self._publish_lease() if got else None
         except Exception:  # noqa: BLE001
             pass
-        for role in ("layer", "base", "foxglove", "web"):
+        for role in ("layer", "base", "web"):
             g = self.groups.get(role)
             if g is None:
                 continue

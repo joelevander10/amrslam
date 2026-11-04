@@ -1,0 +1,21 @@
+# LAN1 (enp1s0) -> maintenance laptop + Modbus DIO island
+#
+#   192.168.1.100/24  host. DIO island 192.168.1.40:502,
+#                     maintenance laptop on another 192.168.1.x
+#
+# Link-local subnet ONLY. Deliberately no gateway/routes and no nameservers:
+# the tether and Wi-Fi own the default routes and this port must never compete.
+# enp2s0 is reserved for the nanoScan3, enp3s0 for the GLS621 QR camera; each
+# wired port gets its own /24 so no two ports ever route the same subnet.
+#
+# optional: true -> boot does not block if nothing is plugged in.
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    enp1s0:
+      dhcp4: no
+      dhcp6: no
+      addresses:
+        - 192.168.1.100/24
+      optional: true

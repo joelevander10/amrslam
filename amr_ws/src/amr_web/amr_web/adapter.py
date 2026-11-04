@@ -8,7 +8,6 @@ instead of hanging.
 
 from __future__ import annotations
 
-import collections
 import math
 import os
 import sys
@@ -37,34 +36,30 @@ from amr_interfaces.msg import (
     ControlLease,
     DriveStatus,
     Event,
+    GlsReading,
     IoImage,
-    LineState,
-    LineTrack,
     LocalizationState,
     ManualCommand,
     MappingState,
-    MarkerEvent,
     ModeState,
     MuxState,
     PanelState,
-    PpStatus,
-    StationDetection,
     SurveyMoveState,
     WheelStates,
 )
 from amr_interfaces.srv import (
     GetOperation,
-    LineTeach,
     PlanCommissioning,
+    RecordLabel,
     RequestMode,
     RequestSurvey,
     RunMission,
     SaveMap,
-    SelectMission,
     StartSurvey,
     SurveyMove,
 )
 from amr_web import live
+from amr_web.alarms import EMG_NAMES, EMG_NORMAL
 from amr_web.eventlog import EventLog
 
 LATCHED = QoSProfile(
@@ -74,7 +69,7 @@ SCAN_PERIOD_S = 0.1  # live-view scan projection rate cap (the page redraws at 5
 MAP_ODOM_FRESH_S = 2.0  # newest map->odom stamp older than this: no layer is localising
 STATE_NAMES = {0: "IDLE", 1: "MAPPING", 2: "RETURN_REVIEW", 3: "SAVING", 4: "SAVED"}
 LOC_NAMES = {0: "UNLOCALIZED", 1: "CHECKING", 2: "READY", 3: "LOST"}
-RUN_NAMES = {0: "IDLE", 1: "READY", 2: "EXECUTING", 3: "PAUSED", 4: "BLOCKED", 5: "FAULT", 6: "DONE"}
+RUN_NAMES = {0: "IDLE", 1: "READY", 2: "EXECUTING", 3: "PAUSED", 4: "BLOCKED", 5: "FAULT", 6: "DONE", 7: "WAITING"}
 MODE_NAMES = {
     0: "STARTING",
     1: "IDLE",
@@ -83,23 +78,17 @@ MODE_NAMES = {
     4: "TRANSITIONING",
     5: "FAULT",
     6: "STOPPING",
-    7: "LINE",
 }
 OP_NAMES = {0: "PENDING", 1: "SUCCEEDED", 2: "FAILED", 3: "INTERRUPTED"}
-LINE_NAMES = {0: "IDLE", 1: "ARMED", 2: "RUNNING", 3: "HOLD", 4: "DONE", 5: "FAULT"}
 MUX_NAMES = {
     0: "none",
     1: "teleop",
     2: "follow",
     3: "rotate",
     4: "manual",
-    5: "commissioning",
+    5: "commissioning",  # the blind run (retired 2026-10-30, restored 2026-11-02)
     6: "pendant",
-    7: "line",
 }
-RFID_RECENT = 8  # tag passes the pages show
-# = rfid_node ENCOUNTERS: every pass is a message, none may be dropped behind a newer one.
-RFID_QOS = QoSProfile(depth=50, reliability=QoSReliabilityPolicy.RELIABLE, durability=QoSDurabilityPolicy.VOLATILE)
 RELIABLE_1 = QoSProfile(
     depth=1, reliability=QoSReliabilityPolicy.RELIABLE, durability=QoSDurabilityPolicy.VOLATILE
 )
@@ -156,16 +145,6 @@ def read_ipc_temp(root: str = "/sys/class") -> dict | None:
     return None
 
 
-def _sensor_max_mm() -> float:
-    """The profile's line.sensor_max_mm, the scale of the manual page's track bar."""
-    try:
-        from agv_core import config  # noqa: PLC0415 - needs AGV_PROFILE, absent on a dev box
-
-        return float(config.SENSOR_MAX_MM)
-    except Exception:  # noqa: BLE001 - display scale only
-        return 100.0
-
-
 def _wheel_radius_m() -> float | None:
     """The profile's wheel radius, to show wheel speeds in m/s (None on a dev box)."""
     try:
@@ -211,6 +190,9 @@ def initial_pose_mismatch(mode, map_id: str, map_revision: int, generation: int,
 
 
 class RosAdapter(Node):
+    _gls: dict | None = None  # the floor-label camera's last reading (Run page)
+    _gls_t = 0.0
+
     def __init__(self) -> None:
         super().__init__("amr_web")
         self._lock = threading.Lock()
@@ -227,26 +209,17 @@ class RosAdapter(Node):
         self._lease_t = 0.0
         self._panel: dict | None = None
         self._panel_t = 0.0
+        # Emergency picture from PanelState (emergency-suite plan): when the state last
+        # changed, and when it left NORMAL (the banner's "since", across the reset steps).
+        self._emg: dict | None = None
+        self._emg_t = 0.0
+        self._emg_active_t: float | None = None
         self._drives: dict | None = None
         self._drives_t = 0.0
         self._mux: dict | None = None
         self._mux_t = 0.0
-        self._line: dict | None = None
-        self._line_t = 0.0
-        self._track: dict | None = None
-        self._track_t = 0.0
-        # RFID (2026-10-02): the link from the 2 Hz heartbeat, and the last few tag passes.
-        self._rfid: dict | None = None
-        self._rfid_t = 0.0
         self._wheels: dict | None = None
         self._wheels_t = 0.0
-        self._rfid_tags: collections.deque = collections.deque(maxlen=RFID_RECENT)
-        # MLS markers (mls-marker-plan 6.1): the 1 Hz status and the last few markers read.
-        self._marker: dict | None = None
-        self._marker_t = 0.0
-        self._marker_gen: int | None = None
-        self._marker_reads: collections.deque = collections.deque(maxlen=RFID_RECENT)
-        self._sensor_max_mm = _sensor_max_mm()
         self._ipc_temp: dict | None = None
         self._ipc_temp_t = -1e9
         g = ReentrantCallbackGroup()
@@ -258,22 +231,11 @@ class RosAdapter(Node):
         self.create_subscription(PanelState, "/amr/panel_state_ui", self._on_panel, 10, callback_group=g)
         self.create_subscription(DriveStatus, "/drives/status", self._on_drives, RELIABLE_1, callback_group=g)
         self.create_subscription(MuxState, "/amr/mux_state", self._on_mux, RELIABLE_1, callback_group=g)
-        # The tape product's layer: its holds and faults are standing alarms like any other.
-        self.create_subscription(LineState, "/amr/line_state", self._on_line, LATCHED, callback_group=g)
-        # The raw MLS reading, in every mode (drive_node publishes it from boot): display only,
-        # so the 5 Hz display copy, not the 100 Hz control topic.
-        self.create_subscription(
-            LineTrack, "/amr/line_track_ui", self._on_track, qos_profile_sensor_data, callback_group=g
-        )
         # Measured wheel speeds (606Ch), the 5 Hz display copy of /wheel_states: Home's speed
         # tile (2026-10-08). The mux's left/right_mps are the SETPOINT, not what the wheels do.
         self.create_subscription(
             WheelStates, "/wheel_states_ui", self._on_wheels, qos_profile_sensor_data, callback_group=g
         )
-        # RFID tag passes and the reader link, in every mode (rfid_node, base layer): display only.
-        self.create_subscription(StationDetection, "/amr/rfid", self._on_rfid, RFID_QOS, callback_group=g)
-        # MLS marker codes (drive_node, mls-marker-plan): every marker is a message, like RFID.
-        self.create_subscription(MarkerEvent, "/amr/line_marker", self._on_marker, RFID_QOS, callback_group=g)
         self._manual = self.create_publisher(ManualCommand, "/amr/manual_command", RELIABLE_1)
         # diagnostics (unified plan §7): owner-published snapshots and a bounded event ring
         self._diag: dict[str, dict] = {}
@@ -299,9 +261,7 @@ class RosAdapter(Node):
             CommissioningState, "/amr/commissioning_state", self._on_commissioning, LATCHED, callback_group=g
         )
         self.create_subscription(IoImage, "/amr/io", self._on_io, 5, callback_group=g)
-        self._pp: dict | None = None
-        self._pp_t = 0.0
-        self.create_subscription(PpStatus, "/drives/pp_status", self._on_pp, RELIABLE_1, callback_group=g)
+        self.create_subscription(GlsReading, "/gls/reading", self._on_gls, 5, callback_group=g)
         self.create_subscription(Event, "/amr/events", self._on_event, 50, callback_group=g)
         # live view (unified plan §6.4): grid, scan, TF; generation-tagged, dropped on a switch
         self.live = live.LiveStore()
@@ -349,20 +309,18 @@ class RosAdapter(Node):
             "pause": self.create_client(Trigger, "/amr/pause", callback_group=g),
             "abort": self.create_client(Trigger, "/amr/abort", callback_group=g),
             "resume": self.create_client(Trigger, "/amr/resume", callback_group=g),
+            "continue": self.create_client(Trigger, "/amr/continue", callback_group=g),
             "ack": self.create_client(Trigger, "/amr/ack_fault", callback_group=g),
             # push mode (AMR QR): disarm = 0 V, coils low, brakes RELEASED; arm = back to rest
             # with brakes. Neither moves the vehicle: motion still needs a held jog.
             "brakes_release": self.create_client(Trigger, "/drives/disarm", callback_group=g),
             "brakes_engage": self.create_client(Trigger, "/drives/arm", callback_group=g),
+            "record_label": self.create_client(RecordLabel, "/amr/labels/record", callback_group=g),
             # supervisor (unified plan §4.2)
             "mode": self.create_client(RequestMode, "/amr/mode/request", callback_group=g),
             "survey": self.create_client(RequestSurvey, "/amr/supervisor/survey", callback_group=g),
             "operation": self.create_client(GetOperation, "/amr/operations/get", callback_group=g),
             "recover": self.create_client(Trigger, "/amr/supervisor/recover", callback_group=g),
-            "line_clear": self.create_client(Trigger, "/amr/line/clear", callback_group=g),
-            "line_mission": self.create_client(SelectMission, "/amr/line/mission", callback_group=g),
-            "line_teach": self.create_client(LineTeach, "/amr/line/teach", callback_group=g),
-            "line_at_home": self.create_client(Trigger, "/amr/line/at_home", callback_group=g),
             "comm_plan": self.create_client(PlanCommissioning, "/amr/commissioning/plan", callback_group=g),
             "comm_clear": self.create_client(Trigger, "/amr/commissioning/clear", callback_group=g),
         }
@@ -402,6 +360,15 @@ class RosAdapter(Node):
         d["state_name"] = LOC_NAMES.get(m.state, str(m.state))
         with self._lock:
             self._loc, self._loc_t = d, self._now()
+
+    def _on_gls(self, m: GlsReading) -> None:
+        d = {
+            k: getattr(m, k)
+            for k in ("valid", "comms_ok", "config_ok", "calibrated", "label_id", "x_m", "y_m",
+                      "yaw_rad", "n_codes", "x_counts", "y_counts", "angle_deg", "fps", "detail")
+        }
+        with self._lock:
+            self._gls, self._gls_t = d, self._now()
 
     def _on_run(self, m) -> None:
         d = _msg_to_dict(m)
@@ -490,8 +457,21 @@ class RosAdapter(Node):
 
     def _on_panel(self, m: PanelState) -> None:
         with self._lock:
+            now = self._now()
             self._panel = {"valid": bool(m.valid), "mode_auto": bool(m.mode_auto)}
-            self._panel_t = self._now()
+            self._panel_t = now
+            emg = int(getattr(m, "emergency", EMG_NORMAL))
+            if self._emg is None or emg != self._emg["state"]:
+                if emg == EMG_NORMAL:
+                    self._emg_active_t = None
+                elif self._emg_active_t is None:
+                    self._emg_active_t = now
+                self._emg_t = now
+            self._emg = {
+                "state": emg,
+                "state_name": EMG_NAMES.get(emg, str(emg)),
+                "estop_ok": bool(getattr(m, "estop_ok", False)),
+            }
 
     def _on_drives(self, m: DriveStatus) -> None:
         with self._lock:
@@ -522,29 +502,6 @@ class RosAdapter(Node):
             }
             self._mux_t = self._now()
 
-    def _on_line(self, m: LineState) -> None:
-        d = _msg_to_dict(m)
-        d["state_name"] = LINE_NAMES.get(m.state, str(m.state))
-        with self._lock:
-            self._line, self._line_t = d, self._now()
-
-    def _on_track(self, m: LineTrack) -> None:
-        # 5 Hz display copy; the pages poll at 2 Hz.
-        d = {
-            "lcp_mm": [int(v) for v in m.lcp_mm],
-            "valid": [bool(v) for v in m.valid],
-            "nlcp": int(m.nlcp),
-            "nlcp_label": m.nlcp_label,
-            "line_good": bool(m.line_good),
-            "track_level": int(m.track_level),
-            "polarity": m.polarity,
-            "marker": int(m.marker),
-            "source": m.source,
-            "sensor_max_mm": self._sensor_max_mm,
-        }
-        with self._lock:
-            self._track, self._track_t = d, self._now()
-
     def _on_wheels(self, m: WheelStates) -> None:
         r = WHEEL_RADIUS_M
         valid = bool(m.left_valid and m.right_valid) and r is not None
@@ -557,60 +514,6 @@ class RosAdapter(Node):
         }
         with self._lock:
             self._wheels, self._wheels_t = d, self._now()
-
-    def _on_rfid(self, m: StationDetection) -> None:
-        now = self._now()
-        with self._lock:
-            if m.heartbeat:
-                self._rfid = {
-                    "comms_ok": bool(m.comms_ok),
-                    "seq": int(m.encounter_seq),
-                    "generation": int(m.generation),
-                    "rx_age_s": float(m.rx_age_s),
-                    "tag_age_s": float(m.tag_age_s),
-                    "rssi_dbm": float(m.rssi_dbm) if m.channel >= 0 else None,
-                    "channel": int(m.channel) if m.channel >= 0 else None,
-                    "reader": str(m.reader),
-                    "config_mismatch": [str(x) for x in m.config_mismatch],
-                }
-                self._rfid_t = now
-            elif m.rfid_tag:
-                self._rfid_tags.appendleft(
-                    {"tag": m.rfid_tag, "seq": int(m.encounter_seq), "t": now, "wall": time.time(),
-                     "rssi_dbm": float(m.rssi_dbm) if m.channel >= 0 else None}
-                )
-
-    def _on_marker(self, m: MarkerEvent) -> None:
-        now = self._now()
-        with self._lock:
-            if int(m.generation) != self._marker_gen:
-                self._marker_gen = int(m.generation)
-                self._marker_reads.clear()  # drive_node restarted the stream
-            self._marker = {
-                "markers_ok": bool(m.markers_ok),
-                "status": str(m.status),
-                "generation": int(m.generation),
-                "count": int(m.seq),
-                "rejects": int(m.rejects),
-                "aborts": int(m.aborts),
-            }
-            self._marker_t = now
-            if not m.heartbeat and m.code:
-                self._marker_reads.appendleft({
-                    "code": int(m.code), "raw": int(m.raw), "direction": int(m.direction),
-                    "lcp2_mm": int(m.lcp2_mm), "seq": int(m.seq), "t": now,
-                })
-
-    def _marker_state(self, now: float) -> dict:
-        """Caller holds the lock. Link None until the first message; markers newest first."""
-        link = dict(self._marker, age_s=now - self._marker_t) if self._marker else None
-        return {"link": link, "events": [dict(e, age_s=now - e["t"]) for e in self._marker_reads]}
-
-    def _rfid_state(self, now: float) -> dict:
-        """Caller holds the lock. Link None until a heartbeat; tags newest first."""
-        link = dict(self._rfid, age_s=now - self._rfid_t) if self._rfid else None
-        tags = [dict(t, age_s=now - t["t"]) for t in self._rfid_tags]
-        return {"link": link, "tags": tags}
 
     def _ipc(self, now: float) -> dict | None:
         """CPU temperature, re-read at most every IPC_TEMP_PERIOD_S. Caller holds the lock."""
@@ -693,22 +596,14 @@ class RosAdapter(Node):
     def event_log_files(self) -> list[str]:
         return self._log.files()
 
+    COMMISSIONING_PHASES = ("IDLE", "PREPARED", "RUNNING", "SETTLING", "DONE", "ABORTED")
+
     def _on_commissioning(self, m: CommissioningState) -> None:
         d = _msg_to_dict(m)
-        d["phase_name"] = ["IDLE", "PREPARED", "RUNNING", "SETTLING", "DONE", "ABORTED"][min(int(m.phase), 5)]
+        p = int(m.phase)
+        d["phase_name"] = self.COMMISSIONING_PHASES[p] if p < len(self.COMMISSIONING_PHASES) else f"?{p}"
         with self._lock:
             self._commissioning, self._commissioning_t = d, self._now()
-
-    def _on_pp(self, m: PpStatus) -> None:
-        d = _msg_to_dict(m)
-        d.pop("header", None)
-        with self._lock:
-            self._pp, self._pp_t = d, self._now()
-
-    def pp_status(self) -> dict | None:
-        """The drive owner's pp executor (availability, state, last outcome), with its age."""
-        with self._lock:
-            return dict(self._pp, age_s=self._now() - self._pp_t) if self._pp else None
 
     def commissioning(self) -> dict | None:
         with self._lock:
@@ -757,9 +652,7 @@ class RosAdapter(Node):
         if lease["allowed"] & 1:
             return True, ""
         if lease["allowed"] & 4:
-            return False, "a commissioning job is held or running; clear it first"
-        if lease["allowed"] & 8:
-            return False, "the line follower holds the vehicle; leave LINE mode to jog"
+            return False, "a blind-run job is held or running; clear it on the Blind run page first"
         return False, f"manual control withheld by the supervisor ({mode['mode_name'] if mode else '?'})"
 
     def state(self) -> dict[str, Any]:
@@ -784,13 +677,21 @@ class RosAdapter(Node):
                 "mode_age_s": (now - self._mode_t) if self._mode else None,
                 "lease": self._lease if self._lease and now - self._lease_t <= 1.0 else None,
                 "panel": dict(self._panel, age_s=now - self._panel_t) if self._panel else None,
+                # trusted only with a fresh, valid panel (alarms.emergency); since_s = in this
+                # state, active_s = since it left NORMAL (None while NORMAL)
+                "emergency": (
+                    dict(
+                        self._emg,
+                        since_s=now - self._emg_t,
+                        active_s=None if self._emg_active_t is None else now - self._emg_active_t,
+                    )
+                    if self._emg
+                    else None
+                ),
                 "drives": dict(self._drives, age_s=now - self._drives_t) if self._drives else None,
                 "mux": dict(self._mux, age_s=now - self._mux_t) if self._mux else None,
-                "line": dict(self._line, age_s=now - self._line_t) if self._line else None,
-                "line_track": dict(self._track, age_s=now - self._track_t) if self._track else None,
-                "rfid": self._rfid_state(now),
-                "markers": self._marker_state(now),
                 "wheels": dict(self._wheels, age_s=now - self._wheels_t) if self._wheels else None,
+                "gls": dict(self._gls, age_s=now - self._gls_t) if self._gls else None,
                 "ipc_temp": self._ipc(now),
                 "drive_supply": self._drive_supply(now),
                 # None = no scan has EVER arrived (an unplugged scanner says nothing at all,
@@ -834,19 +735,14 @@ class RosAdapter(Node):
         return bool(r.accepted), r.operation_id, r.message
 
     def survey_request(
-        self, operation: int, map_id: str, description: str, request_id: str,
-        cont: tuple[int, float, float, float] | None = None,
+        self, operation: int, map_id: str, description: str, request_id: str
     ) -> tuple[bool, str, str]:
-        """`cont` = (revision, x, y, yaw): START continues <map_id> rev<N> from that pose."""
         inst, gen = self.supervisor_identity()
         if not inst:
             return False, "", "supervisor unavailable"
         req = RequestSurvey.Request()
         req.request_id, req.expected_instance, req.expected_generation = request_id, inst, gen
         req.operation, req.map_id, req.description = int(operation), map_id, description
-        if cont is not None:
-            req.continue_revision = int(cont[0])
-            req.hint.x, req.hint.y, req.hint.theta = float(cont[1]), float(cont[2]), float(cont[3])
         r = self._call("survey", req, timeout=5.0)
         if r is None:
             return False, "", "supervisor unavailable"
@@ -862,26 +758,6 @@ class RosAdapter(Node):
 
     def recover(self) -> tuple[bool, str]:
         return self._trigger("recover")
-
-    def line_clear(self) -> tuple[bool, str]:
-        return self._trigger("line_clear")
-
-    def line_mission(self, name: str, destination: str = "") -> tuple[bool, str]:
-        r = self._call("line_mission", SelectMission.Request(name=name, destination=destination))
-        if r is None:
-            return False, "line layer unavailable (enter LINE mode first)"
-        return bool(r.ok), r.message
-
-    def line_teach(self, action: str, arg: str = "") -> tuple[bool, str]:
-        """Tape-graph teaching (tracked plan 3, P1). Records and publishes; moves nothing."""
-        r = self._call("line_teach", LineTeach.Request(action=action, arg=arg))
-        if r is None:
-            return False, "line layer unavailable (enter LINE mode first)"
-        return bool(r.ok), r.message
-
-    def line_at_home(self) -> tuple[bool, str]:
-        """Parked at HOME-N: AMCL's initial pose from its taught pose. Moves nothing."""
-        return self._trigger("line_at_home")
 
     def manual_publish(self, cmd) -> None:
         """One ManualCommand per accepted browser refresh. No timer repeats it."""
@@ -995,7 +871,7 @@ class RosAdapter(Node):
         clear.action = Marker.DELETEALL
         markers.markers.append(clear)
         for i, st in enumerate(compiled.steps):
-            if st.type in ("straight", "reverse", "arc"):
+            if st.type in ("straight", "reverse", "arc", "home"):
                 for x, y, yaw in st.samples:
                     p = PoseStamped()
                     p.header = path.header
@@ -1010,9 +886,13 @@ class RosAdapter(Node):
                 m.pose.position = Point(x=st.start[0], y=st.start[1], z=0.3)
                 m.pose.orientation.w = 1.0
                 m.scale.z = 0.3
-                m.color = ColorRGBA(r=1.0, g=0.6, b=0.0, a=1.0)
-                deg = abs(math.degrees(st.signed_angle_rad))
-                m.text = f"{st.id}: {'CCW' if st.signed_angle_rad > 0 else 'CW'} {deg:.0f}"
+                if st.type == "wait":
+                    m.ns, m.color = "waits", ColorRGBA(r=0.2, g=0.6, b=1.0, a=1.0)
+                    m.text = f"{st.id}: WAIT {st.name}".rstrip()
+                else:
+                    m.color = ColorRGBA(r=1.0, g=0.6, b=0.0, a=1.0)
+                    deg = abs(math.degrees(st.signed_angle_rad))
+                    m.text = f"{st.id}: {'CCW' if st.signed_angle_rad > 0 else 'CW'} {deg:.0f}"
                 markers.markers.append(m)
         self._preview.publish(path)
         self._markers.publish(markers)
@@ -1037,6 +917,18 @@ class RosAdapter(Node):
     def ack_fault(self) -> tuple[bool, str]:
         return self._trigger("ack")
 
+    def continue_wait(self) -> tuple[bool, str]:
+        """The web Continue (AMR QR): the executor releases a WAITING run, nothing else."""
+        return self._trigger("continue")
+
+    def record_label(self, role: str, name: str, note: str) -> tuple[bool, str]:
+        r = self._call("record_label", RecordLabel.Request(role=role, name=name, note=note))
+        return (
+            (False, "executor unavailable (navigation not running?)")
+            if r is None
+            else (bool(r.ok), r.message)
+        )
+
     def brakes_release(self) -> tuple[bool, str]:
         return self._trigger("brakes_release")
 
@@ -1045,10 +937,9 @@ class RosAdapter(Node):
 
 
 def live_scan_topic() -> str:
-    """The scan the live view draws. The AMR QR shows /scan_gated - what mapping, localisation
-    and obstacle detection actually use, after its phantom filters (window scratches, body,
-    lone returns) - so a return the robot ignores is not drawn as if it mattered. Other
-    vehicles show the raw /scan."""
+    """The scan the live view draws. The AMR QR shows /scan_gated - the scan mapping and
+    localisation actually use (released once its odom transform exists) - other vehicles
+    show the raw /scan."""
     try:
         from agv_core import config  # noqa: PLC0415
 
@@ -1063,8 +954,8 @@ class Spinner:
     dying with the process while a request is mid-call."""
 
     def __init__(self, adapter: RosAdapter) -> None:
-        # Single-threaded on purpose: ~290 msg/s arrive here (line_track 100 Hz, panel 50 Hz,
-        # tf, scan), and rclpy's MultiThreadedExecutor costs a thread-pool future per callback;
+        # Single-threaded on purpose: hundreds of msg/s arrive here (panel 50 Hz, tf,
+        # scan), and rclpy's MultiThreadedExecutor costs a thread-pool future per callback;
         # it held 60% of an N97 core and drove the IPC into thermal throttling (2026-10-02).
         # Safe because no callback blocks (TF lookups never wait) and service calls are made
         # from Flask's threads, not from callbacks.

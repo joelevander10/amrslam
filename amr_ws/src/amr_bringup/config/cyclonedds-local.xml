@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <!-- Loopback-only DDS for this host (spec §9, "DDS interface scope").
      Nothing off the vehicle can join its ROS graph, and a simulation run on
-     this host cannot leak onto the LAN either. Foxglove talks to
-     foxglove_bridge over WebSocket (:8765), not DDS, so it is unaffected.
+     this host cannot leak onto the LAN either. Outside the web app (:5001),
+     this is the only way ROS data leaves the vehicle (2026-11-03: no WebSocket bridge).
      To let a laptop join deliberately, copy this file, bind wlp1s0 instead,
      and point CYCLONEDDS_URI at the copy for that session only. -->
 <CycloneDDS xmlns="https://cdds.io/config" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"

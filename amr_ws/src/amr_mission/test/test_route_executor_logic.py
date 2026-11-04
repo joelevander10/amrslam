@@ -39,7 +39,7 @@ def make_node(steps, passes=1):
         ),
     )
     n._speed_pub = SimpleNamespace(publish=lambda _m: None)
-    n.taper_decel, n.taper_lead_s = 0.4, 0.3
+    n.taper_decel, n.taper_lead_s, n.taper_jerk = 0.4, 0.3, 1.0  # the pinned tests below; see test_taper_*
     n.goals = ga.GoalAttempts(n._lock, n._now, n._on_goal_error)
     n.start_gate_m, n.start_gate_rad = 0.1, math.radians(5)
     n.w_eps, n.wheels_age, n.panel_age, n.loc_age = 0.02, 0.1, 0.2, 1.5
@@ -63,7 +63,10 @@ def make_node(steps, passes=1):
     n._scan = object()
     n._pose = lambda: (0.0, 0.0, 0.0)
     n.auto_resume_enabled, n.auto_clear_s, n.auto_resume_estop = True, 2.0, False
-    n.safety_window, n.drives_age, n.field_index, n.abort_retries = 1.0, 0.5, 0, 3
+    n.safety_window, n.drives_age, n.field_index = 1.0, 0.5, 0
+    n.blocked_clear_m = 1.0
+    n.resume_corridor_m = 0.30
+    n.costmap_clear_after_s, n._costmap_cleared_t = 10.0, None
     # No warning by default (2026-10-08): these tests are about what follows it. The
     # pre-move phase still needs a fresh drive report with torque - see drives().
     n.premove_s, n.premove_timeout_s, n._premove_since = 0.0, 8.0, None
@@ -375,14 +378,14 @@ def test_permit_carries_the_step_speed_and_the_route_turn_cap():
     st.v_mps, st.length_m = 0.70, 6.0
     n._publish_permit()
     assert published[-1].v_max == pytest.approx(0.70) and speeds[-1].speed_limit == pytest.approx(0.70)
-    # ... until the taper distance before its end - (0.7^2 - 0.4^2) / (2 x 0.4) + 0.7 x 0.3 s =
-    # 0.62 m - where it comes back to the base speed so the mux reaches 0.40 at the boundary
-    # and the controller's approach ramp starts from 0.40, not 0.70
-    assert n._taper_dist(0.70, 0.40) == pytest.approx(0.6225)
-    n._pose = lambda: (5.3, 0.0, 0.0)  # 0.7 m to go: still boosted
+    # ... until the taper distance before its end - a jerk-limited 0.70 -> 0.40 (2026-11-03):
+    # (0.3/0.4 + 0.4/1.0) s x 0.55 m/s + 0.7 x 0.3 s = 0.84 m - where it comes back to the base
+    # speed so the mux reaches 0.40 at the boundary and the approach ramp starts from 0.40
+    assert n._taper_dist(0.70, 0.40) == pytest.approx(0.8425)
+    n._pose = lambda: (5.1, 0.0, 0.0)  # 0.9 m to go: still boosted
     n._publish_permit()
     assert published[-1].v_max == pytest.approx(0.70)
-    n._pose = lambda: (5.5, 0.0, 0.0)  # 0.5 m to go: tapered
+    n._pose = lambda: (5.3, 0.0, 0.0)  # 0.7 m to go: tapered
     n._publish_permit()
     assert published[-1].v_max == pytest.approx(0.40) and speeds[-1].speed_limit == pytest.approx(0.40)
     n._pose = lambda: (0.0, 0.0, 0.0)
@@ -535,9 +538,10 @@ def test_chained_straight_and_arc_run_as_one_goal_with_a_speed_taper():
     assert len(p.poses) == 31 + 30 + 1 and xs[30] == pytest.approx(3.0)
     last = p.poses[-1].pose.position
     assert (last.x, last.y) == (pytest.approx(4.0), pytest.approx(1.0 + 0.045))
-    # the straight tapers to the arc's speed before the boundary: (0.5^2 - 0.3^2)/0.8 + 0.15 = 0.35 m
-    assert n._taper_dist(0.5, 0.3) == pytest.approx(0.35)
-    assert n._step_speed(s1, (2.5, 0.0, 0.0)) == 0.5 and n._step_speed(s1, (2.7, 0.0, 0.0)) == 0.3
+    # the straight tapers to the arc's speed before the boundary, for the mux's jerk-limited
+    # slowdown (2026-11-03): (0.2/0.4 + 0.4/1.0) s x 0.40 m/s mean + 0.5 x 0.3 s = 0.51 m
+    assert n._taper_dist(0.5, 0.3) == pytest.approx(0.51)
+    assert n._step_speed(s1, (2.4, 0.0, 0.0)) == 0.5 and n._step_speed(s1, (2.6, 0.0, 0.0)) == 0.3
     # crossing the boundary advances the step without a settle: still EXECUTING in the goal phase
     n.phase = ren.PHASE_GOAL
     n.goals.current = object()
@@ -582,10 +586,11 @@ def test_speed_boost_2_taper_and_arc_turn_cap_on_the_lead_in_straight():
     _clock_stub(n)
     n.route.limits.linear_mps, n.route.limits.w_mps = 0.55, 0.37
     n.fsm.start(True, True)
-    # the ramp-down into the arc starts (0.85^2 - 0.40^2) / 0.8 + 0.85 x 0.3 = 0.96 m before it
-    assert n._taper_dist(0.85, 0.40) == pytest.approx(0.958, abs=1e-3)
-    assert n._taper_dist(0.55, 0.40) == pytest.approx(0.343, abs=1e-3)
-    assert n._step_speed(s1, (4.9, 0.0, 0.0)) == 0.85 and n._step_speed(s1, (5.1, 0.0, 0.0)) == 0.40
+    # the jerk-limited ramp-down into the arc starts (0.45/0.4 + 0.4) s x 0.625 m/s + 0.85 x 0.3
+    # = 1.21 m before it; a small step (dv 0.15 <= d^2/j) is triangular: 2 sqrt(0.15) s
+    assert n._taper_dist(0.85, 0.40) == pytest.approx(1.208, abs=1e-3)
+    assert n._taper_dist(0.55, 0.40) == pytest.approx(0.533, abs=1e-3)
+    assert n._step_speed(s1, (4.7, 0.0, 0.0)) == 0.85 and n._step_speed(s1, (5.1, 0.0, 0.0)) == 0.40
     # the straight leading into the arc already carries the arc's turn ceiling (RPP curves early)
     assert n._step_w_max(s1) == pytest.approx(0.45)
     n.fsm.step_done()
@@ -601,3 +606,53 @@ def test_speed_boost_2_taper_and_arc_turn_cap_on_the_lead_in_straight():
     m.fsm.start(True, True)
     assert m._step_w_max(t1) == pytest.approx(0.37)
     assert m._step_speed(t1, (5.5, 0.0, 0.0)) == 0.55  # tapered: RPP's approach starts from the base
+
+
+def test_taper_into_an_arc_starts_early_enough_with_the_shipped_slopes():
+    """Owner 2026-11-03: straights 0.60, arcs 0.30, slopes twice as long as the first
+    smoothing (mux a_max 0.1 / d_max 0.125 / auto_jerk 0.1). The shipped executor defaults
+    (taper_decel 0.125 = mux d_max, taper_jerk 0.1 = mux auto_jerk) put the start 1.82 m
+    before the arc; the mux S-curve with the same numbers needs 1.59 m."""
+    from amr_base.diff_drive import scurve
+
+    n = make_node([CompiledStep("s1", STRAIGHT, (0.0, 0.0, 0.0), (5.0, 0.0, 0.0), length_m=5.0)])
+    n.taper_decel, n.taper_lead_s, n.taper_jerk = 0.125, 0.3, 0.1
+    assert n._taper_dist(0.60, 0.30) == pytest.approx(1.82, abs=0.005)
+    v, a, x = 0.60, 0.0, 0.0
+    while v > 0.30:
+        v, a = scurve(v, a, 0.30, 0.1, 0.125, 0.1, 0.02)
+        x += v * 0.02
+    assert 1.4 < x < 1.82 - 0.6 * 0.3, "reaches 0.30 before the arc, with the lead to spare"
+
+
+def test_home_leg_progress_chain_overshoot_and_turn_cap():
+    from amr_navigation.scurve import home_leg
+
+    # the route ends 2 m behind HOME (the origin, facing +x), 0.2 m left and turned 5 deg left;
+    # a straight leads into the S-curve home and the two run as one goal
+    yaw0 = math.radians(5.0)
+    p0 = (-2.0 - 2.0 * math.cos(yaw0), 0.2 - 2.0 * math.sin(yaw0), yaw0)
+    p1 = (-2.0, 0.2, yaw0)
+    c, s = math.cos(yaw0), math.sin(yaw0)
+    line = [(p0[0] + 0.1 * k * c, p0[1] + 0.1 * k * s, yaw0) for k in range(21)]
+    s1 = CompiledStep("s1", STRAIGHT, p0, p1, length_m=2.0, samples=line, v_mps=0.5)
+    leg = home_leg(p1, (0.0, 0.0, 0.0))
+    home = (0.0, 0.0, 0.0)
+    s2 = CompiledStep("s2", "home", p1, home, length_m=leg.length_m, samples=leg.samples, v_mps=0.30, leg=leg)
+    n = make_node([s1, s2])
+    _clock_stub(n)
+    n.goal_overshoot_m = 0.045
+    assert [s.id for s in n._chain(0)] == ["s1", "s2"]
+    # progress and cross-track on the curve come from its samples
+    mid = leg.samples[len(leg.samples) // 2]
+    along, cross = n._along_cross(s2, mid)
+    assert 0.3 * leg.length_m < along < 0.7 * leg.length_m and cross == pytest.approx(0.0, abs=1e-6)
+    assert n._along_cross(s2, (0.1, 0.0, 0.0))[0] == pytest.approx(leg.length_m + 0.1)
+    # one path for both; the extra pose sits past HOME along HOME's heading (+x), not the
+    # 5 deg the leg started on
+    n.fsm.start(True, True)
+    p = n._follow_path(s1, 0.0)
+    last = p.poses[-1].pose.position
+    assert (last.x, last.y) == (pytest.approx(0.045), pytest.approx(0.0, abs=1e-9))
+    # a curved home leg in the chain lifts the turn cap to the arc ceiling, as an arc does
+    assert n._step_w_max(s1) == pytest.approx(max(0.24, ren.VEHICLE_ARC_W_MAX))

@@ -47,7 +47,7 @@ def surface(tmp_path_factory):
     proc = subprocess.Popen(
         [
             sys.executable, "-m", "amr_bringup.supervisor_node", "--ros-args",
-            "-p", "real:=false", "-p", "web:=false", "-p", "foxglove:=false",
+            "-p", "real:=false", "-p", "web:=false",
             "-p", f"state_dir:={state}", "-p", f"maps_dir:={maps}",
         ],
         stdout=open(state / "supervisor.log", "wb"),

@@ -9,15 +9,14 @@ WHY A THREAD AND NOT THE CONTROL TICK
 A read measures 2.0 ms on this link, so a scan (DI then DO) is ~4 ms. The CAN
 control tick has a 20 ms budget, so scanning there would spend a fifth of it on
 network I/O in the good case - and a network stall, which no timeout makes
-instant, would blow the tick outright. Same reasoning as rfid.py: own thread,
-own socket, publish an image the control loop reads without ever blocking.
+instant, would blow the tick outright. So: own thread, own socket, publish an
+image the control loop reads without ever blocking.
 
 WHAT "LIKE A PLC" ACTUALLY BUYS
 ------------------------------
 Not the loop - the INPUT IMAGE. Every consumer sees one coherent set of bits
 sampled at one instant, instead of reading a live socket at whatever moment it
-happens to ask. snapshot() under a lock is exactly that, and it is the same
-discipline canworker._branch_scan() already follows for the RFID reader.
+happens to ask. snapshot() under a lock is exactly that.
 
 The write phase is now present, and it is the ONLY thing this software
 energises: the horn-and-lights coil, raised while motion is commanded. It sits
@@ -38,22 +37,19 @@ below rather than in the caller:
     that rebooted comes back with its coils clear, and the very next scan sees
     the mismatch and re-asserts. Nothing needs to notice the reboot.
 
-HEALTH IS THE OPPOSITE OF THE RFID READER'S
--------------------------------------------
-RfidLink._comms_ok() keys on CONNECTION state and deliberately ignores data
-flow, because the reader is push-only and silence between stations is normal.
-Here silence IS the fault: we poll every scan_period_s, so a scan that has not
+HEALTH IS DATA FLOW, NOT CONNECTION STATE
+-----------------------------------------
+Silence IS the fault: we poll every scan_period_s, so a scan that has not
 succeeded recently means the module, the cable or the switch has gone, whatever
 the socket believes. Keying on the socket would report a half-open connection as
 healthy for as long as the OS kept it.
 
 TOPOLOGY
 --------
-The RFID reader is daisy-chained THROUGH this module's second port, so both sit
-behind one cable to enp2s0. This module failing takes the reader with it, and
-RfidLink.carrier() cannot see that - the PC's link partner is this module, so
-carrier stays up. Two sources reporting at once is the signature of the shared
-cause; either alone is the device itself.
+Until it is physically removed, the old RFID reader is daisy-chained THROUGH
+this module's second port, so both sit behind one cable to enp2s0. The PC's
+link partner is this module, so carrier on that cable says nothing about the
+reader, and the reader's state says nothing about this module.
 """
 import threading
 import time
@@ -66,7 +62,7 @@ class DioLink:
 
     def __init__(self, client_factory=None):
         # Injectable so the tests can drive a fake without a network or a
-        # pymodbus import - the same reason RfidLink takes a codec.
+        # pymodbus import.
         self._client_factory = client_factory or self._default_client
         self._lock = threading.Lock()
         self._stop = threading.Event()

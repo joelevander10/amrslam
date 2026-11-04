@@ -2,6 +2,7 @@
 in 1 s, warning 2 (inner) a deceleration stop within 0.40 m (0.47 2026-10-07, 0.40 2026-10-08), the stricter
 winning, unknown zeroes."""
 
+import inspect
 import os
 
 import pytest
@@ -9,7 +10,6 @@ import pytest
 from amr_base.diff_drive import slew_asym
 from amr_base.gating import (
     FOLLOW,
-    LINE,
     MANUAL,
     NONE,
     PENDANT,
@@ -24,7 +24,7 @@ from amr_base.gating import (
     apply_scale,
     field_limit,
     field_view,
-    line_uturn_exempt,
+    warning_target,
 )
 
 # agv-01 (config/scanner_fields.yaml): path 0 protective, path 2 outer warning, path 1 inner.
@@ -58,15 +58,15 @@ def test_stale_short_or_missing_is_not_clear():
 
 def test_protective_zeroes_every_auto_source():
     v = FieldView(True, False, True, 2, 0.0)
-    for src in (FOLLOW, ROTATE, LINE):
+    for src in (FOLLOW, ROTATE):
         out, k = field_limit(sel(src), v, SUP, FP)
         assert (out.source, out.v, out.w, out.code, k) == (NONE, 0.0, 0.0, "FIELD_PROTECTIVE", 0.0)
 
 
 def test_warning_targets_and_the_scale_keeps_the_curvature():
-    out, k = field_limit(sel(LINE, 0.30, 0.10), FieldView(True, True, True, 1, 0.5), SUP, FP)
-    assert (out.source, out.v, out.w, k) == (LINE, 0.30, 0.10, 0.5), "the target, not yet applied"
-    _, k = field_limit(sel(LINE), FieldView(True, True, True, 2, 0.0), SUP, FP)
+    out, k = field_limit(sel(FOLLOW, 0.30, 0.10), FieldView(True, True, True, 1, 0.5), SUP, FP)
+    assert (out.source, out.v, out.w, k) == (FOLLOW, 0.30, 0.10, 0.5), "the target, not yet applied"
+    _, k = field_limit(sel(FOLLOW), FieldView(True, True, True, 2, 0.0), SUP, FP)
     assert k == 0.0
     half = apply_scale(out, 0.5)
     assert (half.v, half.w, half.generation) == (0.15, 0.05, 3)
@@ -194,31 +194,20 @@ def test_stop_timing_falls_back_for_a_spin_or_no_distance():
     assert r.value == pytest.approx(1.0) and not r.stopping, "clear: back up in 1 s"
 
 
-# -- U-turn: warning 1 does not slow it (operator, 2026-10-08) ------------------------------
+# -- warning 1 always applies (the tracked U-turn exemption is gone, 2026-10) --------------
 
 W1 = FieldView(True, True, True, 1, 0.5)
 W2 = FieldView(True, True, True, 2, 0.0)
 PROT = FieldView(True, False, True, 2, 0.0)
 
 
-def test_an_exempt_u_turn_ignores_warning_1_but_still_stops_on_warning_2_and_protective():
-    pivot = sel(LINE, 0.0, -0.26)
-    assert field_limit(pivot, W1, SUP, FP, slow_exempt=True) == (pivot, 1.0), "keeps the U-turn speed"
-    assert field_limit(pivot, W1, SUP, FP)[1] == 0.5, "not exempt: halved as before"
-    assert field_limit(pivot, W2, SUP, FP, slow_exempt=True)[1] == 0.0, "warning 2 still stops it"
-    out, k = field_limit(pivot, PROT, SUP, FP, slow_exempt=True)
-    assert (out.source, k) == (NONE, 0.0), "the protective field still zeroes it"
-
-
-def test_the_exemption_needs_line_a_fresh_u_turn_phase_and_u_turn_speed():
-    fresh = (10.0, "spin")
-    assert line_uturn_exempt(sel(LINE, 0.0, -0.26), fresh, 11.0, 2.5, 0.12)
-    for phase in ("approach", "stopping", "spin", "center", "settle"):
-        assert line_uturn_exempt(sel(LINE, 0.10, 0.0), (10.0, phase), 10.5, 2.5, 0.12), phase
-    assert not line_uturn_exempt(sel(LINE, 0.0, -0.26), (10.0, ""), 10.5, 2.5, 0.12), "not in a U-turn"
-    assert not line_uturn_exempt(sel(LINE, 0.0, -0.26), fresh, 13.0, 2.5, 0.12), "stale line state"
-    assert not line_uturn_exempt(sel(LINE, 0.0, -0.26), None, 10.5, 2.5, 0.12), "no line state yet"
-    assert not line_uturn_exempt(sel(LINE, 0.30, 0.0), (10.0, "approach"), 10.5, 2.5, 0.12), \
-        "still slowing from cruise on the approach: warning 1 applies"
-    assert not line_uturn_exempt(sel(FOLLOW, 0.0, -0.26), fresh, 10.5, 2.5, 0.12), "LINE only"
-    assert not line_uturn_exempt(sel(LINE, 0.0, -0.26), fresh, 10.5, 2.5, 0.0), "0 turns it off"
+def test_warning_1_always_applies():
+    pivot = sel(FOLLOW, 0.0, -0.26)
+    assert field_limit(pivot, W1, SUP, FP) == (pivot, 0.5), "a slow pivot is halved too"
+    assert field_limit(pivot, W2, SUP, FP)[1] == 0.0, "warning 2 stops it"
+    out, k = field_limit(pivot, PROT, SUP, FP)
+    assert (out.source, k) == (NONE, 0.0), "the protective field zeroes it"
+    assert warning_target(W1, FP) == 0.5
+    # no exemption path is left on either function
+    for fn in (field_limit, warning_target):
+        assert "slow_exempt" not in inspect.signature(fn).parameters, fn.__name__

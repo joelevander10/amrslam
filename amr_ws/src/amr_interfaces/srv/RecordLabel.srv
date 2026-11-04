@@ -1,0 +1,13 @@
+# Record the floor label under the GLS camera into the active map's label set
+# (gls-wait-coding-plan §C.2). The vehicle must stand still, localised, over the label.
+string role   # "home" or "dest"
+string name   # "UBC"; empty for a home = "HOME"
+string note
+---
+bool ok
+string message
+string label_id
+uint32 revision   # the label-set revision written
+float64 x_m       # T_ML, the label in the map frame
+float64 y_m
+float64 yaw_rad

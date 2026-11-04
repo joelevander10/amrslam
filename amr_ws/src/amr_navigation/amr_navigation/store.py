@@ -1,6 +1,7 @@
 """Route and mission revisions on disk, next to the map bundles.
 
     <maps_dir>/<map_id>/routes/<route_id>/rev<N>.yaml     immutable once written
+    <maps_dir>/<map_id>/labels/rev<N>.yaml                 floor-label poses, immutable
     <maps_dir>/missions/<mission_id>.yaml                  one validated route revision
 
 Revisions and missions are immutable once published. Allocation and publication run
@@ -14,6 +15,7 @@ from __future__ import annotations
 import contextlib
 import fcntl
 import hashlib
+import math
 import os
 import re
 import tempfile
@@ -193,6 +195,161 @@ def load_route(maps_dir: str, map_id: str, route_id: str, revision: int) -> tupl
     return route, sha256_file(path)
 
 
+# ---- floor-label sets (gls-wait-coding-plan §C.1) ----------------------------
+#
+# A label set belongs to ONE map revision (its `map` ref) but is revisioned on its own,
+# next to the routes: recording a label is not a new map revision, so it invalidates no
+# route. Missions bind one set by revision + sha256.
+
+LABEL_ID_RE = re.compile(r"^x\d{4}y\d{4}$")
+LABEL_ROLES = ("home", "dest")
+LABEL_METHODS = ("survey", "amcl")
+LABEL_FLOATS = ("x_m", "y_m", "yaw_rad", "spread_xy_m", "spread_yaw_rad")
+
+
+def labels_dir(maps_dir: str, map_id: str) -> str:
+    return os.path.join(maps_dir, _name("map id", map_id), "labels")
+
+
+def labels_path(maps_dir: str, map_id: str, revision: int) -> str:
+    return os.path.join(labels_dir(maps_dir, map_id), f"rev{_revision(revision)}.yaml")
+
+
+def list_labels(maps_dir: str, map_id: str) -> list[int]:
+    """The label-set revisions of a map id (every map revision), ascending."""
+    d = labels_dir(maps_dir, map_id)
+    if not os.path.isdir(d):
+        return []
+    return sorted(int(m.group(1)) for f in os.listdir(d) if (m := REV_RE.match(f)))
+
+
+def check_labels(labels) -> str | None:
+    """Why a list of label entries is not a valid set, or None. Not empty; at most one
+    home (a map surveyed without a HOME label has none, owner 2026-11-02); IDs and names
+    unique; IDs like x0100y0000; every pose finite."""
+    if not isinstance(labels, list):
+        return "labels must be a list"
+    if not labels:
+        return "a label set needs at least one label"
+    ids, names, homes = set(), set(), 0
+    for i, e in enumerate(labels):
+        if not isinstance(e, dict):
+            return f"label {i}: not a mapping"
+        lid, name = e.get("label_id"), e.get("name")
+        if not (isinstance(lid, str) and LABEL_ID_RE.match(lid)):
+            return f"label {i}: label_id must look like x0100y0000, got {lid!r}"
+        if not (isinstance(name, str) and name.strip()):
+            return f"label {lid}: name must not be empty"
+        if e.get("role") not in LABEL_ROLES:
+            return f"label {lid}: role must be one of {LABEL_ROLES}"
+        if e.get("method") not in LABEL_METHODS:
+            return f"label {lid}: method must be one of {LABEL_METHODS}"
+        for k in LABEL_FLOATS:
+            v = e.get(k)
+            if not (isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)):
+                return f"label {lid}: {k} must be a finite number"
+        n = e.get("n_frames")
+        if not (isinstance(n, int) and not isinstance(n, bool) and n >= 1):
+            return f"label {lid}: n_frames must be a positive integer"
+        if lid in ids:
+            return f"label {lid} appears twice"
+        if name in names:
+            return f"label name {name!r} appears twice"
+        ids.add(lid)
+        names.add(name)
+        homes += e["role"] == "home"
+    if homes > 1:
+        return f"a label set has at most one home label, has {homes}"
+    return None
+
+
+def label_entry(
+    label_id: str,
+    role: str,
+    name: str,
+    pose: tuple[float, float, float],
+    method: str,
+    n_frames: int,
+    spread_xy_m: float,
+    spread_yaw_rad: float,
+    note: str = "",
+) -> dict:
+    return {
+        "label_id": label_id,
+        "role": role,
+        "name": name,
+        "x_m": float(pose[0]),
+        "y_m": float(pose[1]),
+        "yaw_rad": float(pose[2]),
+        "method": method,
+        "recorded": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "n_frames": int(n_frames),
+        "spread_xy_m": float(spread_xy_m),
+        "spread_yaw_rad": float(spread_yaw_rad),
+        "note": note,
+    }
+
+
+def save_labels(
+    maps_dir: str, map_id: str, map_revision: int, map_sha256: str, labels: list[dict]
+) -> tuple[int, str, str]:
+    """Publish the next label-set revision for map `map_id` rev `map_revision`.
+    Returns (revision, path, sha256). The set must pass check_labels()."""
+    _revision(map_revision)
+    why = check_labels(labels)
+    if why:
+        raise StoreError(why)
+    doc = {"map": {"id": map_id, "revision": map_revision, "sha256": map_sha256}, "labels": labels}
+    d = labels_dir(maps_dir, map_id)
+    with _locked(d):
+        revs = list_labels(maps_dir, map_id)
+        revision = (revs[-1] + 1) if revs else 1
+        dest = labels_path(maps_dir, map_id, revision)
+        sha = _commit_new(dest, yaml.safe_dump({"revision": revision, **doc}, sort_keys=False).encode())
+    return revision, dest, sha
+
+
+def load_labels(maps_dir: str, map_id: str, revision: int) -> tuple[dict, str]:
+    """(doc, sha256) of one label-set revision, checked: identity, map ref and entries."""
+    path = _inside(maps_dir, labels_path(maps_dir, map_id, revision))
+    if not os.path.isfile(path):
+        raise StoreError(f"no such label set: {map_id} labels rev{revision}")
+    doc = _doc(path, f"label set {map_id} rev{revision}")
+    ref = doc.get("map")
+    if doc.get("revision") != revision or not isinstance(ref, dict) or ref.get("id") != map_id:
+        raise StoreError(f"label file {path} is not {map_id} labels rev{revision}")
+    if not isinstance(ref.get("revision"), int) or isinstance(ref.get("revision"), bool):
+        raise StoreError(f"label set {map_id} rev{revision}: bad map revision")
+    why = check_labels(doc.get("labels"))
+    if why:
+        raise StoreError(f"label set {map_id} rev{revision}: {why}")
+    return doc, sha256_file(path)
+
+
+def latest_labels(maps_dir: str, map_id: str, map_revision: int) -> tuple[dict, str] | None:
+    """(doc, sha256) of the newest label set made for that map revision, or None.
+    A corrupt newest file is a StoreError, never a silent fall-back to an older set."""
+    for rev in reversed(list_labels(maps_dir, map_id)):
+        path = labels_path(maps_dir, map_id, rev)
+        ref = _doc(path, f"label set {map_id} rev{rev}").get("map")
+        if isinstance(ref, dict) and ref.get("revision") == map_revision:
+            return load_labels(maps_dir, map_id, rev)
+    return None
+
+
+def with_label(labels: list[dict], entry: dict) -> list[dict]:
+    """A copy of the set with `entry` recorded: it replaces any entry with the same ID or
+    name, and a new home replaces the old home."""
+    out = [
+        e
+        for e in labels
+        if e["label_id"] != entry["label_id"]
+        and e["name"] != entry["name"]
+        and not (entry["role"] == "home" and e["role"] == "home")
+    ]
+    return [*out, entry]
+
+
 # ---- missions --------------------------------------------------------------
 
 
@@ -221,7 +378,10 @@ def save_mission(
     route_id: str,
     route_revision: int,
     route_sha256: str,
+    labels: dict | None = None,
 ) -> str:
+    """`labels` = {"revision", "sha256"} binds a label set of the same map id; without one
+    the mission gets no label fixes, only raw logging (gls-wait-coding-plan §C.1)."""
     if not _plain(mission_id):
         raise StoreError("mission_id must be a plain name")
     path = os.path.join(missions_dir(maps_dir), f"{mission_id}.yaml")
@@ -229,6 +389,8 @@ def save_mission(
         "map": {"id": map_id, "revision": map_revision, "sha256": map_sha256},
         "route": {"id": route_id, "revision": route_revision, "sha256": route_sha256},
     }
+    if labels is not None:
+        refs["labels"] = {"revision": _revision(labels.get("revision")), "sha256": str(labels.get("sha256"))}
     doc = {"mission_id": mission_id, "created": time.strftime("%Y-%m-%dT%H:%M:%S%z"), **refs}
     with _locked(missions_dir(maps_dir)):
         if os.path.lexists(path):
@@ -237,7 +399,8 @@ def save_mission(
                     old = yaml.safe_load(fh)
             except (OSError, yaml.YAMLError):
                 old = None
-            if isinstance(old, dict) and all(old.get(k) == v for k, v in refs.items()):
+            same = isinstance(old, dict) and all(old.get(k) == v for k, v in refs.items())
+            if same and ("labels" in old) == ("labels" in refs):
                 return path  # idempotent retry: same references, original bytes untouched
             raise StoreConflict(f"mission {mission_id!r} exists with different references")
         _commit_new(path, yaml.safe_dump(doc, sort_keys=False).encode())
@@ -261,4 +424,32 @@ def load_mission(maps_dir: str, mission_id: str) -> dict:
             or ref["revision"] < 1
         ):
             raise StoreError(f"mission {mission_id}: {key} revision must be a positive integer")
+    lab = doc.get("labels")
+    if lab is not None and (
+        not isinstance(lab, dict)
+        or not isinstance(lab.get("revision"), int)
+        or isinstance(lab.get("revision"), bool)
+        or lab["revision"] < 1
+        or not isinstance(lab.get("sha256"), str)
+    ):
+        raise StoreError(f"mission {mission_id}: bad labels reference")
+    return doc
+
+
+def mission_labels(maps_dir: str, mission: dict) -> dict | None:
+    """The label set a loaded mission binds, checked against the mission's map and the
+    bound hash; None when it binds none."""
+    lab = mission.get("labels")
+    if lab is None:
+        return None
+    m = mission["map"]
+    doc, sha = load_labels(maps_dir, m["id"], int(lab["revision"]))
+    if sha != lab["sha256"]:
+        raise StoreError("label set hash differs from the mission manifest")
+    ref = doc["map"]
+    if ref.get("revision") != m["revision"] or ref.get("sha256") != m.get("sha256"):
+        raise StoreError(
+            f"label set rev{lab['revision']} is for map {ref.get('id')} rev{ref.get('revision')}, "
+            f"mission is for rev{m['revision']}"
+        )
     return doc

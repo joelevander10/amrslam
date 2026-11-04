@@ -20,6 +20,9 @@ class MapView {
     this.canvas = canvas; this.ctx = canvas.getContext('2d');
     this.meta = null; this.img = null; this.scale = 1; this.ox = 0; this.oy = 0;
     this.overlays = []; this._drag = null; this.onClick = null; this.onDrag = null; this.onHover = null;
+    // Tools that only take clicks (the route editor's Measure): with one of these active a drag
+    // still pans, and a drag never counts as a click. Every other tool draws with a drag.
+    this.panTools = new Set();
     // Pointer events, not mouse events: the vehicle HMI is a touch panel, and a finger
     // drag must pan (or draw, with a tool) exactly like a mouse drag. touch-action:none on
     // the canvas (amr.css) keeps the page from scrolling instead.
@@ -35,7 +38,7 @@ class MapView {
       if (e.pointerId !== this._drag.id) return;
       const dx = e.offsetX - this._drag.x, dy = e.offsetY - this._drag.y;
       if (Math.abs(dx) + Math.abs(dy) > 3) this._drag.moved = true;
-      if (this.onDrag && this._drag.btn === 0 && this.tool) { this.onDrag(this.screenToWorld(this._drag.x, this._drag.y), this.screenToWorld(e.offsetX, e.offsetY), false); this.draw(); return; }
+      if (this.onDrag && this._drag.btn === 0 && this.tool && !this.panTools.has(this.tool)) { this.onDrag(this.screenToWorld(this._drag.x, this._drag.y), this.screenToWorld(e.offsetX, e.offsetY), false); this.draw(); return; }
       this.ox += dx; this.oy += dy; this._drag.x = e.offsetX; this._drag.y = e.offsetY; this._keepVisible(); this.draw();
     });
     const up = e => {
@@ -43,8 +46,9 @@ class MapView {
       const d = this._drag; this._drag = null;
       const w = this.screenToWorld(e.offsetX, e.offsetY);
       if (this.tool && d.btn === 0) {
-        if (this.onDrag && d.moved) this.onDrag(this.screenToWorld(d.x, d.y), w, true);
-        else if (this.onClick) this.onClick(w);
+        const pans = this.panTools.has(this.tool);
+        if (this.onDrag && d.moved && !pans) this.onDrag(this.screenToWorld(d.x, d.y), w, true);
+        else if (!(pans && d.moved) && this.onClick) this.onClick(w);
       }
       this.draw();
     };

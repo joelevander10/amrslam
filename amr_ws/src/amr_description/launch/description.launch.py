@@ -5,10 +5,13 @@ passed without editing the URDF, e.g. `laser_x:=0.42 laser_yaw:=0.01`.
 
 The defaults are the vehicle's (AGV_PROFILE): the xacro's own for agv-01, and
 config/vehicle.<profile>.yaml for any other vehicle (amr_description.vehicle).
+The GLS camera's mount is NOT a second copy: its defaults are read from the profile
+(gls.mount_x_m / mount_y_m / mount_yaw_rad), so TF shows what label_fix will use.
 """
 
 import os
 
+from agv_core import config as vehicle_config
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
@@ -33,6 +36,9 @@ XACRO_ARGS = [
     ("imu_x", "0.092", "MLS IMU x from base_link [m]"),
     ("imu_y", "0.0", "MLS IMU y from base_link [m] (VERIFY)"),
     ("imu_z", "0.0", "MLS IMU z from base_link [m] (VERIFY)"),
+    ("gls_x", str(vehicle_config.GLS_MOUNT_X_M), "GLS621 lens axis on the floor, x [m]: gls.mount_x_m"),
+    ("gls_y", str(vehicle_config.GLS_MOUNT_Y_M), "GLS621 lens axis on the floor, y [m]: gls.mount_y_m"),
+    ("gls_yaw", str(vehicle_config.GLS_MOUNT_YAW_RAD), "GLS621 housing yaw [rad]: gls.mount_yaw_rad"),
 ]
 
 

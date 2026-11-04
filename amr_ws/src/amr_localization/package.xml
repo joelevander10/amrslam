@@ -3,7 +3,7 @@
 <package format="3">
   <name>amr_localization</name>
   <version>0.0.1</version>
-  <description>State estimation: EKF config (robot_localization), gyro bias removal, AMCL config, station_id_node.</description>
+  <description>State estimation: EKF config (robot_localization), gyro bias removal, AMCL config.</description>
   <maintainer email="igp.indi.4.0.00@gmail.com">gvipc</maintainer>
   <license>Proprietary</license>
 

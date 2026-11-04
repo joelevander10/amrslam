@@ -35,14 +35,15 @@ MODULES = [
     "test_lss",
     "test_imu",
     "test_rpdo",
-    "test_rfid",
     "test_dio",
     "test_lidar",
     "test_panel",
     "test_blindrun",
+    "test_gls",
+    "test_gls_link",
+    "test_glspose",
+    "test_slip_events",
     "test_layout",
-    "test_mls",
-    "test_mission",
     "test_qr_profile",
 ]
 
@@ -90,11 +91,62 @@ MODULES = [
 #   2080h:01); test_config + 2 (mls.event_clear off, and its refusal).
 # + 7 (2026-10-18): the marker run (plan 3 section 7.5): test_mission, the straight's mission and
 #   6 refusals.
-# + 5 (2026-10-23): the four basic jobs (empty, basic-right, basic-high-left, basic-high-right)
-#   and the mission picker's note (test_mission).
-# + 30 (AMR QR port, 2026-11-02): test_qr_profile - the platform key and the AMR QR
+# + 8 (2026-10-27): test_invariants C05, segmented SDO uploads. sdo_read finishes or aborts the
+#   transfer instead of returning the length as the value and leaving the MLS's server open.
+# - 138 (2026-10-27): tracked removal P3 (RFID driver, MLS track decoder, line-sensor guard).
+#   test_rfid (75) and test_mls (58) gone as modules; test_canmon - 5 (the line-sensor list
+#   checks, read_mls and DriveLink.write_sensor). Nothing added.
+# - 99 (2026-10-27): tracked removal P5 (profile, missions). test_mission (72) gone as a
+#   module with agv_core.mission and missions/; test_config 125 -> 98: - 33 (the mls and
+#   tape_loc blocks, the partial-autopilot check, the autopilot leftovers and limits) + 6
+#   (refusals of a leftover autopilot, rfid, mls or tape_loc section, the tracked key and
+#   vehicle.sensor_lookahead_m).
+# + 7 (2026-10-30): emergency suite (manuals/emergency-suite-plan.md). test_config + 7 (DI08 is
+#   panel.di_estop_ok; refused on a panel button, the arm, a pendant channel, off the module;
+#   estop_reset_timeout_s outside 0.5..30 s).
+# + 10 (2026-10-30): route wait step + PB Continue (manuals/gls6-qr/gls-wait-coding-plan.md
+#   §A.2). test_config + 5 (DI13 is panel.di_continue; refused on Start, on the E-stop input,
+#   on a pendant channel, off the module); test_panel + 5 (test_continue: one edge per
+#   press, not a Start, no edge at boot, none across a reconnect, none without the channel).
+# - 38 (2026-10-30): the commissioning page, agv_core/blindrun.py and profile position
+#   removed (plan noble-waddling-sutton). test_blindrun (32) deleted; test_config - 6
+#   (blind_run.max_rpm/max_speed_mps and the six pp lock checks replaced by two refusals
+#   of the retired sections; the rejected-profile check now mutates timing instead).
+# + 28 (2026-10-30): test_gls added (gls-wait-coding-plan P0): CoLa A framing (5), parsing
+#   incl. two results in one telegram as seen on the vehicle (5), frame aggregation (11),
+#   counts -> T_LC conversion (3), the read-only probe and its "gls" owner lock (4).
+# + 75 (2026-10-30): P2 of gls-wait-coding-plan (§B.1/§B.3), the GLS621 link and its profile
+#   section. test_gls_link + 45 (new: value_matches and the string length prefix, connect
+#   readback and frame delivery incl. split / joined telegrams, mismatch and verify timeout
+#   drop every frame, keepalive cadence and comms_ok, reconnect / peer close / socket error,
+#   connect backoff doubling to the maximum, counters and the 64-frame queue, stop() ends the
+#   thread, only sRN ever sent); test_config + 30 (the gls block: enabled, scale 0 = not
+#   measured, template has [$XMCL]/[$YMCL]; 26 refusals, one per rule, and its bounds accepted).
+# + 32 (2026-10-30): P3 of gls-wait-coding-plan (§C), label poses bound to the map. test_glspose
+#   + 21 (new: wrap / compose / inverse round trips at six yaws, label_in_map <-> base_in_map, a
+#   hand-worked T_ML with a turned mount, circular mean and spreads across +-pi, every observe()
+#   refusal and only the last n frames counting); test_config + 11 (gls.fix_frames,
+#   fix_spread_xy_m, fix_spread_yaw_rad, stationary_s: shipped values, 8 bound refusals, a
+#   fractional fix_frames refused, the bounds accepted).
+# + 4 (2026-10-30): gls.swap_xy (the device's Y is the vehicle's fore-aft, bench 2026-10-30).
+#   test_gls + 2 (to_camera_pose swaps X/Y, the signs apply after the swap); test_config + 2
+#   (ships true, a non-boolean refused).
+# + 3 (2026-11-02): test_panel, the DI08 / DI09 input filters (estop_low_scans below 1 and
+#   above 0.2 s refused, manual_arm_scans below 1 refused).
+# + 33 (2026-11-02): the blind run is back (PV only; pp stays removed). test_blindrun (32)
+#   restored as it was; test_config + 1 (the retired-section refusal for blind_run gives way
+#   to the max_rpm and max_speed_mps refusals).
+# + 19 (2026-11-03): destination buttons (panel.destinations: DI10 UBC, DI11 ITG, DI12 PISTON).
+#   test_config + 11 (shipped channels; refused on Continue, on another destination, on a pendant
+#   channel, off the module, a duplicate or empty name, a route id with a slash, an unknown key,
+#   the key missing); test_panel + 8 (test_destinations: one edge per press, none at boot or
+#   across a reconnect, debounce, two at once or a second while one is held select nothing).
+# + 40 (2026-11-03): test_slip_events (towing-load Phase 1, agv_core/slip_events.py): clean
+#   runs quiet (4), snatch (9), collapse, snatch -> slip and regrip (7), wheel vs gyro yaw (8),
+#   the localization consequence and baseline (7), merging and top-N (5).
+# + 31 (AMR QR port, 2026-11-04): test_qr_profile - the platform key and the AMR QR
 #   profile (qr_base section, platform refusals, each qr_base bound).
-EXPECTED_CHECKS = 782
+EXPECTED_CHECKS = 762
 
 
 # An exception on a helper thread only prints a traceback by default - the

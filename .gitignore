@@ -4,18 +4,14 @@ agv-kim2a-controller/
 *.log
 *.sh
 
-# ...but these are documentation, not runtime artifacts: rfid-setup.md calls them
-# "the four files" and step 1/2 of the guide is running them. Without this negation
-# they survive only by already being staged, which a re-add would silently undo.
-!manuals/rfid-setup/*.sh
 # Deployment and environment scripts are part of the product (unified plan U0).
 !amr_ws/deploy/*.sh
 !amr_ws/env/*.sh
 # The run recorder (run_log.sh) and its kin are tooling, not artifacts: bag_report.py
-# and the marker plan depend on what run_log.sh records (fix plan 001 A3).
+# depends on what run_log.sh records (manuals/obsolete/0910-fix-plan-001.md A3).
 !tools/*.sh
 
-# Blind-run logs are evidence, not source: keep them out of the tree.
+# Run logs are evidence, not source: keep them out of the tree.
 logs/
 
 # Tool caches. Ruff and pytest drop these wherever they are invoked from, which
@@ -27,16 +23,12 @@ build/
 install/
 log/
 
-# Vendor UHF reader SDK: keep the API, sources and guides, not C# build output or
-# zips of folders that are committed unpacked (fix plan 001 A5).
-tools/uhf-even/**/bin/
-tools/uhf-even/**/obj/
-tools/uhf-even/**/*.zip
-tools/uhf-even/Sample/python/uhf/uhf_sample_Code/
-
 # Agent instruction files are per-developer, not source.
 AGENTS.md
 CLAUDE.md
 
 # macOS Finder metadata
 .DS_Store
+# Vehicle logs copied in on purpose (2026-11-03): kept as evidence, so exempt from the
+# *.log / log/ rules above. Only this folder; other run logs stay out of the tree.
+!field-logs/**

@@ -28,19 +28,11 @@ Four rules the loader enforces, in order of how much trouble they save:
      contradicts the wheel diameter it was supposedly computed from.
   3. Validation runs before anything is published. A bad profile stops the
      process at import with the failing check named, rather than surfacing as
-     strange behaviour halfway down a length of tape.
+     strange behaviour halfway through a run.
   4. profile_name must match the filename. A profile copied for a second
      vehicle and not renamed would report the old identity in the event log and
      in every run CSV header, and nothing would look wrong until two runs were
      compared weeks later.
-  5. `tracked` (top level, true/false/null) says which product this vehicle is.
-     false = trackless: the SLAM AMR, boots to IDLE, MAPPING/NAVIGATION are
-     offered and LINE is refused. true = the magnetic-tape AGV: the supervisor
-     enters LINE by itself once the base is up, and NAVIGATION/surveys are
-     refused. null = both (2026-10-02): boots to IDLE, every mode is offered,
-     and the web shows Run tracked and Run trackless. It is read at boot;
-     changing it means restarting amr.service.
-
 load() is written as an atomic swap - parse and validate into a fresh namespace,
 publish only on success - so nothing observes a half-applied profile. Only
 called once today; a reload endpoint would be a caller, not a rewrite.
@@ -90,24 +82,104 @@ timing.manual_watchdog_s
     on the control, so there is nothing for an acknowledgment to add.
 
     *** An autonomous mode would need the opposite. *** Latched motion that
-    would otherwise resume on its own has to latch a fault instead, the way tape
-    following did. Whatever navigates next must make that choice deliberately
-    rather than inherit this one.
+    would otherwise resume on its own has to latch a fault instead, the way the
+    retired tape follower did. Whatever navigates must make that choice
+    deliberately rather than inherit this one.
 
 panel.di_manual_arm
-    The Manual Arm input (DI08 on agv-01). Under MANUAL the drives are powered
-    only while this input is HIGH; LOW leaves them in standby (CANopen up,
-    encoders read, power stage off), so a jog, a pendant press, a survey move
-    or a commissioning pp move does nothing until it is switched on. Under
-    AUTO it is ignored: power follows the run (amr_base/arm_policy.py).
+    The pendant enable / arm input (DI09 on MCQ4-4). The drives are powered
+    only while this input is HIGH, in MANUAL and AUTO alike (operator,
+    2026-10-27); LOW leaves them in standby (CANopen up, encoders read, power
+    stage off), so a jog, a pendant press, a survey move or an AUTO run does
+    nothing until it is switched on. Under AUTO power
+    also needs the run to ask for it (amr_base/arm_policy.py).
 
     It replaces manual_auto_arm (the selector in MANUAL was itself the arm
     command, 2026-10-08): the drives are no longer powered while idle.
+
+panel.estop_low_scans / manual_arm_scans
+    Input filters for DI08 (E-stop OK, Flexi Soft Q3) and DI09 (pendant
+    enable / arm), in DIO scans (dio.scan_period_s each).
+
+    estop_low_scans: DI08 must read LOW this many consecutive scans before
+    the PC calls it an emergency (2026-11-02). With 1, a single LOW scan
+    tripped it: Q3 was dropping LOW for one scan every 400 ms in bursts (83
+    one-scan pulses in the logs, 30 Oct - 2 Nov; Q3 test pulses, which
+    io-mapping.md says must be off), and each one powered the drives off
+    and wanted a Reset. 2 rejects those at the cost of 50 ms on a real
+    press. This filters only the PC's picture: STO is the Flexi Soft's, in
+    hardware, and nothing here delays it. An invalid image or a comms gap
+    is still an emergency at once; leaving one still needs debounce_scans
+    HIGH scans. Capped at 0.2 s.
+
+    manual_arm_scans: DI09 must read the same level this many consecutive
+    scans before it is believed, either way (it was debounce_scans). A
+    switch, not a pushbutton, so it can afford a little more. Capped at 0.5 s.
+
+panel.di_continue
+    PB Continue (DI0D on MCQ4-4, 2026-10-30). A pushbutton with exactly
+    Start's rules: rising edge only, no edge from a button held at power-on or
+    across a DIO reconnect. It releases a run WAITING at a route wait step (a
+    trolley hitch / release point) and resumes a held run as Start does; Start
+    also releases a wait (owner, 2026-10-30). Refused, not queued, during an
+    emergency: only a fresh press after NORMAL counts.
 
     *** Power is not motion. *** A powered manual vehicle holds zero; every
     millimetre still needs a jog HELD (manual_watchdog_s). And nothing here can
     power through the safety chain: an FX3 demand leaves the drives in ETO, the
     enable fails, and it is retried on a slow backoff, never latched.
+
+panel.destinations
+    The destination pushbuttons (MCQ4-4, owner 2026-11-03: DI0A UBC, DI0B ITG,
+    DI0C PISTON), a list of {"name", "di", "route_id"}. Momentary, with Start's
+    rules: rising edge only, none from a button held at power-on or across a
+    DIO reconnect, and a press counts only while it is the ONLY destination
+    button down. In AUTO, with no run under way (IDLE, READY or DONE), a press
+    loads the newest saved mission for `route_id` on the active map (highest
+    route revision, then label set) and starts it as Start would: the start
+    gate at the route's start pose, the prerequisites, then the pre-move
+    warning. PB Start is not needed. Ignored in MANUAL, during a run (moving,
+    held or WAITING: Continue is the button there), in FAULT and during an
+    emergency. An empty route_id is a button with no route yet: a press is
+    refused with that reason. Route IDs, not mission IDs, so a new route or
+    map revision is picked up once it is saved as a mission.
+
+gls.xy_scale_m_per_count
+    What one XMCL/YMCL count is, in metres. 0 means NOT MEASURED, and it is
+    the shipped value: the camera then publishes raw counts only (GlsReading
+    calibrated = false) and nothing may turn a reading into a pose. Set it -
+    with x_sign, y_sign, angle_sign and angle_offset_rad - from the bench tests
+    in manuals/gls6-qr/gls6-system.md §7 (slide the label exactly +10 mm along
+    each printed arrow, rotate it 90 deg). Codes 18 mm apart differed by ~20
+    counts with the as-found template, so it is NOT plain mm.
+
+    *** A wrongly scaled label scales every offset. *** The printed label must
+    measure 75.0 mm, with 54.0 mm +-0.2 between the -27 and +27 ticks. On
+    2026-10-30 the per-code values disagreed in proportion to each code's
+    distance from the centre (~2.3 counts per 18 mm row): check the print
+    before trusting a scale measured on it.
+
+gls.swap_xy / x_sign / y_sign / angle_sign / angle_offset_rad
+    How the device's raw X/Y/angle become T_LC (gls.to_camera_pose): swap
+    first, then the signs. Bench 2026-10-30 (pendant over the HOME label, odom
+    logged): vehicle fore-aft moves the device's Y, reversing lowers it, so the
+    device's +Y is the vehicle's forward and swap_xy is true. The lateral sign,
+    the angle sign and the offset that keeps yaw consistent with the swapped
+    axes come from the sideways and spin tests (gls6-system.md §7.6).
+
+gls.fix_frames / fix_spread_xy_m / fix_spread_yaw_rad / stationary_s
+    What counts as ONE label observation, for "Record label here" and HOME at
+    survey start (gls-wait-coding-plan §C): the last fix_frames readings, all
+    the same label, taken after the wheels stood still for stationary_s, whose
+    camera-in-label poses lie within the two spreads of their mean. 15 frames
+    is ~1 s. The spreads are the plan's starting values (2 mm, 0.5 deg); tune
+    them from the bench repeatability (gls6-system.md §7.4) once the scale is in.
+
+gls.mount_x_m / mount_y_m / mount_yaw_rad
+    T_BC: where the camera's optical axis meets the floor, in base_footprint.
+    The lens is NOT the housing centre (op-ins Fig. 17). Placeholder zeros
+    until the calibration spin (gls6-system.md §7.6). The URDF's gls_frame is
+    generated from these, so TF shows whatever is here.
 
 timing.loop_period_s / telemetry_period_s
     50 Hz bus loop; 5 Hz statusword + rpm + error register (6 fast reads).
@@ -118,36 +190,6 @@ timing.loop_period_s / telemetry_period_s
     20.1 ms but a p95 of 28.1 and a max of 37.9. Lowering this period makes the
     spike more frequent, not smaller; moving the statusword and actual velocity
     onto drive TPDOs is what removes it - see manuals/codebase-improvement.md.
-
-rfid.*  (Chafon CF821, UHF EPC Gen2, TCP 2022)
-    CF821 protocol captured from this unit on 2026-10-08 and CRC-verified; the
-    framing and command codes are in agv_core/drivers/rfid.py. The reader streams tags on
-    its own because its WorkMode is "active" - nothing we send starts it. The
-    driver only ever QUERIES the reader (device info, parameters, heartbeat);
-    reader settings are changed with the vendor tool, never from this code.
-
-    tag_len is how many trailing EPC bytes form the tag id. Our tags carry a
-    4-byte EPC and the route tables use the last 2 ("0020").
-
-    ignore_tags discards ids before they become encounters. It used to hold
-    "3130", an artifact of fixed-length framing chewing the device-info reply;
-    length + CRC framing cannot produce it, so the list is normally empty.
-
-rfid.heartbeat_s / heartbeat_timeout_s
-    heartbeat_s > 0 sends the 0x0050 "online" query that often. Once the reader
-    has answered one on a connection, a gap longer than heartbeat_timeout_s
-    drops and reconnects the link - that is how a reader wedged behind a live
-    TCP stack becomes rfid_comms_lost. A reader that never answers is reported
-    once and not asked again. Ships 0 (off) until a bench run confirms the query
-    does not interrupt active-mode streaming.
-
-rfid.expect_work_mode / expect_region / expect_power_dbm
-    What the reader is SUPPOSED to be configured as. The driver reads the real
-    values (0x0072) on every connect and raises a warning event per mismatch -
-    a swapped or factory-reset unit shows up on the dashboard. Never a stop.
-    work mode 0 answer / 1 active / 2 trigger; region 0 custom / 1 US / 2 Korea /
-    3 EU / 4 Japan / 5 Malaysia / 6 EU3 / 7-8 China. The unit shipped on US
-    (902.75-927.25 MHz); Indonesia permits 920-923 MHz, which needs region 0.
 
 timing.driver_timeout_s
     How long a driver may go without answering a telemetry read before it is
@@ -243,11 +285,12 @@ horn.*
     rather than leaving it energised. See the derived value.
 
 blind_run.*
-    Encoder-only test moves from /blind, to measure the encoders before SLAM
-    relies on them. The page only SETS a plan; PB Start runs it, with the
-    selector in MANUAL and the vehicle armed. Reset, a selector move, web Stop,
-    a fault or lost 6064h feedback stops it. The plan survives a stop so the
-    same move can be run again.
+    Encoder-only test moves from the Blind run page (/blindrun), to measure
+    the encoders before SLAM relies on them. The page only SETS a plan; PB
+    Start runs it, with the selector in MANUAL and the vehicle armed. Clear, a
+    selector move to AUTO, an emergency, a fault or lost 6064h feedback aborts
+    it, never to resume (an emergency too, like a survey move: owner,
+    2026-11-02). Hold the move again to re-run it.
 
     Profile velocity mode with a software position loop: the faster wheel runs
     a trapezoid on its REMAINING counts at accel_rpm_s, capped at max_rpm; the
@@ -257,44 +300,20 @@ blind_run.*
     twice the planned time, aborts. max_distance_m caps each wheel per segment.
 
     Nothing steers on a sensor. The IMU yaw rate is written beside the encoder
-    heading in the run CSV so the two can be compared afterwards - see imu.* -
+    heading in the evidence so the two can be compared afterwards - see imu.* -
     and that is the whole of its involvement.
 
-    max_speed_mps caps the centre-path speed of a blind move on either backend
-    (the /commissioning page offers up to this). Above ~0.4 m/s the protective
-    field sizing of the nanoScan3/FX3 must be confirmed first; that is a check
-    on the vehicle, not something this file can know.
-
-pp.*
-    Profile position (CiA 402 pp) blind moves, executed INSIDE the drives: the
-    drive's own position loop runs each wheel to a count target. LOCKED by
-    default (enabled false). The motor is a 400 W BLM with a 1:30 gearhead, and
-    the BLV-R manual (function edition 3-4/3-6) requires motion-extension mode
-    for that combination, which no positioning type offers. There is no vendor
-    confirmation: enabling pp is an INTERNAL engineering decision to accept
-    that risk, bounded by the settings below, the speed cap and a bench test
-    on blocks first. vendor_ref records who decided, when and on what basis;
-    the loader refuses enabled=true while it is empty.
-
-    expect.* are the values a human sets IN THE DRIVES with MEXE02 (and saves).
-    This software never writes them - they are on no allow-list in guard.py -
-    it reads them back from both drives before every pp move and refuses on
-    any difference, or while any of them is still null:
-      max_torque_permille     6072h  caps motor torque so torque x 30 stays
-                                     inside the gearhead's permissible torque
-      following_error_counts  6065h  how far a wheel may lag before bit 13
-      position_window_counts  6067h  "target reached" band
-      halt_option             605Dh  Halt decelerates on the profile ramp (1)
-      fault_reaction          605Eh  2 = quick-stop ramp (6085h), never 0 on a gear
-      quick_stop_decel        6085h  r/min/s
-    max_speed_mps is the pp cap, at most blind_run.max_speed_mps.
+    max_speed_mps caps the centre-path speed of a blind move (the page offers
+    up to this). Above ~0.4 m/s the protective field sizing of the
+    nanoScan3/FX3 must be confirmed first; that is a check on the vehicle, not
+    something this file can know. Profile position (pp) was removed on
+    2026-10-30 and is not part of this (2026-11-02, blind run restored).
 
 timing.auto_start_delay_s
     The pre-move warning (2026-10-08): every move that follows an operator's
-    Start under AUTO - a run from Home, a station departure, a resume after an
-    E-stop or an RFID hold - first powers the drives and sounds the ALARM horn
-    for at least this long, then switches to the movement horn and moves. Tape
-    (LineState ARMED) and trackless (RunState.premove) alike. A Reset, a
+    Start under AUTO - a run start, or a resume after an E-stop - first powers
+    the drives and sounds the ALARM horn for at least this long, then switches
+    to the movement horn and moves (RunState.premove). A Reset, a
     selector move or a lapsed prerequisite during it cancels the start.
     Holds that resume by themselves (protective field, controller abort) keep
     their power and do not repeat the warning: nobody pressed anything.
@@ -305,68 +324,12 @@ timing.premove_timeout_s
     the safety chain: E-stop pressed or not yet reset. Must exceed
     auto_start_delay_s; the enable retry backoff is 2 s, so give it two tries.
 
-mls.*  (SICK MLS line sensor, can.sensor_node; manuals/mls-marker-plan.md)
-    What the sensor is expected to be configured as. drive_node only READS these
-    objects and compares; the bench tool read_mls writes them (set-variant,
-    set-markers), through guard.check_sensor.
-
-    variant is 2006h:01, the TPDO1 packing (3 = Standard enhanced since
-    2026-10-07). A difference is logged and decoded as reported.
-
-    Marker events are always on (2026-10-23; markers_enabled is retired and refused):
-    the sensor's own decoded code (2028h, standard mode, FailSafe) becomes
-    /amr/line_marker events. The sensor not configured as below means NO events and a
-    warning naming the fix - never a guess. Whether a marker changes a run is the
-    mission's choice (high_zone, marker_run), not the profile's.
-    marker_codes lists the codes laid on the floor (1-3 with the MLSE-0200,
-    15 mm markers); any other code read is a reject, counted, never an event.
-    polarity_lock expects 202Dh:05 = 1 (only north track seen): leave false until
-    a full lap has shown north-up tape everywhere, because south-up track
-    becomes invisible with it. teach_lock expects 2029h = 1 (keypad locked).
-
-    event_clear (manuals/mls-diagnostics-plan.md E2): the value drive_node writes to
-    2080h:01 to reset the sensor's latched event flag after reading its cause, or
-    -1 = never write (only the first event after power-up is seen). 0 or 1, as
-    the bench step E0.5 found; -1 until then. The only runtime MLS write.
-
-    Nothing here is in the safety path or changes motion.
-
-tape_loc.*  (tracked plan 3, manuals/tracked-plan-3-tape-localization.md)
-    Tape-graph localization in LINE mode: AMCL on a frozen map revision, reduced to
-    the distance along the taught tape (amr_line.tape_locator). enabled starts the
-    localization group with the LINE layer (map_server, AMCL, localization monitor)
-    on the map of the active tape graph ($AMR_STATE_DIR/line_graph.json); off, LINE
-    runs exactly as before. Today it only TEACHES and SHADOWS (P1): the locator logs
-    where it would stop and branch, and nothing it says changes motion.
-
-    The rest are PROVISIONAL until P0 has measured them (plan section 5):
-      k_odo               sigma growth per metre of wheel travel (P0 M6)
-      amcl_sigma_floor_m  AMCL's along-track sigma floor; its covariance is optimistic (M1)
-      max_lateral_m       a pose farther from the taught path is rejected (M2)
-      innov_min_m         innovation gate floor; the gate is max(3 sigma, this)
-      pose_max_age_s      an older /amcl_pose is not used
-      sigma_station_m     a station stop needs sigma at most this when braking starts
-                          (2 sigma <= 5 cm of the operator's +-10 cm). At most 0.05
-      sigma_junction_m    a junction order needs sigma at most this by S_fork - junction_lead_m
-      lost_rejects        this many corrections rejected in a row = LOST
-      sigma_lost_m        sigma above this = LOST
-      healthy_window_m    HEALTHY needs an accepted correction within this much travel
-      lost_fault_s        LOST while held longer than this becomes a FAULT
-      amcl_params         "default" (amr_localization/config/amcl.yaml) or "lean" (fewer
-                          particles, update every 0.10 m: plan section 2.7)
-      site_mission        the site-3 mission taught and shadowed: "test-mru-straight" while
-                          only the straight in front of MRU is free (plan section 7),
-                          "site-103" once the plant is
-      shadow_circuit      the circuit of that mission the shadow locator follows
-
-    Not in the safety path (plan D6): every decision it feeds turns doubt into a hold.
-
 imu.*
-    The IMU inside the SICK MLS on can.sensor_node, read over SDO by the bus
-    thread and shown on /monitor and the rail. DISPLAY ONLY today: nothing
-    steers from it, nothing gates on it, and it is not a health source. It is
-    here so the gyro can be watched before gyro-odometry is built on it - see
-    drivers/canbus/read_imu.py for why the gyro is a navigation component.
+    The IMU inside the SICK MLS on can.sensor_node. drive_node reads its yaw
+    rate (2034h:03, by SDO unless the sensor's yaw-rate TPDO is enabled) and
+    publishes it on /imu/data_raw; imu_bias_node removes the bias and /imu/data
+    feeds the EKF. Nothing gates motion on it and it is not a health source -
+    see drivers/canbus/read_imu.py for why the gyro is a navigation component.
 
     One SDO read per poll, round-robin over eight objects (gyro xyz, accel xyz,
     yaw, the sensor's own clock). A read costs ~4 ms on the 125 kbps bus, so
@@ -410,8 +373,10 @@ platform.*
     panel has no Manual Arm input, so MANUAL is powered whenever the panel
     image is trusted - see amr_base.qr_base_node); lidar.host_ip is the
     fallback when nanoscan3.<profile>.yaml says host_ip "auto" and no route
-    to the scanner exists at launch; mls/tape_loc/autopilot/rfid/pp are carried
-    only because the schema is strict (tracked false: no tape, no RFID).
+    to the scanner exists at launch; panel.di_estop_ok must be qr_base.di_estop
+    (one E-stop input). panel.di_continue and panel.destinations are panel_node
+    channels: qr_base_node reads neither (a wait is continued by START or the
+    web's Continue). gls.enabled is false while no GLS621 is fitted.
 
 qr_base.*
     AMR QR hardware. Everything here was read off the QR controller
@@ -505,7 +470,7 @@ DEFAULT_PROFILE = "agv-01"
 # Which vehicle this process is. Deliberately NOT named AGV_ID: the sibling
 # KIM2A checkout uses that name, both are worked on from the same shell, and an
 # export meant for one vehicle silently retargeting the other is the kind of
-# mistake that only shows up as strange behaviour on a length of tape.
+# mistake that only shows up as strange behaviour halfway through a run.
 PROFILE_ENV_VAR = "AGV_PROFILE"
 
 
@@ -529,95 +494,16 @@ def profile_path(name=None):
 # section -> json key -> (exported name, type). The exported names match the
 # constants these replaced, so the diff at every call site is one word.
 _SCHEMA = {
-    # Restored 2026-09-21 for the LINE layer (dual-product plan, Increment 1).
-    # These are the tape follower's constants and they are read by
-    # amr_line.autopilot through amr_line.runtime, never from here directly -
-    # the engine is handed a namespace so a layer can be built in a test, in
-    # sim and on the vehicle from three different sources of the same names.
-    # The u_turn_* keys are carried now though nothing reads them until
-    # Increment 3: the decision was to restore the profile block verbatim
-    # rather than let it arrive in pieces.
-    "autopilot": {
-        "dry_run":             ("DRY_RUN", bool),
-        "invert_error":        ("INVERT_ERROR", bool),
-        "branch_positive_is_left": ("BRANCH_POSITIVE_IS_LEFT", bool),
-        "k_ratio":             ("K_RATIO", float),
-        "kd":                  ("KD", float),
-        "ki":                  ("KI", float),
-        "tau_d_s":             ("TAU_D_S", float),
-        "ti_deadband_mm":      ("TI_DEADBAND_MM", float),
-        "i_clamp":             ("I_CLAMP", float),
-        "sr_pos_frac":         ("SR_POS_FRAC", float),
-        "sr_rate_frac":        ("SR_RATE_FRAC", float),
-        "sr_cap":              ("SR_CAP", float),
-        "sr_tau_s":            ("SR_TAU_S", float),
-        "auto_rpm":            ("AUTO_RPM", float),
-        "auto_u_turn_rpm":     ("AUTO_U_TURN_RPM", float),
-        "u_turn_center_tol_mm": ("U_TURN_CENTER_TOL_MM", float),
-        "u_turn_resume_delay_s": ("U_TURN_RESUME_DELAY_S", float),
-        "u_turn_min_deg":      ("U_TURN_MIN_DEG", float),
-        "u_turn_max_deg":      ("U_TURN_MAX_DEG", float),
-        "u_turn_center_kp_rpm_per_mm": ("U_TURN_CENTER_KP_RPM_PER_MM", float),
-        "u_turn_level_tolerance": ("U_TURN_LEVEL_TOLERANCE", int),
-        # Tracked speeds (2026-10-08, tracked-speed-plan-1): auto_rpm is NORMAL, the
-        # default and the corner speed; HIGH = auto_rpm x auto_high_ratio, granted only
-        # inside an RFID high zone (amr_line.speed_zone). AUTO_HIGH_RPM is derived.
-        # k_ratio/kd are the NORMAL (corner) gains, high_k_ratio/high_kd the HIGH
-        # (straight) gains; the follower interpolates between them on its own speed.
-        "auto_high_ratio":     ("AUTO_HIGH_RATIO", float),
-        "high_k_ratio":        ("HIGH_K_RATIO", float),
-        "high_kd":             ("HIGH_KD", float),
-        "high_ramp_s":         ("HIGH_RAMP_S", float),
-        "high_margin_m":       ("HIGH_MARGIN_M", float),
-        "curve_guard_kappa":   ("CURVE_GUARD_KAPPA", float),
-        "curve_guard_e_mm":    ("CURVE_GUARD_E_MM", float),
-        # The RFID speed toggle tags and their lockout moved to the mission's tag
-        # table (2026-10-08, agv_core.mission v2), and the toggle itself became the
-        # mission's high zone (v2.1). gain_blend_s went with the slow zone's gains.
-        "ramp_accel_rpm_s":    ("RAMP_ACCEL_RPM_S", float),
-        "ramp_jerk_rpm_s2":    ("RAMP_JERK_RPM_S2", float),
-        "sensor_max_mm":       ("SENSOR_MAX_MM", float),
-        "sensor_max_step_mm":  ("SENSOR_MAX_STEP_MM", float),
-        "line_loss_grace_m":   ("LINE_LOSS_GRACE_M", float),
-        "sensor_timeout_s":    ("SENSOR_TIMEOUT_S", float),
-        "auto_resume_hold_s":  ("AUTO_RESUME_HOLD_S", float),
-        "dt_nominal_s":        ("DT_NOMINAL_S", float),
-        "inner_wheel_min_rpm": ("INNER_WHEEL_MIN_RPM", float),
-        # New in the ROS port, not a gy-demo key. sensor_timeout_s is a
-        # STALENESS gate and cannot see a stream that is fresh but slow: the
-        # MLS SDO fallback measured 9.8 Hz against a 50 Hz PID. This is the
-        # rate floor the follower refuses to run below.
-        "line_min_track_hz":   ("LINE_MIN_TRACK_HZ", float),
-    },
     "vehicle": {
         "track_m":            ("TRACK_M", float),
         "wheel_dia_m":        ("WHEEL_DIA_M", float),
         "gear_ratio":         ("GEAR_RATIO", float),
         "motor_max_rpm":      ("MOTOR_MAX_RPM", float),
-        "sensor_lookahead_m": ("SENSOR_LOOKAHEAD_M", float),
         "invert_left":        ("INVERT_LEFT", bool),
         "invert_right":       ("INVERT_RIGHT", bool),
     },
     "drivers": {
         # "ramp" is a nested dict; handled separately in _read_ramp().
-    },
-    "rfid": {
-        "enabled":            ("RFID_ENABLED", bool),
-        "ip":                 ("RFID_IP", str),
-        "port":               ("RFID_PORT", int),
-        "interface":          ("RFID_INTERFACE", str),
-        "tag_len":            ("RFID_TAG_LEN", int),
-        "ignore_tags":        ("RFID_IGNORE_TAGS", list),
-        "recv_timeout_s":     ("RFID_RECV_TIMEOUT_S", float),
-        "silent_warn_s":      ("RFID_SILENT_WARN_S", float),
-        "reconnect_period_s": ("RFID_RECONNECT_PERIOD_S", float),
-        "tag_hold_s":         ("RFID_TAG_HOLD_S", float),
-        "tag_clear_s":        ("RFID_TAG_CLEAR_S", float),
-        "heartbeat_s":        ("RFID_HEARTBEAT_S", float),
-        "heartbeat_timeout_s": ("RFID_HEARTBEAT_TIMEOUT_S", float),
-        "expect_work_mode":   ("RFID_EXPECT_WORK_MODE", int),
-        "expect_region":      ("RFID_EXPECT_REGION", int),
-        "expect_power_dbm":   ("RFID_EXPECT_POWER_DBM", int),
     },
     "dio": {
         "enabled":            ("DIO_ENABLED", bool),
@@ -664,7 +550,12 @@ _SCHEMA = {
         "di_auto":        ("PANEL_DI_AUTO", int),
         "auto_when_on":   ("PANEL_AUTO_WHEN_ON", bool),
         "di_manual_arm":  ("PANEL_DI_MANUAL_ARM", int),
+        "di_estop_ok":    ("PANEL_DI_ESTOP_OK", int),
+        "di_continue":    ("PANEL_DI_CONTINUE", int),
+        "estop_reset_timeout_s": ("PANEL_ESTOP_RESET_TIMEOUT_S", float),
         "debounce_scans": ("PANEL_DEBOUNCE_SCANS", int),
+        "estop_low_scans": ("PANEL_ESTOP_LOW_SCANS", int),
+        "manual_arm_scans": ("PANEL_MANUAL_ARM_SCANS", int),
         "coincidence_hold_s": ("PANEL_COINCIDENCE_HOLD_S", float),
     },
     "horn": {
@@ -701,31 +592,6 @@ _SCHEMA = {
         "bus_v_warn_low":     ("MON_BUS_V_WARN_LOW", float),
         "bus_v_warn_high":    ("MON_BUS_V_WARN_HIGH", float),
     },
-    "mls": {
-        "variant":         ("MLS_VARIANT", int),
-        "polarity_lock":   ("MLS_POLARITY_LOCK", bool),
-        "teach_lock":      ("MLS_TEACH_LOCK", bool),
-        "event_clear":     ("MLS_EVENT_CLEAR", int),
-        # "marker_codes" is a list of ints; handled separately in _read_marker_codes().
-    },
-    "tape_loc": {
-        "enabled":            ("TAPE_LOC_ENABLED", bool),
-        "k_odo":              ("TAPE_LOC_K_ODO", float),
-        "amcl_sigma_floor_m": ("TAPE_LOC_AMCL_SIGMA_FLOOR_M", float),
-        "max_lateral_m":      ("TAPE_LOC_MAX_LATERAL_M", float),
-        "innov_min_m":        ("TAPE_LOC_INNOV_MIN_M", float),
-        "pose_max_age_s":     ("TAPE_LOC_POSE_MAX_AGE_S", float),
-        "sigma_station_m":    ("TAPE_LOC_SIGMA_STATION_M", float),
-        "sigma_junction_m":   ("TAPE_LOC_SIGMA_JUNCTION_M", float),
-        "junction_lead_m":    ("TAPE_LOC_JUNCTION_LEAD_M", float),
-        "lost_rejects":       ("TAPE_LOC_LOST_REJECTS", int),
-        "sigma_lost_m":       ("TAPE_LOC_SIGMA_LOST_M", float),
-        "healthy_window_m":   ("TAPE_LOC_HEALTHY_WINDOW_M", float),
-        "lost_fault_s":       ("TAPE_LOC_LOST_FAULT_S", float),
-        "amcl_params":        ("TAPE_LOC_AMCL_PARAMS", str),
-        "site_mission":       ("TAPE_LOC_SITE_MISSION", str),
-        "shadow_circuit":     ("TAPE_LOC_SHADOW_CIRCUIT", str),
-    },
     "imu": {
         "enabled":        ("IMU_ENABLED", bool),
         "poll_period_s":  ("IMU_PERIOD_S", float),
@@ -742,12 +608,6 @@ _SCHEMA = {
         "max_segments":      ("BLIND_MAX_SEGMENTS", int),
         "max_speed_mps":     ("BLIND_MAX_SPEED_MPS", float),
     },
-    # "expect" is nested and nullable; _read_pp_expect reads it (see pp.* notes).
-    "pp": {
-        "enabled":       ("PP_ENABLED", bool),
-        "vendor_ref":    ("PP_VENDOR_REF", str),
-        "max_speed_mps": ("PP_MAX_SPEED_MPS", float),
-    },
     "timing": {
         "loop_period_s":      ("LOOP_PERIOD_S", float),
         "telemetry_period_s": ("TELEMETRY_PERIOD_S", float),
@@ -756,11 +616,36 @@ _SCHEMA = {
         "auto_start_delay_s": ("AUTO_START_DELAY_S", float),
         "premove_timeout_s":  ("PREMOVE_TIMEOUT_S", float),
     },
+    # SICK GLS621 floor-label camera (manuals/gls6-qr/gls-wait-coding-plan.md §B.3).
+    "gls": {
+        "enabled":              ("GLS_ENABLED", bool),
+        "host":                 ("GLS_HOST", str),
+        "port":                 ("GLS_PORT", int),
+        "connect_timeout_s":    ("GLS_CONNECT_TIMEOUT_S", float),
+        "keepalive_s":          ("GLS_KEEPALIVE_S", float),
+        "verify_timeout_s":     ("GLS_VERIFY_TIMEOUT_S", float),
+        "frame_gap_s":          ("GLS_FRAME_GAP_S", float),
+        "stale_s":              ("GLS_STALE_S", float),
+        "expect_template":      ("GLS_EXPECT_TEMPLATE", str),
+        "min_codes":            ("GLS_MIN_CODES", int),
+        "outlier_m":            ("GLS_OUTLIER_M", float),
+        "xy_scale_m_per_count": ("GLS_XY_SCALE_M_PER_COUNT", float),
+        "x_sign":               ("GLS_X_SIGN", int),
+        "y_sign":               ("GLS_Y_SIGN", int),
+        "angle_sign":           ("GLS_ANGLE_SIGN", int),
+        "angle_offset_rad":     ("GLS_ANGLE_OFFSET_RAD", float),
+        "swap_xy":              ("GLS_SWAP_XY", bool),
+        "mount_x_m":            ("GLS_MOUNT_X_M", float),
+        "mount_y_m":            ("GLS_MOUNT_Y_M", float),
+        "mount_yaw_rad":        ("GLS_MOUNT_YAW_RAD", float),
+        "fix_frames":           ("GLS_FIX_FRAMES", int),
+        "fix_spread_xy_m":      ("GLS_FIX_SPREAD_XY_M", float),
+        "fix_spread_yaw_rad":   ("GLS_FIX_SPREAD_YAW_RAD", float),
+        "stationary_s":         ("GLS_STATIONARY_S", float),
+    },
 }
 
-_TOP_LEVEL_SCALARS = {"profile_name": ("PROFILE_NAME", str), "tracked": ("TRACKED", bool),
-                      "platform": ("PLATFORM", str)}
-_NULLABLE_TOP_LEVEL = {"tracked"}
+_TOP_LEVEL_SCALARS = {"profile_name": ("PROFILE_NAME", str), "platform": ("PLATFORM", str)}
 
 PLATFORM_BLVR = "blvr_canopen"
 PLATFORM_QR = "qr_analog"
@@ -884,12 +769,13 @@ def _read_io_names(raw, count, where):
 def _read_do_list(raw, count, where):
     """dio.motion_on / dio.alarm_on -> sorted DO channel numbers, distinct, in 0..num_do-1.
 
-    Operator, 2026-10-02:
-      motion_on  DO00 (movement horn) and DO08: on while the motors turn, any mode.
-      alarm_on   DO01 (alarm horn): on while an AUTO run is active and the protective
-                 field is violated or warning field 1 or 2 is occupied.
-      movement_horn  the motion_on channels that ARE the movement horn (DO00): off while
-                 the alarm horn sounds, so a field switches the sound (2026-10-07).
+    motion_on  on while the motors turn, any mode. MCQ4-4 (operator, 2026-10-27): DO00
+               rotary lamp (also on while the alarm sounds) and DO01 horn.
+    alarm_on   on while an AUTO run is active and the protective field is violated or
+               warning field 1 or 2 is occupied, and during the pre-move warning.
+               DO02 on MCQ4-4.
+    movement_horn  the motion_on channels that are a movement horn: off while the alarm
+               horn sounds, so a field switches the sound (2026-10-07). DO01 on MCQ4-4.
     """
     if not isinstance(raw, list) or not all(isinstance(v, int) and not isinstance(v, bool) for v in raw):
         raise ConfigError(f"{where}: expected a list of DO channel numbers")
@@ -922,21 +808,39 @@ def _read_zone_bytes(raw, where):
     return list(raw)
 
 
-def _read_marker_codes(raw, where):
-    """mls.marker_codes -> the SICK standard-mode marker codes laid on the floor.
+MAX_DESTINATIONS = 8  # PanelState.dest_edge is a 1-based index
 
-    Standard mode decodes 1-7 (manual 8021642 p. 52); which of them are usable
-    depends on the sensor length and marker width (MLSE-0200 + 15 mm: 1-3)."""
-    if not isinstance(raw, list) or not all(isinstance(v, int) and not isinstance(v, bool)
-                                            for v in raw):
-        raise ConfigError(f"{where}: expected a list of integers")
-    if not raw:
-        raise ConfigError(f"{where}: expected at least one code")
-    if len(set(raw)) != len(raw):
-        raise ConfigError(f"{where}: duplicate code in {raw}")
-    if any(not 1 <= v <= 7 for v in raw):
-        raise ConfigError(f"{where}: standard-mode codes are 1..7, got {raw}")
-    return sorted(raw)
+
+def _read_destinations(raw, where):
+    """panel.destinations -> a tuple of (name, di, route_id), in button order.
+
+    Channel ranges and clashes with the other panel inputs are checked in
+    _validate, beside the rest of the panel channels."""
+    if not isinstance(raw, list):
+        raise ConfigError(f"{where}: expected a list of destinations")
+    if len(raw) > MAX_DESTINATIONS:
+        raise ConfigError(f"{where}: at most {MAX_DESTINATIONS} destinations, got {len(raw)}")
+    out = []
+    for i, d in enumerate(raw):
+        at = f"{where}[{i}]"
+        if not isinstance(d, dict):
+            raise ConfigError(f"{at}: expected an object")
+        keys = {"name", "di", "route_id"}
+        if set(d) != keys:
+            raise ConfigError(f"{at}: needs exactly the keys {sorted(keys)}, got {sorted(d)}")
+        name = _coerce(d["name"], str, f"{at}.name").strip()
+        if not name:
+            raise ConfigError(f"{at}.name: must not be empty")
+        di = _coerce(d["di"], int, f"{at}.di")
+        route_id = _coerce(d["route_id"], str, f"{at}.route_id").strip()
+        # the map store's own rule for a file name (amr_navigation/store._plain)
+        if route_id and (re.search(r"[/\\\0]", route_id) or route_id.startswith(".")):
+            raise ConfigError(f"{at}.route_id: {route_id!r} is not a plain route id")
+        out.append((name, di, route_id))
+    names = [n.casefold() for n, _, _ in out]
+    if len(set(names)) != len(names):
+        raise ConfigError(f"{where}: two destinations share a name")
+    return tuple(out)
 
 
 def _read_ramp(raw):
@@ -963,37 +867,6 @@ def _read_ramp(raw):
         out[mode] = {k: _coerce(block[k], int, f"drivers.ramp.{mode}.{k}")
                      for k in ("accel", "decel")}
     return out
-
-
-# pp.expect: the drive-side values verified before a pp move -> (index, name).
-PP_EXPECT_OBJECTS = {
-    "max_torque_permille":    0x6072,
-    "following_error_counts": 0x6065,
-    "position_window_counts": 0x6067,
-    "halt_option":            0x605D,
-    "fault_reaction":         0x605E,
-    "quick_stop_decel":       0x6085,
-}
-
-
-def _read_pp_expect(raw):
-    """pp.expect -> {name: int | None}. Every key present; null means "not
-    configured yet", which keeps pp unavailable rather than failing the load."""
-    block = raw.get("expect")
-    if not isinstance(block, dict):
-        raise ConfigError("pp.expect: missing or not an object")
-    unknown = set(block) - set(PP_EXPECT_OBJECTS)
-    if unknown:
-        raise ConfigError(f"pp.expect: unknown key(s) {sorted(unknown)}")
-    missing = set(PP_EXPECT_OBJECTS) - set(block)
-    if missing:
-        raise ConfigError(f"pp.expect: missing key(s) {sorted(missing)}")
-    return {k: None if block[k] is None else _coerce(block[k], int, f"pp.expect.{k}")
-            for k in PP_EXPECT_OBJECTS}
-
-
-
-
 
 
 def _parse(doc):
@@ -1023,8 +896,7 @@ def _parse(doc):
 
     ns = {}
     for key, (name, want) in _TOP_LEVEL_SCALARS.items():
-        # tracked: null is a value, not a missing key - it means both products.
-        ns[name] = None if key in _NULLABLE_TOP_LEVEL and doc[key] is None else _coerce(doc[key], want, key)
+        ns[name] = _coerce(doc[key], want, key)
 
     for section, fields in schema.items():
         block = doc[section]
@@ -1037,10 +909,8 @@ def _parse(doc):
             allowed |= {"di_names", "do_names", "motion_on", "alarm_on", "movement_horn"}
         if section == "lidar":
             allowed |= {"zone_bytes"}
-        if section == "mls":
-            allowed.add("marker_codes")
-        if section == "pp":
-            allowed.add("expect")
+        if section == "panel":
+            allowed |= {"destinations"}
         unknown = set(block) - allowed
         if unknown:
             raise ConfigError(f"{section}: unknown key(s) {sorted(unknown)}")
@@ -1051,7 +921,6 @@ def _parse(doc):
             ns[name] = _coerce(block[key], want, f"{section}.{key}")
 
     ns["RAMP"] = _read_ramp(doc["drivers"])
-    ns["PP_EXPECT"] = _read_pp_expect(doc["pp"])
     # Sanity-check the counts BEFORE the name lists are sized against them, or
     # "num_di": 0 gets reported as a problem with di_names, which sends the
     # reader to fix the wrong key.
@@ -1070,8 +939,8 @@ def _parse(doc):
         doc["dio"].get("movement_horn", []), ns["DIO_NUM_DO"], "dio.movement_horn")
     ns["LIDAR_ZONE_BYTES"] = _read_zone_bytes(
         doc["lidar"]["zone_bytes"], "lidar.zone_bytes")
-    ns["MLS_MARKER_CODES"] = _read_marker_codes(
-        doc["mls"]["marker_codes"], "mls.marker_codes")
+    ns["PANEL_DESTINATIONS"] = _read_destinations(
+        doc["panel"]["destinations"], "panel.destinations")
     return ns
 
 
@@ -1086,8 +955,6 @@ def _derive(ns):
     # Yaw rate from a left/right difference: omega = (v_right - v_left) / TRACK.
     ns["RAD_S_PER_RPM_DIFF"] = ns["MPS_PER_RPM"] / ns["TRACK_M"]   # 6.46418e-4
     ns["MAX_SPEED_MPS"] = ns["MOTOR_MAX_RPM"] * ns["MPS_PER_RPM"]  # 1.2566 m/s
-    # The tracked slow speed (junction slow zone, RFID speed toggle) follows cruise.
-    ns["AUTO_HIGH_RPM"] = ns["AUTO_RPM"] * ns["AUTO_HIGH_RATIO"]
 
     # 6083h caps both the forward ramp and the rate at which the wheel
     # DIFFERENCE can slew, so it is also the ceiling on yaw acceleration -
@@ -1142,42 +1009,12 @@ def _validate(ns):
     check(g("WHEEL_DIA_M") > 0, "vehicle.wheel_dia_m must be > 0")
     check(g("GEAR_RATIO") > 0, "vehicle.gear_ratio must be > 0")
     check(g("MOTOR_MAX_RPM") > 0, "vehicle.motor_max_rpm must be > 0")
-    check(g("SENSOR_LOOKAHEAD_M") > 0, "vehicle.sensor_lookahead_m must be > 0")
 
 
     # -- drivers ----------------------------------------------------------
     for mode, block in g("RAMP").items():
         check(block["accel"] > 0 and block["decel"] > 0,
               f"drivers.ramp.{mode} accel and decel must be > 0")
-
-    # -- line sensor (mls-marker-plan) -----------------------------------
-    check(0 <= g("MLS_VARIANT") <= 7, f"mls.variant is 2006h:01, 0..7, got {g('MLS_VARIANT')}")
-    check(g("MLS_EVENT_CLEAR") in (-1, 0, 1),
-          f"mls.event_clear is the 2080h:01 reset value 0 or 1, or -1 = off; got {g('MLS_EVENT_CLEAR')}")
-
-    # -- tape localization (tracked plan 3) -------------------------------
-    for key, lo, hi in (("k_odo", 0.0, 0.1), ("amcl_sigma_floor_m", 0.0, 0.2), ("max_lateral_m", 0.0, 0.5),
-                        ("innov_min_m", 0.0, 1.0), ("pose_max_age_s", 0.0, 2.0),
-                        ("sigma_station_m", 0.0, 0.05), ("healthy_window_m", 0.0, 20.0),
-                        ("lost_fault_s", 0.0, 300.0)):
-        v = g(f"TAPE_LOC_{key.upper()}")
-        check(lo < v <= hi, f"tape_loc.{key} must be in ({lo:g}, {hi:g}], got {v:g}"
-              + (" - 2 sigma has to fit the operator's +-10 cm with the stop's own error"
-                 if key == "sigma_station_m" else ""))
-    check(g("TAPE_LOC_SIGMA_STATION_M") < g("TAPE_LOC_SIGMA_JUNCTION_M") <= 0.5,
-          "tape_loc.sigma_junction_m must be above sigma_station_m and at most 0.5")
-    check(g("TAPE_LOC_SIGMA_JUNCTION_M") < g("TAPE_LOC_SIGMA_LOST_M") <= 2.0,
-          "tape_loc.sigma_lost_m must be above sigma_junction_m and at most 2.0")
-    check(0.5 <= g("TAPE_LOC_JUNCTION_LEAD_M") <= 5.0, "tape_loc.junction_lead_m must be in [0.5, 5]")
-    check(2 <= g("TAPE_LOC_LOST_REJECTS") <= 50, "tape_loc.lost_rejects must be in 2..50")
-    for key in ("SITE_MISSION", "SHADOW_CIRCUIT"):
-        v = g(f"TAPE_LOC_{key}")
-        check(bool(re.fullmatch(r"[A-Za-z0-9_-]+", v)),
-              f"tape_loc.{key.lower()} must be a plain name, got {v!r}")
-    check(g("TAPE_LOC_AMCL_PARAMS") in ("default", "lean"),
-          f"tape_loc.amcl_params must be default or lean, got {g('TAPE_LOC_AMCL_PARAMS')!r}")
-    check(not (g("TAPE_LOC_ENABLED") and g("TRACKED") is False),
-          "tape_loc.enabled on a trackless profile (tracked: false): there is no LINE layer to run it in")
 
     # -- bus and timing ---------------------------------------------------
     check(g("CAN_BITRATE") > 0, "can.bitrate must be > 0")
@@ -1267,21 +1104,47 @@ def _validate(ns):
 
     # -- panel ------------------------------------------------------------
     chans = {"di_reset": g("PANEL_DI_RESET"), "di_start": g("PANEL_DI_START"),
-             "di_auto": g("PANEL_DI_AUTO"), "di_manual_arm": g("PANEL_DI_MANUAL_ARM")}
+             "di_auto": g("PANEL_DI_AUTO"), "di_manual_arm": g("PANEL_DI_MANUAL_ARM"),
+             "di_estop_ok": g("PANEL_DI_ESTOP_OK"), "di_continue": g("PANEL_DI_CONTINUE")}
     for key, ch in chans.items():
         check(0 <= ch < g("DIO_NUM_DI"),
               f"panel.{key} ({ch}) must be a channel in 0..{g('DIO_NUM_DI') - 1}")
     # Two functions on one channel is a wiring or config error that would
     # otherwise present as phantom presses - a Reset edge every time Start is
     # pushed - which is a miserable thing to debug from the vehicle.
-    check(len(set(chans.values())) == 4,
+    for name, ch, _route in g("PANEL_DESTINATIONS"):
+        key = f"destination {name}"
+        check(0 <= ch < g("DIO_NUM_DI"),
+              f"panel.destinations {name} di ({ch}) must be a channel in 0..{g('DIO_NUM_DI') - 1}")
+        check(key not in chans, f"panel.destinations: {name} is listed twice")
+        chans[key] = ch
+    check(len(set(chans.values())) == len(chans),
           f"panel channels must be distinct, got {chans}")
     if g("PENDANT_ENABLED"):
         jog = {g("PENDANT_DI_FWD"), g("PENDANT_DI_RVS"), g("PENDANT_DI_LEFT"), g("PENDANT_DI_RIGHT")}
         check(g("PANEL_DI_MANUAL_ARM") not in jog,
               f"panel.di_manual_arm ({g('PANEL_DI_MANUAL_ARM')}) is a pendant channel: "
               "every jog press would also power the drives")
+        check(g("PANEL_DI_ESTOP_OK") not in jog,
+              f"panel.di_estop_ok ({g('PANEL_DI_ESTOP_OK')}) is a pendant channel")
+        check(g("PANEL_DI_CONTINUE") not in jog,
+              f"panel.di_continue ({g('PANEL_DI_CONTINUE')}) is a pendant channel: "
+              "every jog press would also release a waiting run")
+        for name, ch, _route in g("PANEL_DESTINATIONS"):
+            check(ch not in jog,
+                  f"panel.destinations {name} di ({ch}) is a pendant channel: "
+                  "every jog press would also start a run")
+    check(0.5 <= g("PANEL_ESTOP_RESET_TIMEOUT_S") <= 30.0,
+          "panel.estop_reset_timeout_s must be in 0.5..30 s")
     check(g("PANEL_DEBOUNCE_SCANS") >= 1, "panel.debounce_scans must be >= 1")
+    # The DI08 LOW filter delays the PC's emergency picture (never the Flexi Soft's STO):
+    # cap it so a real press is still seen within ~0.2 s.
+    check(1 <= g("PANEL_ESTOP_LOW_SCANS")
+          and g("PANEL_ESTOP_LOW_SCANS") * g("DIO_SCAN_PERIOD_S") <= 0.2 + 1e-9,
+          "panel.estop_low_scans must be >= 1 and at most 0.2 s of DIO scans")
+    check(1 <= g("PANEL_MANUAL_ARM_SCANS")
+          and g("PANEL_MANUAL_ARM_SCANS") * g("DIO_SCAN_PERIOD_S") <= 0.5 + 1e-9,
+          "panel.manual_arm_scans must be >= 1 and at most 0.5 s of DIO scans")
     # A selector change and a pendant press landing in the SAME scan is not a hand: on
     # 2026-09-17 the DIO image showed MANUAL+FWD for 1.02 s mid-route with nobody at the
     # box. Such a coincidence is held back this long before it is believed (0 disables).
@@ -1339,28 +1202,6 @@ def _validate(ns):
           f"imu.retry_period_s ({g('IMU_RETRY_PERIOD_S')}) must exceed "
           f"poll_period_s ({g('IMU_PERIOD_S')})")
 
-    check(0 < g("RFID_TAG_CLEAR_S") <= 5, "rfid.tag_clear_s must be in (0, 5] seconds")
-
-    # -- tracked AUTO speeds (2026-10-08): NORMAL = auto_rpm (0.50 m/s), HIGH = NORMAL x
-    # auto_high_ratio (1.7 -> 0.85 m/s) inside an RFID high zone only. Raising either is a
-    # speed-cap change: README status table, and the operator's explicit say-so.
-    check(0 < g("AUTO_RPM") <= g("MOTOR_MAX_RPM"),
-          "autopilot: need 0 < auto_rpm <= vehicle.motor_max_rpm")
-    check(1 < g("AUTO_HIGH_RATIO") <= 2,
-          "autopilot.auto_high_ratio must be in (1, 2]: HIGH is that multiple of auto_rpm")
-    check(g("AUTO_RPM") * g("AUTO_HIGH_RATIO") <= g("MOTOR_MAX_RPM"),
-          "autopilot: auto_rpm x auto_high_ratio must not exceed vehicle.motor_max_rpm")
-    check(g("HIGH_K_RATIO") > 0 and g("HIGH_KD") >= 0,
-          "autopilot: need high_k_ratio > 0 and high_kd >= 0")
-    check(0.5 <= g("HIGH_RAMP_S") <= 10, "autopilot.high_ramp_s must be in [0.5, 10] s")
-    check(0.3 <= g("HIGH_MARGIN_M") <= 5, "autopilot.high_margin_m must be in [0.3, 5] m")
-    check(0 < g("CURVE_GUARD_KAPPA") <= 2,
-          "autopilot.curve_guard_kappa must be in (0, 2] 1/m")
-    check(0 < g("CURVE_GUARD_E_MM") < g("SENSOR_MAX_MM"),
-          "autopilot.curve_guard_e_mm must be in (0, sensor_max_mm)")
-    check(0 < g("U_TURN_MIN_DEG") < g("U_TURN_MAX_DEG") <= 270,
-          "autopilot: need 0 < u_turn_min_deg < u_turn_max_deg <= 270")
-
     # -- blind run --------------------------------------------------------
     check(0 < g("BLIND_MAX_DISTANCE_M") <= 50,
           "blind_run.max_distance_m must be in (0, 50] m")
@@ -1383,18 +1224,6 @@ def _validate(ns):
           f"blind_run.max_speed_mps ({g('BLIND_MAX_SPEED_MPS')} m/s) needs more than "
           f"blind_run.max_rpm ({g('BLIND_MAX_RPM'):g} r/min)")
 
-    # -- profile position (locked until someone records the decision) -------
-    check(0 < g("PP_MAX_SPEED_MPS") <= g("BLIND_MAX_SPEED_MPS"),
-          "pp.max_speed_mps must be in (0, blind_run.max_speed_mps]")
-    expect = g("PP_EXPECT")
-    for k, v in expect.items():
-        check(v is None or v >= 0, f"pp.expect.{k} must be >= 0 or null")
-    if g("PP_ENABLED"):
-        unset = sorted(k for k, v in expect.items() if v is None)
-        check(not unset, f"pp.enabled is true but pp.expect has null value(s) {unset}")
-        check(g("PP_VENDOR_REF").strip() != "",
-              "pp.enabled is true but pp.vendor_ref is empty - record who "
-              "authorised pp on this 400 W geared motor, when, and on what basis")
     check(g("AUTO_START_DELAY_S") >= 0,
           "timing.auto_start_delay_s must be >= 0")
     check(g("AUTO_START_DELAY_S") <= 10.0,
@@ -1405,34 +1234,37 @@ def _validate(ns):
           f"timing.premove_timeout_s ({g('PREMOVE_TIMEOUT_S')} s) must exceed "
           f"auto_start_delay_s ({g('AUTO_START_DELAY_S')} s) and be at most 30 s")
 
-    # -- rfid -------------------------------------------------------------
-    check(1 <= g("RFID_PORT") <= 65535, "rfid.port must be in 1..65535")
-    # The tag id is the LAST tag_len bytes of the EPC; an EPC is at most 12 bytes
-    # here (96-bit), and our tags carry 4.
-    check(1 <= g("RFID_TAG_LEN") <= 12, "rfid.tag_len must be in 1..12 bytes")
-    for t in g("RFID_IGNORE_TAGS"):
-        try:
-            bytes.fromhex(t)
-        except ValueError:
-            check(False, f"rfid.ignore_tags: {t!r} is not hex")
-        check(len(t) == 2 * g("RFID_TAG_LEN"),
-              f"rfid.ignore_tags: {t!r} must be {2 * g('RFID_TAG_LEN')} hex "
-              f"chars to match tag_len")
-    check(g("RFID_RECV_TIMEOUT_S") > 0, "rfid.recv_timeout_s must be > 0")
-    check(g("RFID_HEARTBEAT_S") >= 0, "rfid.heartbeat_s must be >= 0 (0 = off)")
-    # The timeout has to cover at least one period, or a healthy reader answering
-    # on time is dropped as dead.
-    check(g("RFID_HEARTBEAT_TIMEOUT_S") > g("RFID_HEARTBEAT_S"),
-          "rfid.heartbeat_timeout_s must exceed heartbeat_s")
-    check(g("RFID_EXPECT_WORK_MODE") in (0, 1, 2),
-          "rfid.expect_work_mode must be 0 (answer), 1 (active) or 2 (trigger)")
-    check(0 <= g("RFID_EXPECT_REGION") <= 8, "rfid.expect_region must be in 0..8")
-    check(0 <= g("RFID_EXPECT_POWER_DBM") <= 30, "rfid.expect_power_dbm must be in 0..30 dBm")
-    check(g("RFID_SILENT_WARN_S") > g("RFID_RECV_TIMEOUT_S"),
-          "rfid.silent_warn_s must exceed recv_timeout_s")
-    check(g("RFID_RECONNECT_PERIOD_S") > 0,
-          "rfid.reconnect_period_s must be > 0")
-    check(g("RFID_TAG_HOLD_S") > 0, "rfid.tag_hold_s must be > 0")
+    # -- gls --------------------------------------------------------------
+    check(bool(g("GLS_HOST").strip()), "gls.host must not be empty")
+    check(1 <= g("GLS_PORT") <= 65535, "gls.port must be in 1..65535")
+    for key in ("connect_timeout_s", "keepalive_s", "verify_timeout_s", "frame_gap_s", "stale_s"):
+        check(g(f"GLS_{key.upper()}") > 0, f"gls.{key} must be > 0")
+    # The camera images every ~61 ms (measured 2026-10-30); a gap that long would split
+    # nothing, but one far beyond it delays the last frame before every no-read.
+    check(g("GLS_FRAME_GAP_S") <= 0.5, "gls.frame_gap_s must be at most 0.5 s")
+    check(g("GLS_STALE_S") > g("GLS_FRAME_GAP_S"),
+          f"gls.stale_s ({g('GLS_STALE_S')}) must exceed frame_gap_s ({g('GLS_FRAME_GAP_S')}): "
+          "a frame is only complete after the gap")
+    # Everything downstream assumes the label-CENTRE values: the as-found template output each
+    # code's own position, 27 mm apart (gls6-system.md §5).
+    check("[$XMCL]" in g("GLS_EXPECT_TEMPLATE") and "[$YMCL]" in g("GLS_EXPECT_TEMPLATE"),
+          "gls.expect_template must output [$XMCL] and [$YMCL] (label centre, not each code)")
+    check(1 <= g("GLS_MIN_CODES") <= 16, "gls.min_codes must be in 1..16 (a label has 16 codes)")
+    check(g("GLS_OUTLIER_M") >= 0, "gls.outlier_m must be >= 0 (0 = off)")
+    check(0 <= g("GLS_XY_SCALE_M_PER_COUNT") <= 0.01,
+          "gls.xy_scale_m_per_count must be in 0..0.01 (0 = not measured yet)")
+    for key in ("x_sign", "y_sign", "angle_sign"):
+        check(g(f"GLS_{key.upper()}") in (1, -1), f"gls.{key} must be 1 or -1")
+    for key in ("angle_offset_rad", "mount_yaw_rad"):
+        check(abs(g(f"GLS_{key.upper()}")) <= math.pi, f"gls.{key} must be within +-pi")
+    for key in ("mount_x_m", "mount_y_m"):
+        check(abs(g(f"GLS_{key.upper()}")) <= 2.0, f"gls.{key} must be within +-2 m of base_footprint")
+    # 64 = GlsLink's frame queue; at ~14.6 frames/s that is 4.4 s of standing still
+    check(1 <= g("GLS_FIX_FRAMES") <= 64, "gls.fix_frames must be in 1..64")
+    check(0 < g("GLS_FIX_SPREAD_XY_M") <= 0.05, "gls.fix_spread_xy_m must be in (0, 0.05] m")
+    check(0 < g("GLS_FIX_SPREAD_YAW_RAD") <= 0.2, "gls.fix_spread_yaw_rad must be in (0, 0.2] rad")
+    check(0 < g("GLS_STATIONARY_S") <= 10.0, "gls.stationary_s must be in (0, 10] s")
+
     if g("PLATFORM") == PLATFORM_QR:
         _validate_qr(ns, check)
     return ns
@@ -1443,9 +1275,6 @@ def _validate_qr(ns, check):
     g = ns.__getitem__
 
     # -- things the QR platform does not have --------------------------------
-    check(not g("PP_ENABLED"),
-          "pp.enabled must be false on platform qr_analog - profile position is a "
-          "CiA 402 drive mode and these drivers are analog")
     check(not g("MONITOR_ENABLED"),
           "monitor.enabled must be false on platform qr_analog - it polls BLV-R "
           "drive objects that analog drivers do not have")
@@ -1500,6 +1329,10 @@ def _validate_qr(ns, check):
           f"qr_base.di_estop ({g('QR_DI_ESTOP')}) must be a channel in 0..{g('DIO_NUM_DI') - 1}")
     check(g("QR_DI_ESTOP") not in (g("PANEL_DI_START"), g("PANEL_DI_RESET")),
           "qr_base.di_estop collides with panel.di_start / panel.di_reset")
+    # One E-stop input: the emergency picture (PanelState.estop_ok) is read from it.
+    check(g("PANEL_DI_ESTOP_OK") == g("QR_DI_ESTOP"),
+          f"panel.di_estop_ok ({g('PANEL_DI_ESTOP_OK')}) must be qr_base.di_estop "
+          f"({g('QR_DI_ESTOP')}) on platform qr_analog - the AMR QR has one E-stop input")
     if g("PENDANT_ENABLED"):
         pch = [g(f"PENDANT_DI_{k}") for k in ("FWD", "RVS", "LEFT", "RIGHT")]
         check(g("QR_DI_ESTOP") not in pch, "qr_base.di_estop collides with a pendant channel")
@@ -1651,7 +1484,6 @@ _DERIVED = (
     ("RPM_PER_MPS", "1 / MPS_PER_RPM"),
     ("RAD_S_PER_RPM_DIFF", "MPS_PER_RPM / track_m"),
     ("MAX_SPEED_MPS", "motor_max_rpm \u00b7 MPS_PER_RPM"),
-    ("AUTO_HIGH_RPM", "autopilot.auto_rpm \u00b7 auto_high_ratio - the tracked HIGH speed"),
     ("ACCEL_RPM_S", "drivers.ramp.auto.accel"),
     ("DECEL_RPM_S", "drivers.ramp.auto.decel"),
     ("HORN_HOLD_S", "max(5 \u00b7 loop_period_s, 2 \u00b7 dio.scan_period_s) - "
@@ -1816,19 +1648,6 @@ def describe():
                 "arm time, and the auto pair also sets the ceiling on yaw "
                 "acceleration - see kinematics.max_yaw_accel()."})
 
-    # *** The station-tag rule table lived here. ***
-    # Two rules were loaded from the profile - the branch latch and the
-    # stop-until-Start tags - and both were tape-following: they steered at a
-    # diverter and parked at a station on a fixed route. They are gone with the
-    # feature.
-    #
-    # The RFID reader is NOT gone, and neither is the discipline this table
-    # existed to enforce: a tag id may mean exactly one thing, and the loader
-    # refuses a repeat rather than letting the meaning depend on which rung
-    # reads it first. Whatever consumes tags next - station identity for
-    # localisation is the expected one - wants that rule back, as data in the
-    # profile rather than as code.
-
     # Then the schema's own sections: the named ones in the order above, then
     # whatever is left in the order the profile writes it.
     out.append({"name": "platform", "note": notes.get("platform.*"), "rows": [
@@ -1874,11 +1693,12 @@ def describe():
             rows.append(_row(section, "movement_horn", "DIO_MOVEMENT_HORN", mh, notes,
                              text=(" \u00b7 ".join(f"DO{c:02d}" for c in mh) + " off while the alarm horn sounds") if mh else "none",
                              unit=""))
-        if section == "mls":
-            rows.append(_row(section, "marker_codes", "MLS_MARKER_CODES",
-                             g["MLS_MARKER_CODES"], notes,
-                             text=", ".join(str(c) for c in g["MLS_MARKER_CODES"]),
-                             unit="code"))
+        if section == "panel":
+            dests = g["PANEL_DESTINATIONS"]
+            rows.append(_row(section, "destinations", "PANEL_DESTINATIONS", dests, notes,
+                             text=" · ".join(f"DI{ch:02d} {n} → {r or '(no route)'}"
+                                                  for n, ch, r in dests) or "none",
+                             unit=""))
         if section == "lidar":
             rows.append(_row(section, "zone_bytes", "LIDAR_ZONE_BYTES",
                              g["LIDAR_ZONE_BYTES"], notes,

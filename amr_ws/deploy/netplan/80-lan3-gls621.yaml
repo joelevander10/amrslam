@@ -1,0 +1,17 @@
+# LAN3 (enp3s0) -> SICK GLS621 QR/floor-label camera at 192.168.4.1
+# The PC is the CoLa A client: it connects to the camera's TCP 2112 (results)
+# and 2111 (aux). No gateway, no DNS: link-local peer.
+# enp1s0 = DIO/maintenance (192.168.1.0/24), enp2s0 = nanoScan3 (192.168.3.0/24);
+# each wired port gets its own /24 so no two ports ever route the same subnet.
+#
+# optional: true -> boot does not block if the camera is unplugged.
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    enp3s0:
+      dhcp4: no
+      dhcp6: no
+      addresses:
+        - 192.168.4.2/24
+      optional: true

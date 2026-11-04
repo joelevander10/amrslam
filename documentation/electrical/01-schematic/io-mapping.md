@@ -47,7 +47,7 @@ Same on both drivers. Only the pins below are connected.
 ### CAN bus (sheet 06)
 
 One CAN-to-USB adapter plugs into the **IPC USB port** and feeds a single CAN H / L / GND bus. On that bus:
-Driver 01, Driver 02, the **MLSE line sensor**, and the **battery BMS**.
+Driver 01, Driver 02, the **MLSE (gyro/IMU)**, and the **battery BMS**.
 
 ---
 
@@ -99,7 +99,7 @@ Two SICK nanoScan3 safety lidars (01, 02) are powered from 1P24 / 1N24 through t
 
 Sheets 03, 08, 09. Field wiring is AWG22 blue.
 
-The audio horn (sheet 03, PATLITE) is powered from 1P24 / 1N24. Its COM is jumpered to 1N24 at the horn; a sound plays while its sound input is connected to COM, which DO0 / DO1 do.
+On MCQ4-4 DO0 drives the rotary lamp, DO1 the horn and DO2 the alarm horn (operator, 2026-10-27). Sheet 03 shows a PATLITE audio horn on these two relays, powered from 1P24 / 1N24 with its COM jumpered to 1N24.
 
 ### Supply and Ethernet
 
@@ -115,29 +115,37 @@ The audio horn (sheet 03, PATLITE) is powered from 1P24 / 1N24. Its COM is jumpe
 
 COM0 is tied to 1P24. Each input is a normally-open contact that pulls the input to 1N24 when pressed.
 
+MCQ4-4 assignment, given by the operator 2026-10-27 (supersedes the sheet 09 assignment). The commons below are from the sheets and were not re-checked.
+
 | Input | Device | Notes |
 |---|---|---|
-| DI00 | **PB START** | Other side to 1N24 |
-| DI01 | **PB RESET**, pole 2 (NO) | Same push-button as safety PLC I8 |
-| DI02 | **MANUAL/AUTO selector**, pole 2 (NO) | Same switch as safety PLC I7 |
-| DI03 | Pendant **FORWARD** (NO) | Pendant = 4 × 1NO buttons, all sharing one 1N24 return |
-| DI04 | Pendant **REVERSE** (NO) | |
-| DI05 | Pendant **LEFT** (NO) | |
-| DI06 | Pendant **RIGHT** (NO) | |
-| DI07 | not used | |
-| DI08 | Safety PLC **Q3** | COM1 group: Q3 switches 24 V onto the input. AWG22 orange. |
-| DI09–DI0F | not used | |
+| DI00 | **PB START** | |
+| DI01 | **MANUAL/AUTO selector** | MANUAL when high (`panel.auto_when_on` false) |
+| DI02 | **PB RESET** | |
+| DI03 | Pendant **FORWARD** | |
+| DI04 | Pendant **REVERSE** | |
+| DI05 | Pendant **LEFT** | |
+| DI06 | Pendant **RIGHT** | |
+| DI07 | not connected | |
+| DI08 | **Emergency signal from the safety PLC** | Normally HIGH, LOW = emergency. Named in the profile only; the software still infers an E-stop from the drives dropping out. |
+| DI09 | **Pendant enable / arm** (`panel.di_manual_arm`) | HIGH arms the motors; LOW disarms them in MANUAL and AUTO alike |
+| DI0A | **PB Destination UBC** (`panel.destinations`) | Momentary. In AUTO with no run under way, loads the newest saved mission for its route on the active map and starts it (pre-move warning; PB Start not needed). Route set per button in the profile (2026-11-03) |
+| DI0B | **PB Destination ITG** (`panel.destinations`) | Momentary. In AUTO with no run under way, loads the newest saved mission for its route on the active map and starts it (pre-move warning; PB Start not needed). Route set per button in the profile (2026-11-03) |
+| DI0C | **PB Destination PISTON** (`panel.destinations`) | Momentary. In AUTO with no run under way, loads the newest saved mission for its route on the active map and starts it (pre-move warning; PB Start not needed). Route set per button in the profile (2026-11-03) |
+| DI0D | **PB Continue** (`panel.di_continue`) | Releases a run WAITING at a route wait step and resumes a held run, like Start (2026-10-30, `manuals/gls6-qr/gls-wait-coding-plan.md` §A.2) |
+| DI0E–DI0F | not used | |
 | COM0 | 1P24 | Common for DI00–DI07 |
 | COM1 | 1N24 | Common for DI08–DI0F |
 
 ### Relay outputs
 
-| Output | Status |
-|---|---|
-| DO0 | **Audio horn 01, sound 1** (closes 1N24 onto the horn's sound 1 input) |
-| DO1 | **Audio horn 01, sound 2** (closes 1N24 onto the horn's sound 2 input) |
-| DO2–DO7 | **Spare, nothing connected.** Only the commons are wired (below). |
-| DO8–DOB and their commons | Not used |
+| Output | Device | Software |
+|---|---|---|
+| DO0 | **Rotary lamp** | `dio.motion_on`: HIGH while moving (MANUAL or AUTO) and while the alarm horn sounds, so also during the 2 s pre-move warning |
+| DO1 | **Horn** | `dio.motion_on` + `dio.movement_horn`: HIGH while moving (MANUAL or AUTO), OFF while the alarm horn sounds |
+| DO2 | **Alarm horn** | `dio.alarm_on`: the 2 s pre-move warning after an AUTO Start (`timing.auto_start_delay_s`), and an AUTO run with the protective field or warning field 1/2 occupied |
+| DO3–DO7 | **Spare, nothing connected.** Only the commons are wired (below). | |
+| DO8–DOB and their commons | Not used | |
 
 | Relay common | Goes to |
 |---|---|

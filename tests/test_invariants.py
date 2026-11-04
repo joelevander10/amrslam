@@ -13,8 +13,8 @@ scripted SDO layer rather than a bus:
 The three Controller cases (a partial arm is rolled back, disarm cancels a
 blind run, the fault gate) went with canworker at U11 (2026-09-21); the ROS
 bus owner has them in amr_base/test/test_r05_arm_rollback.py and
-test_canopen.py. What stays is the SDO reply-matching invariant, which the
-shared bench helpers implement.
+test_canopen.py. What stays is the SDO reply-matching invariant (C04) and the segmented-upload
+invariant (C05), which the shared bench helpers implement.
 """
 from helpers import check
 
@@ -92,4 +92,111 @@ def test_sdo_replies_match_the_request():
           st is True and "2 REPLIES" in note, note)
 
 
-TESTS = [test_sdo_replies_match_the_request]
+def test_sdo_segmented_upload():
+    """C05: a segmented upload is finished or aborted, never left open (2026-10-27).
+
+    sdo_read used to take the segmented-initiate reply (e=0, bytes 4-7 = the
+    length) as the value and walk away. The MLS keeps that transfer open and
+    answers the next request with an abort for the OLD object, which the mux
+    filter skips: verify_bus's 1008h read made read_mls snapshot time out on
+    2019h and report the sensor unpowered. _Server models exactly that.
+    """
+    print("\nsdo: segmented uploads complete and leave the server idle")
+    import struct
+
+    import can
+
+    from agv_core.drivers.canbus.verify_drivers import sdo_read
+
+    def frame(node, data):
+        return can.Message(arbitration_id=0x580 + node, data=bytes(data), is_extended_id=False)
+
+    class _Server:
+        """One SDO server. Objects: index -> bytes; >4 bytes upload segmented.
+
+        drop_after / bad_toggle_at / abort_at script a fault in the segment
+        phase. While a transfer is open, a new initiate is answered with an
+        abort for the OPEN object, as the MLS does.
+        """
+
+        def __init__(self, node, objects, drop_after=None, bad_toggle_at=None, abort_at=None):
+            self.node, self.objects = node, objects
+            self.drop_after, self.bad_toggle_at, self.abort_at = drop_after, bad_toggle_at, abort_at
+            self.open = None          # (mux, remaining bytes, segment no.)
+            self.sent, self.live = [], []
+
+        def recv(self, timeout=None):
+            return self.live.pop(0) if self.live else None
+
+        def send(self, m):
+            self.sent.append(bytes(m.data))
+            d, n = bytes(m.data), self.node
+            if d[0] == 0x80:                                   # client abort
+                self.open = None
+            elif d[0] == 0x40:                                 # initiate upload
+                if self.open:
+                    mux = self.open[0]
+                    self.open = None
+                    self.live.append(frame(n, b"\x80" + mux + struct.pack("<I", 0x05040001)))
+                    return
+                mux, val = d[1:4], self.objects[d[1] | d[2] << 8]
+                if len(val) <= 4:
+                    cs = 0x43 | ((4 - len(val)) << 2)
+                    self.live.append(frame(n, bytes([cs]) + mux + val.ljust(4, b"\0")))
+                else:
+                    self.open = (mux, val, 0)
+                    self.live.append(frame(n, b"\x41" + mux + struct.pack("<I", len(val))))
+            elif d[0] & 0xE0 == 0x60 and self.open:            # upload segment
+                mux, rest, k = self.open
+                if k == self.drop_after:
+                    return
+                if k == self.abort_at:
+                    self.open = None
+                    self.live.append(frame(n, b"\x80" + mux + struct.pack("<I", 0x08000020)))
+                    return
+                chunk, rest = rest[:7], rest[7:]
+                toggle = d[0] & 0x10
+                if k == self.bad_toggle_at:
+                    toggle ^= 0x10
+                cs = toggle | ((7 - len(chunk)) << 1) | (0 if rest else 1)
+                self.live.append(frame(n, bytes([cs]) + chunk.ljust(7, b"\0")))
+                self.open = (mux, rest, k + 1) if rest else None
+
+    name = b"MLSE-0200 Standard"                               # 18 bytes: 3 segments
+    objects = {0x1008: name, 0x1000: b"\0\0\0\0", 0x2006: b"\x03"}
+
+    srv = _Server(10, objects)
+    st, val, note, _ = sdo_read(srv, 10, 0x1008, 0, collision_window=0.0)
+    check("a segmented 1008h comes back whole, not as its length",
+          st is True and val == name and note == "ok", f"{st} {val!r} {note}")
+    check("the segments are requested with an alternating toggle",
+          [f[0] for f in srv.sent] == [0x40, 0x60, 0x70, 0x60], [hex(f[0]) for f in srv.sent])
+    st, val, note, _ = sdo_read(srv, 10, 0x1000, 0, collision_window=0.0)
+    check("the next read after a segmented one is answered (the MLS regression)",
+          st is True and val == b"\0\0\0\0", f"{st} {val!r} {note}")
+
+    st, val, _, _ = sdo_read(srv, 10, 0x2006, 1, collision_window=0.0)
+    check("an expedited one-byte reply is unchanged", st is True and val == b"\x03", f"{st} {val!r}")
+
+    srv = _Server(10, objects, drop_after=1)
+    st, _, note, _ = sdo_read(srv, 10, 0x1008, 0, timeout=0.05, collision_window=0.0)
+    check("a segment that never arrives is a timeout, and the transfer is aborted",
+          st is None and srv.sent[-1][0] == 0x80
+          and struct.unpack_from("<I", srv.sent[-1], 4)[0] == 0x05040000 and srv.open is None,
+          f"{st} {note} {srv.sent[-1].hex(' ')}")
+    st, _, _, _ = sdo_read(srv, 10, 0x1000, 0, collision_window=0.0)
+    check("after an aborted transfer the next read is answered", st is True, f"{st}")
+
+    srv = _Server(10, objects, bad_toggle_at=1)
+    st, code, note, _ = sdo_read(srv, 10, 0x1008, 0, collision_window=0.0)
+    check("a toggle out of step is refused with an abort we send (05030000)",
+          st is False and code == 0x05030000 and srv.sent[-1][0] == 0x80 and srv.open is None,
+          f"{st} {code} {note}")
+
+    srv = _Server(10, objects, abort_at=1)
+    st, code, _, _ = sdo_read(srv, 10, 0x1008, 0, collision_window=0.0)
+    check("a server abort mid-transfer is reported with its code",
+          st is False and code == 0x08000020, f"{st} {code}")
+
+
+TESTS = [test_sdo_replies_match_the_request, test_sdo_segmented_upload]

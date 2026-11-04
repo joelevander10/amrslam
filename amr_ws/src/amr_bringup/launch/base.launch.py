@@ -3,16 +3,17 @@
     supervised:=true   mux and drive_node require the supervisor's ControlLease
                        and the keyboard teleop input is off (production);
                        false = unsupervised bench (wrappers), no lease needed
-    real:=true    drive_node (can0), panel_node (DIO) or fake panel, nanoScan3
+    real:=true    drive_node (can0), panel_node (DIO) or fake panel, nanoScan3,
+                  gls_node (GLS621 floor-label camera) when gls.enabled
                   - or, for a platform qr_analog profile (AGV_PROFILE=amr-qr-01),
                   qr_base_node (analog drives, CANopen encoders, WitMotion IMU and
                   the panel, one owner) + nanoScan3
-    real:=false   fake_base, fake_imu, fake_panel, optional scan_synth (the profile's
-                  geometry, so a QR sim is a QR-sized vehicle)
+    real:=false   fake_base, fake_imu, fake_panel, fake_gls, optional scan_synth (the
+                  profile's geometry, so a QR sim is a QR-sized vehicle)
     both          exactly one robot_state_publisher, cmd_mux, diff_drive_odom,
                   imu_bias, scan_gate, ekf_local
 
-No web app, no Foxglove, no SLAM, no AMCL: those are the supervisor's other
+No web app, no SLAM, no AMCL: those are the supervisor's other
 groups. Every node listed as REQUIRED ends the launch when it exits, so a
 dead node cannot hide behind a live `ros2 launch` parent.
 
@@ -21,6 +22,7 @@ Domain guard: real:=true needs ROS_DOMAIN_ID=10; real:=false refuses it.
 
 import os
 
+from agv_core import config as vehicle_config
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
@@ -120,18 +122,10 @@ def _compose(context):
         )
         if cfg("lidar").perform(context).lower() == "true":
             actions.append(include("amr_bringup", "scanner.launch.py"))
-        # RFID reader (2026-10-02): optional - a missing reader leaves plain line
-        # following and SLAM untouched; respawns so a late cable recovers by itself.
-        actions.append(
-            Node(
-                package="amr_base",
-                executable="rfid_node",
-                name="rfid_node",
-                output="screen",
-                respawn=True,
-                respawn_delay=5.0,
-            )
-        )
+        if vehicle_config.GLS_ENABLED:
+            # NOT required: the camera is outside the safety path, and an unplugged or
+            # misconfigured one must never take the base down (gls_node docstring)
+            actions.append(Node(package="amr_base", executable="gls_node", name="gls_node", output="screen"))
     else:
         actions += required(
             Node(
@@ -144,6 +138,15 @@ def _compose(context):
             "fake_base",
         )
         actions.append(Node(package="amr_sim", executable="fake_imu_node", name="fake_imu", output="screen"))
+        actions.append(
+            Node(
+                package="amr_sim",
+                executable="fake_gls_node",
+                name="fake_gls",
+                output="screen",
+                parameters=[{"labels": cfg("sim_gls_labels")}],
+            )
+        )
         actions.append(
             Node(
                 package="amr_sim",
@@ -171,14 +174,16 @@ def _compose(context):
             executable="cmd_mux_kinematics_node",
             name="cmd_mux_kinematics",
             output="screen",
-            # Autonomous starts at 0.3 m/s^2 (2026-10-02, was 0.15): 2.0 s to the 0.60 trackless
-            # speed, 2.5 s to the 0.75 tracked cruise; 0.85 s to 0.34 rad/s. Stops
+            # Autonomous starts at 0.3 m/s^2 (2026-10-02, was 0.15): 2.0 s to the 0.60 m/s
+            # trackless ceiling; 0.85 s to 0.34 rad/s. Stops
             # at the hardware-class 0.5 m/s^2 / 1.0 rad/s^2, stated explicitly: leaving delta_max at
             # its "same as alpha_max" default made every Spin coast 2.6 deg past its target
             # (0.19 rad/s stopped at 0.4 rad/s^2, vehicle 2026-09-17).
-            # Manual (pendant / browser jog, 2026-09-18): 0.5 m/s, S-curve to 0.3 m/s^2 with
-            # 1.0 m/s^3 (1.9 s to full speed); driving + turning arcs with the slow wheel at 66 %
-            # of the fast one; a spin in place stays at 0.3 rad/s.
+            # Manual (pendant / browser jog, 2026-09-18): 0.5 m/s, S-curve with 1.0 m/s^3;
+            # driving + turning arcs with the slow wheel at 66 % of the fast one; a spin in
+            # place stays at 0.3 rad/s. 2026-11-02: softened to 0.15 m/s^2 up (3.5 s to full
+            # speed) and 0.25 m/s^2 down (~0.56 m from 0.5 m/s on release) - manual only, AUTO
+            # keeps a_max/d_max. A timeout or loss of authority still zeroes at once (6084h).
             parameters=[
                 {
                     **gate,
@@ -191,12 +196,18 @@ def _compose(context):
                     "field_source": "scanner" if real else "assume_clear",
                     # path indices, polarity, the x0.5 factor and the warning-2 stop distance: config/scanner_fields.yaml
                     **scanner_fields.mux_params(scanner_fields.load()),
-                    "a_max": 0.3,
+                    # auto speed changes take twice as long (owner 2026-11-03, after the field
+                    # runs): a_max and d_max halved, auto_jerk quartered, so dv/a + a/j doubles.
+                    # 0 -> 0.60 m/s in 6.9 s / 2.0 m; 0.60 -> 0.30 before an arc in 3.5 s / 1.6 m.
+                    "a_max": 0.1,  # auto start acceleration: 0.3 -> 0.2 -> 0.1 m/s^2 (2026-11-03)
                     "alpha_max": 0.4,
-                    "d_max": 0.5,
+                    "d_max": 0.125,  # auto braking, not field/emergency stops: 0.5 -> 0.25 -> 0.125
                     "delta_max": 1.0,
-                    "manual_a_max": 0.3,
+                    "manual_a_max": 0.15,
+                    "manual_d_max": 0.25,
                     "manual_jerk": 1.0,
+                    "auto_jerk": 0.1,  # auto linear speed S-curve: 0.4 -> 0.1 m/s^3 (2026-11-03)
+                    "field_d_max": 0.5,  # warning-field slowdowns keep the old braking (not softened)
                     "pendant_v_m_s": 0.5,
                     "pendant_w_rad_s": 0.39,
                     "pendant_turn_ratio": 0.66,  # manual corner: inner wheel 66 % of the outer
@@ -236,7 +247,7 @@ def _compose(context):
         ),
         "scan_gate",
     )
-    if supervised:  # the /blind replacement (unified plan §7.2); an exclusive IDLE substate
+    if supervised:  # the blind run (/blindrun page, unified plan §7.2); an exclusive IDLE substate
         actions.append(
             Node(
                 package="amr_base",
@@ -282,6 +293,11 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("scan_synth", default_value="false", description="sim: raycast the world"),
             DeclareLaunchArgument("world_yaml", default_value=default_world()),
             DeclareLaunchArgument("clutter_count", default_value="0"),
+            DeclareLaunchArgument(
+                "sim_gls_labels",
+                default_value="",
+                description="sim: floor labels the fake GLS can see, 'id,x,y,yaw_rad;...' in the map frame",
+            ),
             OpaqueFunction(function=_compose),
         ]
     )

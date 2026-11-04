@@ -1,5 +1,6 @@
-// Blind-run form on /commissioning: one move per plan, backend PV or PP.
-// The page only SETS numbers. The job runs on a fresh physical Start under MANUAL.
+// Blind-run form on /blindrun: one move per plan, profile velocity (PP was removed 2026-10-30).
+// The page only SETS numbers. The job runs on a fresh physical Start under MANUAL; an
+// E-stop aborts it (hold the move again and re-run it).
 // Pure helpers live on BR (a `var`, so the test harness can reach them); the DOM
 // wiring runs only when the page's form is present.
 var BR = (function () {
@@ -14,10 +15,8 @@ var BR = (function () {
       return x;
     };
     const speed = n(f.speed, 'speed');
-    const cap = f.backend === 'pp' ? caps.pp_max_speed_mps : caps.max_speed_mps;
+    const cap = caps.max_speed_mps;
     if (isFinite(speed) && !(speed >= 0.05 && speed <= cap + 1e-9)) errors.push(`speed must be 0.05–${cap} m/s`);
-    if (f.backend !== 'pv' && f.backend !== 'pp') errors.push('backend must be PV or PP');
-    if (f.backend === 'pp' && !caps.pp_available) errors.push(`PP not available: ${caps.pp_reason || 'locked'}`);
     let seg = null, label = '';
     if (f.kind === 'straight') {
       const d = n(f.distance, 'distance');
@@ -41,8 +40,8 @@ var BR = (function () {
     } else {
       errors.push('pick a move type');
     }
-    const id = `${label}-${f.backend}`.replace(/[^A-Za-z0-9_.-]/g, '_').replace(/^[^A-Za-z0-9]+/, '').slice(0, 64);
-    const plan = { id, backend: f.backend, speed: { speed_mps: round(speed, 3) }, segments: seg ? [seg] : [] };
+    const id = label.replace(/[^A-Za-z0-9_.-]/g, '_').replace(/^[^A-Za-z0-9]+/, '').slice(0, 64);
+    const plan = { id, speed: { speed_mps: round(speed, 3) }, segments: seg ? [seg] : [] };
     return { plan, errors };
   }
 
@@ -67,7 +66,7 @@ var BR = (function () {
 
   function form() {
     return {
-      kind, backend: $('br-backend').value, speed: $('br-speed').value,
+      kind, speed: $('br-speed').value,
       direction: kind === 'straight' ? $('br-dir').value : $('br-rot').value,
       side: $('br-side').value, distance: $('br-distance').value,
       angle: kind === 'rotate' ? $('br-rot-angle').value : $('br-arc-angle').value, radius: $('br-radius').value,
@@ -94,11 +93,7 @@ var BR = (function () {
     $('br-warn').hidden = !warn.length;
     $('br-warn').textContent = warn.join(' ');
     $('br-errors').textContent = errors.join(' · ');
-    const pp = $('br-backend').querySelector('option[value="pp"]');
-    pp.disabled = !caps.pp_available;
-    pp.textContent = caps.pp_available ? 'PP — profile position (in the drive)' : `PP — unavailable: ${caps.pp_reason || 'locked'}`;
-    if (!caps.pp_available && $('br-backend').value === 'pp') $('br-backend').value = 'pv';
-    $('br-speed').max = String(f.backend === 'pp' ? caps.pp_max_speed_mps : caps.max_speed_mps);
+    $('br-speed').max = String(caps.max_speed_mps);
     $('btn-plan').disabled = !!errors.length || !$('br-check').checked;
   }
 
@@ -107,7 +102,6 @@ var BR = (function () {
     if (!p) { $('planned').innerHTML = '<div class="none">no plan held</div>'; return; }
     const s = p.segments[0], c = s.commanded;
     const rows = [
-      ['backend', p.backend.toUpperCase(), ''],
       ['wheel counts L / R', `${esc(s.counts[0])} / ${esc(s.counts[1])}`, 'driver terms'],
       ['wheel travel L / R', `${num(s.left_m, 4)} / ${num(s.right_m, 4)}`, 'm'],
       ['commanded dx / dy', `${num(1000 * c.dx_m, 1)} / ${num(1000 * c.dy_m, 1)}`, 'mm'],
@@ -115,11 +109,6 @@ var BR = (function () {
       ['faster wheel', num(s.dom_rpm, 0), 'motor r/min'],
       ['planned time', num(s.duration_s, 1), 's'],
     ];
-    if (p.pp) {
-      const w = x => `${esc(x.velocity_rpm)} r/min · ${esc(x.accel_rpm_s)}/${esc(x.decel_rpm_s)} r/min/s`;
-      rows.push(['pp left', w(p.pp.left), ''], ['pp right', w(p.pp.right), ''],
-        ['pp ratio rounding', num(p.pp.ratio_error * 100, 3), '%']);
-    }
     $('planned').innerHTML = rows.map(([k, v, u]) =>
       `<div class="row"><span class="k">${esc(k)}</span><span class="v">${v}<i>${esc(u)}</i></span></div>`).join('');
   }
@@ -136,7 +125,7 @@ var BR = (function () {
     const { status, data } = await apiGet('/api/commissioning/capabilities');
     if (status === 200 && data) {
       caps = data;
-      $('br-speed-cap').textContent = `max ${caps.max_speed_mps} m/s (PP ${caps.pp_max_speed_mps})`;
+      $('br-speed-cap').textContent = `max ${caps.max_speed_mps} m/s`;
       $('br-radius').min = String(caps.min_arc_radius_m);
       $('br-radius-min').textContent = `≥ ${caps.min_arc_radius_m.toFixed(3)} m`;
       refresh();
@@ -148,7 +137,6 @@ var BR = (function () {
     if (status === 200 && data) {
       tiles('job', [
         ['Phase', data.phase_name, data.plan_id || '—', PHASE_LEVEL[data.phase_name], 'key'],
-        ['Backend', (data.backend || 'pv').toUpperCase(), data.run_id || '—'],
         ['Segment', `${data.segment}/${data.segments}`, data.kind || '—'],
         ['Progress L', num(data.progress_left_m, 3), 'm'],
         ['Progress R', num(data.progress_right_m, 3), 'm'],
@@ -159,7 +147,7 @@ var BR = (function () {
       $('job-reason').textContent = data.reason || '';
       $('job-evidence').innerHTML = data.results_path ? `evidence: <code>${esc(data.results_path)}</code>` : '';
       if (data.results_path && data.results_path !== tick.lastPath) { tick.lastPath = data.results_path; loadHistory(); }
-    } else if (status === 200) tiles('job', [['Phase', '–', 'no commissioning node (supervised base only)', 'warn']]);
+    } else if (status === 200) tiles('job', [['Phase', '–', 'no blind-run node (supervised base only)', 'warn']]);
     setTimeout(tick, 500);
   }
 
@@ -178,13 +166,13 @@ var BR = (function () {
     if (status !== 200 || !Array.isArray(data)) return;
     const sel = $('ms-run'), keep = sel.value;
     sel.innerHTML = data.filter(r => !r.error_reading).map(r =>
-      `<option value="${esc(r.run)}">${esc(r.measured ? '✓ ' : '')}${esc(r.backend.toUpperCase())} · ${esc(moveText(r.commanded))} · ${esc(r.phase)} · ${esc(r.run)}</option>`).join('');
+      `<option value="${esc(r.run)}">${esc(r.measured ? '✓ ' : '')}${esc(moveText(r.commanded))} · ${esc(r.phase)} · ${esc(r.run)}</option>`).join('');
     if (keep && data.some(r => r.run === keep)) sel.value = keep;
     showCommanded();
-    $('history').innerHTML = '<div class="row br-hist head"><span>backend · move</span><span>speed</span><span>commanded dx/dy/hdg</span><span>measured</span><span>error</span></div>' +
+    $('history').innerHTML = '<div class="row br-hist head"><span>move</span><span>speed</span><span>commanded dx/dy/hdg</span><span>measured</span><span>error</span></div>' +
       (data.length ? data.map(r => r.error_reading
         ? `<div class="row br-hist"><span class="k">${esc(r.run)}</span><span class="n">unreadable: ${esc(r.error_reading)}</span></div>`
-        : `<div class="row br-hist"><span class="k">${esc(r.backend.toUpperCase())} · ${esc(moveText(r.commanded))}<br><i class="n">${esc(r.phase)}${r.reason ? ' · ' + esc(r.reason) : ''}</i></span>` +
+        : `<div class="row br-hist"><span class="k">${esc((r.backend || 'pv') === 'pv' ? '' : r.backend.toUpperCase() + ' · ')}${esc(moveText(r.commanded))}<br><i class="n">${esc(r.phase)}${r.reason ? ' · ' + esc(r.reason) : ''}</i></span>` +
           `<span class="v">${fmt(r.speed_mps, 2)}</span>` +
           `<span class="v">${r.commanded ? `${fmt(r.commanded.dx_mm, 0)} / ${fmt(r.commanded.dy_mm, 0)} / ${fmt(r.commanded.heading_deg, 1)}°` : '–'}</span>` +
           `<span class="v">${r.measured ? `${fmt(r.measured.dx_mm, 0)} / ${fmt(r.measured.dy_mm, 0)} / ${fmt(r.measured.heading_deg, 1)}°` : '–'}</span>` +
@@ -210,7 +198,7 @@ var BR = (function () {
   }
 
   document.querySelectorAll('#br-kinds button').forEach(b => { b.onclick = () => setKind(b.dataset.kind); });
-  ['br-backend', 'br-speed', 'br-dir', 'br-rot', 'br-side', 'br-distance', 'br-rot-angle', 'br-arc-angle', 'br-radius', 'br-check']
+  ['br-speed', 'br-dir', 'br-rot', 'br-side', 'br-distance', 'br-rot-angle', 'br-arc-angle', 'br-radius', 'br-check']
     .forEach(id => { $(id).oninput = refresh; $(id).onchange = refresh; });
   $('btn-plan').onclick = hold;
   $('btn-clear').onclick = () => api('/api/commissioning/clear').then(r => log(r.data.message));
@@ -224,7 +212,6 @@ var BR = (function () {
   $('btn-measure').onclick = saveMeasurement;
   setKind('straight');
   loadCaps();
-  setInterval(loadCaps, 2000);  // PP availability follows the drive owner
   loadHistory();
   tick();
 })();

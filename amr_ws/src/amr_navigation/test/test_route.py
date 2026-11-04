@@ -580,7 +580,7 @@ def test_r23_existing_revision_is_never_replaced(tmp_path):
     assert b"other" not in open(path, "rb").read()
 
 
-# ---- ONE trackless speed, 0.60 m/s, a vehicle constant (2026-10-02) ----
+# ---- ONE trackless speed, 0.60 m/s (arcs 0.30 since 2026-11-03), a vehicle constant (2026-10-02) ----
 
 
 def test_trackless_speed_is_the_vehicle_constant_and_old_speed_keys_are_dropped():
@@ -678,10 +678,10 @@ def test_arc_step_bounds_geometry_and_speed():
     mid = st.samples[len(st.samples) // 2]
     assert math.hypot(mid[0] - 0.0, mid[1] - 1.0) == pytest.approx(1.0) and 0 < mid[2] < math.pi / 2
     assert c.total_turn_rad == pytest.approx(math.pi / 2) and c.total_length_m == pytest.approx(math.pi / 2)
-    # speed (2026-10-02): the trackless speed, or less where v/R would pass 90 % of the ARC
-    # turn ceiling 0.45 (R 1.0 -> 0.405, R 0.5 -> 0.2025)
-    assert st.v_mps == pytest.approx(0.405) and st.v_mps == arc_speed(r.limits, 1.0)
-    assert arc_speed(r.limits, 5.0) == pytest.approx(0.60) and arc_speed(r.limits, 0.5) == pytest.approx(
+    # speed (2026-11-03): ARC_V_MPS 0.30 whatever the straights run at, or less where v/R would pass 90 % of
+    # the ARC turn ceiling 0.45 (R 0.5 -> 0.2025)
+    assert st.v_mps == pytest.approx(0.30) and st.v_mps == arc_speed(r.limits, 1.0)
+    assert arc_speed(r.limits, 5.0) == pytest.approx(0.30) and arc_speed(r.limits, 0.5) == pytest.approx(
         0.2025
     )
     # cw mirrors; 180 deg ends across the diameter
@@ -786,3 +786,56 @@ def test_rotation_and_arc_sweeps_honour_the_dynamic_area():
     assert not validate(rt, Manifest, g, FP).ok
     v = validate(rt, Manifest, g, FP, dynamic=_dynamic_around(g, r, c, half=4))
     assert v.ok and [i.step_id for i in v.issues if i.code == "provisional"] == ["s2"]
+
+
+# ---- wait steps (gls-wait-coding-plan §A.1, 2026-10-30) ------------------------------
+
+
+def wait(sid, name="UBC hitch", label="x0100y0000"):
+    return Step(sid, "wait", name=name, label_id=label)
+
+
+def test_a_wait_keeps_the_pose_and_round_trips():
+    r = route([straight("s1", 2.0, 0.0), wait("w1"), rotate("s2", "ccw", 180), straight("s3", 0.0, 0.0)])
+    c = compile_route(r)
+    w = c.steps[1]
+    assert w.type == "wait" and w.start == w.end == (2.0, 0.0, 0.0)
+    assert (w.name, w.label_id) == ("UBC hitch", "x0100y0000") and w.samples == []
+    assert c.total_length_m == pytest.approx(4.0) and c.steps[2].start == w.end
+    back = Route.loads(r.dumps())
+    assert back.to_dict() == r.to_dict() and back.steps[1].label_id == "x0100y0000"
+    assert "label_id" not in route([straight("s1", 2.0, 0.0), wait("w1", label=None),
+                                     straight("s2", 3.0, 0.0)]).to_dict()["steps"][1]
+
+
+@pytest.mark.parametrize(
+    "steps, why",
+    [
+        ([wait("w1"), straight("s1", 2.0, 0.0)], "first step"),
+        ([straight("s1", 2.0, 0.0), wait("w1")], "last step"),
+        ([straight("s1", 2.0, 0.0), wait("w1"), wait("w2"), straight("s2", 3.0, 0.0)], "in a row"),
+        ([Step("a1", "arc", direction="ccw", angle_deg=90.0, radius_m=1.0), wait("w1"),
+          straight("s2", 1.0, 3.0)], "follow an arc"),
+    ],
+)
+def test_wait_placement_rules(steps, why):
+    with pytest.raises(RouteError, match=why):
+        compile_route(route(steps))
+
+
+def test_wait_fields_are_strict_and_unknown_types_still_raise():
+    with pytest.raises(RouteError, match="label_id"):
+        Step.from_dict({"id": "w", "type": "wait", "label_id": "X0100Y0000"})
+    with pytest.raises(RouteError, match="name"):
+        Step.from_dict({"id": "w", "type": "wait", "name": "x" * 41})
+    with pytest.raises(RouteError, match="unknown step type"):
+        Step.from_dict({"id": "q", "type": "dwell"})
+    with pytest.raises(RouteError, match="unknown step type"):
+        Step("q", "dwell").to_dict()  # never silently written as a rotate
+
+
+def test_a_wait_is_validated_as_a_standing_footprint():
+    g = build()
+    r = route([straight("s1", 15.0, 0.0), wait("w1"), rotate("s2", "ccw", 180), straight("s3", 2.0, 0.0)])
+    v = validate(r, Manifest, g, FP)
+    assert v.ok, [i.to_dict() for i in v.issues]

@@ -51,7 +51,7 @@ function onState(fn) { stateListeners.push(fn); }
 let lastState = null;
 const MODE_LEVEL = { STARTING: 'warn', TRANSITIONING: 'warn', FAULT: 'bad', STOPPING: 'bad' };
 const LOC_LEVEL = { CHECKING: 'warn', LOST: 'bad' };
-const RUN_LEVEL = { BLOCKED: 'warn', PAUSED: 'warn', FAULT: 'bad' };
+const RUN_LEVEL = { BLOCKED: 'warn', PAUSED: 'warn', WAITING: 'warn', FAULT: 'bad' };
 const FRESH_S = 0.5;  // panel / drives / mux samples older than this are not current
 
 function rail(st) {
@@ -136,11 +136,41 @@ async function pollAlarms() {
 }
 pollAlarms();
 
+// Emergency banner (base.html, emergency-suite plan §5.2): /api/state carries it already
+// decided (alarms.banner); this only draws it. The pages read the same object for their own
+// greyed controls (lastState.banner). --emg-h is the banner's height, taken off the Manual
+// pad's square so the pad stays above the fold at 1280x720 (amr.css .manual .pad).
+const mmss = s => { const t = Math.max(0, Math.floor(+s || 0)); return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`; };
+function emgLayout() {
+  const el = document.getElementById('emg-banner'), on = !!el && !el.hidden;
+  document.documentElement.classList.toggle('emg', on);
+  document.documentElement.style.setProperty('--emg-h', on ? `${el.offsetHeight}px` : '0px');
+}
+function emgBanner(b) {
+  const el = document.getElementById('emg-banner');
+  if (!el) return;
+  el.hidden = !b;
+  if (b) {
+    el.classList.toggle('failed', !!b.failed);
+    document.getElementById('emg-title').textContent = b.title;
+    document.getElementById('emg-since').textContent = mmss(b.since_s);
+    document.getElementById('emg-note').textContent = b.note || '';
+    document.getElementById('emg-steps').innerHTML = (b.steps || []).map(s =>
+      `<li class="${s.done ? 'done' : ''}${s.now ? ' now' : ''}">${esc(s.text)}</li>`).join('');
+    const f = document.getElementById('emg-fail');
+    f.hidden = !b.failed; f.textContent = b.failed_text || '';
+  }
+  emgLayout();
+}
+emgLayout();
+window.addEventListener('resize', emgLayout);
+
 async function poll() {
   try {
     const { status, data } = await apiGet('/api/state');
     if (status === 200) {
       lastState = data;
+      emgBanner(data.banner || null);
       pill('pill-link', 'connected', 'ok');
       railStale(false);
       rail(data);
@@ -267,7 +297,7 @@ async function followOperation(id, onDone) {
     busy = true;
     const { status, data } = await api('/api/role', { role: 'engineer', pin });
     busy = false;
-    if (status === 200) { pad.close(); location.href = '/status'; return; }
+    if (status === 200) { pad.close(); location.href = '/home'; return; }
     pin = ''; draw();
     msg.textContent = (data && data.message) || 'wrong PIN';
   }

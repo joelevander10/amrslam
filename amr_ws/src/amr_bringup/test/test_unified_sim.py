@@ -46,7 +46,7 @@ R1 = QoSProfile(depth=1, reliability=QoSReliabilityPolicy.RELIABLE)
 LATCHED = QoSProfile(
     depth=1, reliability=QoSReliabilityPolicy.RELIABLE, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL
 )
-NAMES = ["STARTING", "IDLE", "MAPPING", "NAVIGATION", "TRANSITIONING", "FAULT", "STOPPING", "LINE"]
+NAMES = ["STARTING", "IDLE", "MAPPING", "NAVIGATION", "TRANSITIONING", "FAULT", "STOPPING"]
 
 
 class Probe(Node):
@@ -262,8 +262,6 @@ def stack(tmp_path_factory):
             "-p",
             "web:=false",
             "-p",
-            "foxglove:=false",
-            "-p",
             f"state_dir:={state}",
             "-p",
             f"maps_dir:={maps}",
@@ -292,11 +290,7 @@ def settled_lease(p: Probe, expect_allowed: int):
 
 def test_unified_workflow_and_layer_restart(stack):
     p, proc, state = stack
-    # The default profile carries both products (tracked null): it boots into LINE
-    # (2026-10-08), and trackless starts from IDLE - the Home switch's request.
-    assert p.wait_mode(7, 90), "LINE at boot"
-    r = p.request_mode(1)
-    assert r.accepted and p.wait_mode(1, 40) and p.wait_op(r.operation_id, 5).status == 1
+    assert p.wait_mode(1, 90), "IDLE at boot"
     settled_lease(p, 1)
     pids0 = base_pids(proc.pid)
     assert len(pids0) >= 4
@@ -376,7 +370,7 @@ def test_unified_workflow_and_layer_restart(stack):
             "can_confirm",
         )
     except AssertionError:
-        # say which readiness rule held it back (fix plan 001 B5: timeout vs refusal)
+        # say which readiness rule held it back (manuals/obsolete/0910-fix-plan-001.md B5: timeout vs refusal)
         if p.loc is not None:
             print(f"   readiness: state {p.loc.state} gen {p.loc.generation}/{p.mode.generation} "
                   f"reason {p.loc.reason!r} code {p.loc.code!r}; jog wheel peak {jog_peak:.2f}, "

@@ -8,6 +8,7 @@ so a re-surveyed map invalidates every route drawn on the old one.
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import asdict, dataclass, field
 
 import yaml
@@ -23,12 +24,34 @@ REVERSE_MAX_M = 2.0
 REVERSE_SPEED_RATIO = 0.5
 # An arc (2026-09-18) drives forward along a circle of radius_m through angle_deg, left
 # (ccw) or right (cw). Bounded: at least an eighth of a circle, at most a half, and a
-# radius of at least twice the wheel track (2 x 0.487 -> 1.0 m). It runs at the trackless
-# speed, lowered only where the yaw rate v/R would exceed VEHICLE_ARC_W_MAX (compiler.arc_speed).
+# radius of at least twice the wheel track (2 x 0.487 -> 1.0 m). It runs at ARC_V_MPS (owner
+# 2026-11-03: 0.30 m/s), lowered further only where the yaw rate v/R would exceed
+# VEHICLE_ARC_W_MAX (compiler.arc_speed).
 ARC = "arc"
 ARC_MIN_DEG, ARC_MAX_DEG = 45.0, 180.0
 ARC_MIN_RADIUS_M = 1.0
 ARC_YAW_RATE_RATIO = 0.9  # of VEHICLE_ARC_W_MAX: headroom for the controller's corrections
+ARC_V_MPS = 0.30  # every arc (corner) at 0.30 m/s, whatever the straights run at (owner 2026-11-03)
+# A wait (2026-10-30, gls-wait-coding-plan §A.1) stops at the previous step's end pose until
+# the operator presses PB Continue (or Start): trolley hitch / release points. `name` is what
+# the operator reads ("UBC hitch"); `label_id` names the GLS floor label under the camera
+# there, a NAME (never a coordinate) checked against the map's label set. Placement rules
+# (never first or last, never two in a row, never straight after an arc) are the compiler's.
+WAIT = "wait"
+WAIT_NAME_MAX = 40
+LABEL_ID_RE = re.compile(r"^x\d{4}y\d{4}$")
+# The home leg (2026-11-03): the route's last step drives forward from wherever the step
+# before it ends to the route's start pose (HOME), arriving on HOME's heading. No parameters:
+# the compiler builds it (amr_navigation.scurve.home_leg), a straight when the vehicle is
+# already on HOME's line, else an S-curve. Bounded: it starts behind HOME, at most
+# HOME_MAX_RUNUP_M back, within HOME_MAX_HEADING_DEG of HOME's heading; the curve never
+# points more than HOME_MAX_SLOPE_DEG off HOME's line nor turns tighter than
+# HOME_MIN_RADIUS_M (owner 2026-11-03: 1.0 m, the arc minimum).
+HOME = "home"
+HOME_MAX_RUNUP_M = 5.0
+HOME_MAX_HEADING_DEG = 20.0
+HOME_MAX_SLOPE_DEG = 30.0
+HOME_MIN_RADIUS_M = 1.0
 
 
 class RouteError(ValueError):
@@ -54,7 +77,24 @@ FRAMES = ("map",)
 # ONE trackless speed (2026-10-02): every forward straight and arc runs at VEHICLE_V_MAX.
 # It is no longer a route setting; the long-straight boost and the separate arc speed are
 # gone. Older files still load: their speed keys (LEGACY_SPEED_LIMITS) are read and dropped.
-VEHICLE_V_MAX = 0.60
+ROUTE_V_MPS = 0.60  # straights; arcs run at ARC_V_MPS (owner 2026-11-03)
+
+
+def _top_speed_cap(v: float) -> float:
+    """v, capped at 95 % of the vehicle's top speed (agv_core.config.MAX_SPEED_MPS, from
+    motor_max_rpm). gvievo-01 (1.26 m/s) keeps 0.60. The AMR QR tops out near 0.28 m/s: a
+    0.60 m/s route there would be clipped by the mux's wheel limit, which flattens the S-curve
+    into a corner at the clip - so its routes are planned at what its wheels can do. No
+    profile (a dev box): the route speed as it is."""
+    try:
+        from agv_core import config  # noqa: PLC0415 - optional: route.py stays usable without it
+
+        return min(v, round(0.95 * float(config.MAX_SPEED_MPS), 2))
+    except Exception:  # noqa: BLE001
+        return v
+
+
+VEHICLE_V_MAX = _top_speed_cap(ROUTE_V_MPS)
 VEHICLE_W_MAX = 0.37  # spin: 0.24 -> 0.34 (+40 %) on 2026-09-18, -> 0.37 (+10 %) on 2026-09-19
 # Arcs turn at v/R: 0.40 m/s on the 1.0 m minimum radius is 0.40 rad/s, above the spin cap.
 # Their own ceiling (the permit w_max of an arc step) keeps 0.40 m/s possible from R 1.0 m.
@@ -139,12 +179,14 @@ class Limits:
 @dataclass
 class Step:
     id: str
-    type: str  # STRAIGHT | ROTATE | REVERSE | ARC
+    type: str  # STRAIGHT | ROTATE | REVERSE | ARC | WAIT | HOME
     to: tuple[float, float] | None = None  # straight: end point (x_m, y_m)
     direction: str | None = None  # rotate / arc: cw | ccw
     angle_deg: float | None = None  # rotate: 45 | 90 | 180 | 270; arc: ARC_MIN_DEG..ARC_MAX_DEG
     distance_m: float | None = None  # reverse: how far back, 0 < d <= REVERSE_MAX_M
     radius_m: float | None = None  # arc: >= ARC_MIN_RADIUS_M
+    name: str = ""  # wait: shown to the operator
+    label_id: str | None = None  # wait: the GLS floor label expected there, or None
 
     def to_dict(self) -> dict:
         if self.type == STRAIGHT:
@@ -159,7 +201,16 @@ class Step:
                 "angle_deg": self.angle_deg,
                 "radius_m": self.radius_m,
             }
-        return {"id": self.id, "type": ROTATE, "direction": self.direction, "angle_deg": self.angle_deg}
+        if self.type == WAIT:
+            d = {"id": self.id, "type": WAIT, "name": self.name}
+            if self.label_id is not None:
+                d["label_id"] = self.label_id
+            return d
+        if self.type == HOME:
+            return {"id": self.id, "type": HOME}
+        if self.type == ROTATE:
+            return {"id": self.id, "type": ROTATE, "direction": self.direction, "angle_deg": self.angle_deg}
+        raise RouteError(f"unknown step type {self.type!r}"[:200], self.id)
 
     @staticmethod
     def from_dict(d: dict) -> Step:
@@ -202,6 +253,16 @@ class Step:
             if r < ARC_MIN_RADIUS_M:
                 raise RouteError(f"arc radius_m must be at least {ARC_MIN_RADIUS_M:g} m, got {r:g}", sid)
             return Step(sid, ARC, direction=direction, angle_deg=a, radius_m=r)
+        if t == WAIT:
+            name = d.get("name", "")
+            if not isinstance(name, str) or len(name) > WAIT_NAME_MAX:
+                raise RouteError(f"wait name must be a string of at most {WAIT_NAME_MAX} characters", sid)
+            label = d.get("label_id")
+            if label is not None and (not isinstance(label, str) or not LABEL_ID_RE.match(label)):
+                raise RouteError(f"wait label_id must look like x0100y0000, got {label!r}"[:200], sid)
+            return Step(sid, WAIT, name=name, label_id=label)
+        if t == HOME:
+            return Step(sid, HOME)
         raise RouteError(f"unknown step type {t!r}"[:200], sid)
 
 

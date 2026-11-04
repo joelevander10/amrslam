@@ -9,6 +9,10 @@ Authority comes from three places, never from the command streams themselves:
     executor's; a stale or invalid panel image is no authority at all. Under
     MANUAL the panel image also carries the jog pendant levels, which win over
     every other manual stream while a direction is held;
+  * the emergency state (PanelState.emergency, amr_base/emergency.py): anything but
+    NORMAL on a fresh panel image is NONE, inhibited, code ESTOP, ahead of every
+    other rule. After NORMAL a hand input held through the Reset stays dead until it
+    has been seen released once (RepressGuard, in the node);
   * the executor's MotionPermit: FOLLOW or ROTATE, expiring 0.3 s after local
     receipt, honoured only under AUTO, only with the AUTONOMOUS lease class,
     and only if it carries the lease's instance and generation.
@@ -29,8 +33,10 @@ from collections import OrderedDict
 from dataclasses import dataclass
 
 # Mirrors amr_interfaces/msg/MuxState.msg. APPEND ONLY; every value needs a NAMES
-# entry (test_gating.test_names_cover_the_enum pins that).
-NONE, TELEOP, FOLLOW, ROTATE, MANUAL, COMMISSIONING, PENDANT, LINE = 0, 1, 2, 3, 4, 5, 6, 7
+# entry (test_gating.test_names_cover_the_enum pins that). 7 (LINE) is retired with the
+# tracked product (2026-10); do not reuse it. 5 (COMMISSIONING) was retired on 2026-10-30 and
+# came back with the blind run on 2026-11-02, with the same meaning.
+NONE, TELEOP, FOLLOW, ROTATE, MANUAL, COMMISSIONING, PENDANT = 0, 1, 2, 3, 4, 5, 6
 NAMES = {
     NONE: "none",
     TELEOP: "teleop",
@@ -39,11 +45,10 @@ NAMES = {
     MANUAL: "manual",
     COMMISSIONING: "commissioning",
     PENDANT: "pendant",
-    LINE: "line",
 }
 
-# ControlLease.allowed bits
-LEASE_MANUAL, LEASE_AUTONOMOUS, LEASE_COMMISSIONING, LEASE_LINE = 1, 2, 4, 8
+# ControlLease.allowed bits (bit 8, LINE, is retired with the tracked product, 2026-10)
+LEASE_MANUAL, LEASE_AUTONOMOUS, LEASE_COMMISSIONING = 1, 2, 4
 
 
 @dataclass(frozen=True)
@@ -63,8 +68,6 @@ class Params:
     pendant_w: float = 0.39  # body rad/s for a spin in place (0.30 until 2026-09-19, +30 %)
     pendant_turn_ratio: float = 0.66  # slow wheel / fast wheel while driving and turning (0.75 until 2026-10-02)
     track_m: float = 0.487  # wheel track, for the arc's yaw rate (config.TRACK_M on the mux)
-    # No LINE ceiling here since 2026-10-02: the follower's two profile speeds
-    # (autopilot.auto_rpm / auto_slow_rpm) are the tracked speeds.
 
 
 def survey_spin_cap(w: float, surveying: bool, cap: float) -> float:
@@ -219,6 +222,26 @@ class Panel:
     rvs: bool = False
     left: bool = False
     right: bool = False
+    emergency: int = 0  # PanelState.emergency; 0 = EMG_NORMAL
+
+
+EMG_NORMAL = 0
+
+
+class RepressGuard:
+    """No motion from a hand held through an emergency (emergency plan §4.3). Blocked from
+    the first not-NORMAL sample until, at NORMAL, every hand input reads released at once:
+    the pendant, the browser jog, teleop. Reset alone never moves the vehicle."""
+
+    def __init__(self) -> None:
+        self.blocked = False
+
+    def update(self, emergency: int, held: bool) -> bool:
+        if emergency != EMG_NORMAL:
+            self.blocked = True
+        elif self.blocked and not held:
+            self.blocked = False
+        return self.blocked
 
 
 @dataclass
@@ -268,12 +291,15 @@ def select(
     drives: Drives | None = None,
     commissioning: Wheels | None = None,
     # APPEND ONLY. select() is called positionally (amr_base/test/test_pendant_gating.py
-    # passes 11 bare arguments), so a parameter inserted above this line re-binds
+    # passes bare arguments), so a parameter inserted above this line re-binds
     # every argument after it with no error anywhere - commissioning wheels
-    # arriving as a line command, which is how a mux stops honouring a job.
-    line: Stamped | None = None,
+    # arriving as another source's command, which is how a mux stops honouring a job.
 ) -> Selection:
     gen = 0
+    if panel is not None and panel.emergency != EMG_NORMAL and _fresh(panel.t_recv, now, p.panel_timeout_s):
+        # Ahead of the lease, the drives and every source: the supervisor withholds the lease
+        # too, but the operator's reason is the E-stop, not "inhibited by supervisor".
+        return Selection(NONE, 0.0, 0.0, "E-stop: emergency not cleared", 0, True, code="ESTOP")
     if p.require_supervisor:
         if lease is None or not _fresh(lease.t_recv, now, p.lease_timeout_s):
             return Selection(NONE, 0.0, 0.0, "no supervisor lease", 0, True, code="NOT_LEASED")
@@ -318,24 +344,6 @@ def select(
             return Selection(TELEOP, 0.0, 0.0, "teleop command timed out", gen, code="SOURCE_TIMED_OUT")
         return Selection(NONE, 0.0, 0.0, "MANUAL, no fresh command", gen, code="NO_SOURCE")
 
-    # Line following: the supervisor grants LEASE_LINE exclusively in LINE mode,
-    # so this is checked BEFORE the AUTONOMOUS bit - a line lease carries no
-    # AUTONOMOUS bit and would otherwise be refused as "AUTO not allowed".
-    #
-    # The follower holds no motion permit (MotionPermit.LINE is reserved and
-    # unused): it publishes a body twist directly, so this branch sits above
-    # the permit machinery rather than inside it. Like COMMISSIONING, it is
-    # checked before anything can fall through it and returns an explicit
-    # refusal rather than falling through to the permit path.
-    #
-    # Freshness alone is the generation check here: the topic is
-    # generation-private (nav_topic), so a replaced layer's stream arrives on a
-    # topic this mux is not subscribed to and cannot look fresh.
-    if p.require_supervisor and (lease.allowed & LEASE_LINE):
-        if line is not None and _fresh(line.t, now, p.cmd_timeout_s):
-            return Selection(LINE, line.v, line.w, "line", gen)
-        return Selection(NONE, 0.0, 0.0, "line: no fresh command", gen, code="SOURCE_TIMED_OUT")
-
     if p.require_supervisor and not (lease.allowed & LEASE_AUTONOMOUS):
         return Selection(NONE, 0.0, 0.0, "AUTO not allowed by supervisor", gen, True, code="NOT_LEASED")
     permit_ok = permit is not None and permit.enabled and _fresh(permit.t_recv, now, p.permit_timeout_s)
@@ -373,7 +381,7 @@ def select(
 # detection latency). Manual sources are untouched - a person is
 # driving, and the physical chain still acts on them.
 
-AUTO_SOURCES = frozenset({FOLLOW, ROTATE, LINE})
+AUTO_SOURCES = frozenset({FOLLOW, ROTATE})
 
 
 @dataclass(frozen=True)
@@ -433,40 +441,11 @@ def field_view(now: float, field: Field | None, fp: FieldParams) -> FieldView:
     return FieldView(True, bool(st[fp.protective_index]), level > 0, level, scale)
 
 
-def warning_target(view: FieldView, fp: FieldParams, slow_exempt: bool = False) -> float:
-    """The speed factor the fields ask for: the strictest occupied warning field's, else 1.0.
-
-    slow_exempt (line_uturn_exempt): a SLOW-DOWN factor (> 0, warning 1) is not applied;
-    a stop (factor 0, warning 2) always is, and the protective field never reaches here.
-    """
+def warning_target(view: FieldView, fp: FieldParams) -> float:
+    """The speed factor the fields ask for: the strictest occupied warning field's, else 1.0."""
     if not view.warning_active:
         return 1.0
-    if slow_exempt and view.warning_scale > 0.0:
-        return 1.0
     return view.warning_scale
-
-
-# The line follower's U-turn phases (LineState.uturn_phase; "approach" is the creep to the
-# tape end after the tag).
-UTURN_PHASES = ("approach", "stopping", "spin", "center", "settle")
-
-
-def line_uturn_exempt(
-    sel: Selection, line_uturn: tuple[float, str] | None, now: float, fresh_s: float, max_v: float
-) -> bool:
-    """Warning 1 does not slow a U-turn (operator, 2026-10-08): the pivot and the creep
-    keep the U-turn speed instead of halving it.
-
-    Only for the LINE source, a fresh LineState saying a U-turn is in progress, and a
-    commanded body speed at or below max_v (the creep, or a pivot at 0) - so the
-    exemption can never carry a cruising vehicle into a warning field, even if the
-    phase were wrong. max_v 0 turns it off. Warning 2 (stop) and the protective field
-    still apply (warning_target, field_limit).
-    """
-    if max_v <= 0.0 or sel.source != LINE or line_uturn is None:
-        return False
-    t, phase = line_uturn
-    return now - t <= fresh_s and phase in UTURN_PHASES and abs(sel.v) <= max_v
 
 
 STOP_MIN_V = 0.05  # m/s: below this a warning stop is timed by warning_decel_s, not distance
@@ -528,7 +507,7 @@ def apply_scale(sel: Selection, k: float) -> Selection:
 
 
 def field_limit(
-    sel: Selection, view: FieldView, p: Params, fp: FieldParams, slow_exempt: bool = False
+    sel: Selection, view: FieldView, p: Params, fp: FieldParams
 ) -> tuple[Selection, float]:
     """Apply the field rules to an AUTO selection. Returns (selection, speed scale).
 
@@ -543,7 +522,7 @@ def field_limit(
         ), 0.0
     if view.fresh and not view.protective_clear:
         return Selection(NONE, 0.0, 0.0, "protective field violated", sel.generation, code="FIELD_PROTECTIVE"), 0.0
-    return sel, warning_target(view, fp, slow_exempt)
+    return sel, warning_target(view, fp)
 
 
 def nav_topic(base: str, generation: int) -> str:

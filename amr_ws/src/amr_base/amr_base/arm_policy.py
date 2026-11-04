@@ -1,14 +1,19 @@
 """Drive power policy (2026-10-08): when drive_node powers the drives. Pure and clock-fed.
 
-    MANUAL   powered while the Manual Arm input (panel.di_manual_arm, DI08) is HIGH
-    AUTO     powered while the active layer asks for it: LineState.drive_power (tape) or
-             RunState.drive_power (trackless). They ask from the pre-move warning after
-             a Start until the run ends or stops in a hold that waits for a human
+    E-STOP   PanelState.emergency not NORMAL (amr_base/emergency.py): never powered, before
+             every rule below. STO has already cut torque; this stops the PC from fighting it
+             (the 2 s re-engage loop against STO, emergency plan §4.2)
+    ARM      the pendant enable (panel.di_manual_arm, DI09 on MCQ4-4) gates BOTH modes:
+             LOW is never powered, whatever the selector says (operator, 2026-10-27)
+    MANUAL   powered while ARM is HIGH
+    AUTO     powered while ARM is HIGH and the executor asks for it: RunState.drive_power.
+             It asks from the pre-move warning after a Start until the run ends or stops
+             in a hold that waits for a human
     else     standby: CANopen up, encoders and the MLS read, power stage off
 
 The drives are no longer powered just because the vehicle is idle. Standby keeps the
-wheel counts flowing, so "at Home", station parking and a vehicle pushed by hand stay
-measured while nothing is powered.
+wheel counts flowing, so a parked vehicle or one pushed by hand stays measured while
+nothing is powered.
 
 This is NOT a safety function and decides nothing about whether moving is safe: the
 FX3 takes STO in hardware whatever this says, and motion still needs the panel, the
@@ -28,6 +33,7 @@ class Panel:
     valid: bool
     mode_auto: bool
     manual_arm: bool
+    emergency: int = 0  # PanelState.emergency; 0 = EMG_NORMAL
 
 
 @dataclass(frozen=True)
@@ -35,7 +41,7 @@ class Ask:
     """One layer's request. t_stamp is the message's own stamp on the monotonic clock, so a
     latched message replayed from a layer that has since died is not fresh."""
 
-    source: str  # "line" | "run"
+    source: str  # "run"
     t_stamp: float
     drive_power: bool
 
@@ -43,7 +49,7 @@ class Ask:
 @dataclass(frozen=True)
 class Params:
     panel_timeout_s: float = 1.0  # /amr/panel_state is 50 Hz
-    ask_timeout_s: float = 2.5  # LineState is on change + 1 Hz, RunState on change + 2 Hz
+    ask_timeout_s: float = 2.5  # RunState is on change + 2 Hz
 
 
 def _fresh(t: float | None, now: float, timeout: float) -> bool:
@@ -61,10 +67,13 @@ def want_power(
         return False, "panel state stale"
     if not panel.valid:
         return False, "panel image invalid"
+    if panel.emergency != 0:
+        return False, "E-stop (DI08)" if panel.emergency == 1 else "waiting for Reset"
+    mode = "AUTO" if panel.mode_auto else "MANUAL"
+    if not panel.manual_arm:
+        return False, f"{mode}, pendant enable (arm) off"
     if not panel.mode_auto:
-        if panel.manual_arm:
-            return True, "MANUAL, Manual Arm on"
-        return False, "MANUAL, Manual Arm (DI08) off"
+        return True, "MANUAL, pendant enable (arm) on"
     for a in asks:
         if a.drive_power and _fresh(a.t_stamp, now, p.ask_timeout_s):
             return True, f"AUTO, the {a.source} run asks for power"

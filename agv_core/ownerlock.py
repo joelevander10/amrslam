@@ -1,8 +1,7 @@
 """Cooperative device-owner locks (unified plan §9.2).
 
 Nothing in the OS stops two processes owning can0 (socketcan admits any
-number of openers), the DIO island (Modbus TCP accepts a second client) or the
-RFID reader (it serves a second TCP client and pushes tags to both).
+number of openers) or the DIO island (Modbus TCP accepts a second client).
 The owners agree instead: whoever will talk to a device takes its lock FIRST,
 before opening a socket or arming anything, and holds it for its whole life.
 
@@ -25,7 +24,7 @@ import fcntl
 import os
 
 DEFAULT_DIR = "/run/lock/amr"
-RESOURCES = ("app", "can", "dio", "scanner", "rfid", "imu")  # imu: the AMR QR serial IMU (qr_base_node)
+RESOURCES = ("app", "can", "dio", "scanner", "gls", "imu")  # imu: the AMR QR serial IMU (qr_base_node)
 
 
 class OwnerBusy(RuntimeError):

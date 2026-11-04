@@ -39,3 +39,9 @@ string fault_code           # alarm catalogue code (agv_core/alarms.py); "" when
 # Start (alarm horn on, no goal sent yet).
 bool drive_power
 bool premove
+# Route wait steps (2026-10-30, gls-wait-coding-plan §A.4). APPEND ONLY.
+uint8 WAITING=7             # stopped at a wait step until Continue (or Start); drives disarmed
+string wait_name            # WAITING: the step's operator name ("UBC hitch"), "" otherwise
+string wait_label_id        # WAITING: the GLS floor label expected there, "" if none
+float64 waiting_s           # WAITING: how long it has waited
+string continue_refused     # WAITING: why the last Continue/Start was refused, "" if none

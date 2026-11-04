@@ -148,7 +148,8 @@ def _send(bus, cs, payload=b"", echo=False):
 def _recv(bus, want_cs=None, timeout=REPLY_TIMEOUT_S):
     """The next LSS reply, or None. Anything that is not on 0x7E4 is ignored.
 
-    The bus carries the MLS stream and drive traffic while this runs, so
+    The bus carries drive traffic while this runs, and the MLS's TPDO1 0x18A
+    may still stream (removal plan D7), so
     filtering by arbitration id is not an optimisation - it is the difference
     between reading a reply and reading a sensor frame.
     """

@@ -111,7 +111,7 @@ only a restart. Rebuild after a pull that adds a package, a node or a message.
 **10. Offline tests** (no hardware)
 ```bash
 cd ~/agv_can && python3 tests/run_all.py | tail -2
-# 782 checks, "all checks passed". The suite pins AGV_PROFILE=agv-01 itself, so the
+# 762 checks, "all checks passed". The suite pins AGV_PROFILE=agv-01 itself, so the
 # amr-qr-01 export from step 7 does not affect it.
 cd amr_ws/src && AGV_PROFILE=agv-01 python3 -m pytest -q amr_base/test/test_qr_*.py \
   amr_base/test/test_wasd_teleop.py amr_localization/test amr_description/test
@@ -305,9 +305,12 @@ Open `http://<robot-ip>:5001/`. The Status page should show Mode `IDLE`, Selecto
 
 ## Part U — Updating from the previous AMR SLAM code
 
-The repo moved to the latest gvievo-01 code (2026-11-02): `config.py`, `core/` and
-`drivers/` became the `agv_core/` library, the legacy controller is gone, and messages
-changed. A plain `git pull` plus a full rebuild does it; nothing on the robot outside
+The repo moved to the latest gvievo-01 code: first gvievo-main (2026-11-02: `config.py`,
+`core/` and `drivers/` became the `agv_core/` library, the legacy controller is gone),
+then **KYB trackless** (2026-11-04: wait steps, Go home, S-curve, Measure, the new page
+layout; the tape/RFID package `amr_line` removed). Messages changed both times. A plain
+`git pull` plus a **full** rebuild does it - `rm -rf build install log` also clears the
+removed `amr_line` package out of the install space. Nothing on the robot outside
 `~/agv_can` changes, and `~/amr_maps` and `~/.amr` are kept.
 
 ```bash
@@ -321,7 +324,7 @@ cd amr_ws && rm -rf build install log
 colcon build --symlink-install && source install/setup.bash
 source env/vehicle.sh
 python3 -c "from agv_core import config; print(config.PROFILE_NAME, config.PLATFORM)"   # amr-qr-01 qr_analog
-cd ~/agv_can && python3 tests/run_all.py | tail -2                                     # 782 checks
+cd ~/agv_can && python3 tests/run_all.py | tail -2                                     # 762 checks
 ```
 `git status` listing `profiles/amr-qr-01.json` or `nanoscan3.amr-qr-01.yaml`: the repo
 already carries the robot's values (IMU 115200 baud, right encoder inverted, measured
@@ -334,4 +337,12 @@ repeat the quick checks: step 14 (`qr_calibrate io / enc / imu`), step 17 on blo
 are off since the lidar was replaced, so `~/.amr/robot_fixed.yaml` and
 `~/.amr/scan_mask.yaml` are no longer read and can be deleted.
 
-What behaves differently after the update: [OPERATE_AMR_QR.md](OPERATE_AMR_QR.md) §0.
+After the restart, press **↻** at the top right of the web page once so the browser
+loads the new pages. Routes and missions saved before the update keep working: a
+mission is compiled when it is loaded, so it runs at the new 0.27 m/s with the S-curve
+without being saved again.
+
+`deploy/netplan/` is KYB's three-port network layout (DIO, nanoScan3 and GLS camera each on
+its own port). **Do not copy it** to the AMR QR: everything here stays on 192.168.1.x.
+
+What behaves differently after the update: [OPERATE_AMR_QR.md](OPERATE_AMR_QR.md) §0 and §4–§5.

@@ -1,53 +1,11 @@
 {
   "profile_name": "amr-qr-01",
-  "tracked": false,
   "platform": "qr_analog",
-  "autopilot": {
-    "dry_run": false,
-    "invert_error": true,
-    "k_ratio": 11.3,
-    "kd": 0.95,
-    "ki": 0.0,
-    "tau_d_s": 0.05,
-    "ti_deadband_mm": 20.0,
-    "i_clamp": 2.0,
-    "sr_pos_frac": 0.0075,
-    "sr_rate_frac": 0.001875,
-    "sr_cap": 0.45,
-    "sr_tau_s": 0.12,
-    "auto_rpm": 500,
-    "auto_u_turn_rpm": 200.0,
-    "u_turn_center_tol_mm": 20.0,
-    "u_turn_resume_delay_s": 1.0,
-    "u_turn_min_deg": 150.0,
-    "u_turn_max_deg": 225.0,
-    "u_turn_center_kp_rpm_per_mm": 1.5,
-    "u_turn_level_tolerance": 1,
-    "auto_high_ratio": 1.7,
-    "high_k_ratio": 11.3,
-    "high_kd": 0.94,
-    "high_ramp_s": 2.0,
-    "high_margin_m": 1.0,
-    "curve_guard_kappa": 0.25,
-    "curve_guard_e_mm": 40.0,
-    "ramp_accel_rpm_s": 950.0,
-    "ramp_jerk_rpm_s2": 4000.0,
-    "sensor_max_mm": 100.0,
-    "sensor_max_step_mm": 40.0,
-    "line_loss_grace_m": 0.075,
-    "sensor_timeout_s": 0.1,
-    "auto_resume_hold_s": 2.0,
-    "dt_nominal_s": 0.02,
-    "inner_wheel_min_rpm": 0.0,
-    "branch_positive_is_left": true,
-    "line_min_track_hz": 40.0
-  },
   "vehicle": {
     "track_m": 0.37652,
     "wheel_dia_m": 0.18,
     "gear_ratio": 30.0,
     "motor_max_rpm": 900.0,
-    "sensor_lookahead_m": 0.1,
     "invert_left": false,
     "invert_right": true
   },
@@ -58,24 +16,6 @@
         "decel": 1600
       }
     }
-  },
-  "rfid": {
-    "enabled": false,
-    "ip": "192.168.1.200",
-    "port": 2022,
-    "interface": "enp2s0",
-    "tag_len": 2,
-    "ignore_tags": [],
-    "recv_timeout_s": 1.0,
-    "silent_warn_s": 60.0,
-    "reconnect_period_s": 2.0,
-    "tag_hold_s": 2.0,
-    "tag_clear_s": 0.5,
-    "heartbeat_s": 0.0,
-    "heartbeat_timeout_s": 3.0,
-    "expect_work_mode": 1,
-    "expect_region": 1,
-    "expect_power_dbm": 30
   },
   "dio": {
     "motion_on": [],
@@ -153,8 +93,14 @@
     "di_auto": 3,
     "auto_when_on": false,
     "debounce_scans": 2,
+    "estop_low_scans": 2,
+    "manual_arm_scans": 3,
     "coincidence_hold_s": 0.0,
-    "di_manual_arm": 4
+    "di_manual_arm": 4,
+    "di_estop_ok": 0,
+    "di_continue": 9,
+    "estop_reset_timeout_s": 3.0,
+    "destinations": []
   },
   "horn": {
     "enabled": false,
@@ -187,35 +133,6 @@
     "bus_v_warn_low": 42.0,
     "bus_v_warn_high": 56.0
   },
-  "mls": {
-    "variant": 3,
-    "marker_codes": [
-      1,
-      2,
-      3
-    ],
-    "polarity_lock": false,
-    "teach_lock": true,
-    "event_clear": -1
-  },
-  "tape_loc": {
-    "enabled": false,
-    "k_odo": 0.01,
-    "amcl_sigma_floor_m": 0.03,
-    "max_lateral_m": 0.1,
-    "innov_min_m": 0.1,
-    "pose_max_age_s": 0.5,
-    "sigma_station_m": 0.025,
-    "sigma_junction_m": 0.2,
-    "junction_lead_m": 1.0,
-    "lost_rejects": 5,
-    "sigma_lost_m": 0.5,
-    "healthy_window_m": 2.0,
-    "lost_fault_s": 30.0,
-    "amcl_params": "default",
-    "site_mission": "test-mru-straight",
-    "shadow_circuit": "C-STRAIGHT"
-  },
   "imu": {
     "enabled": true,
     "poll_period_s": 0.04,
@@ -232,19 +149,6 @@
     "max_segments": 8,
     "max_speed_mps": 0.2
   },
-  "pp": {
-    "enabled": false,
-    "vendor_ref": "",
-    "max_speed_mps": 0.1,
-    "expect": {
-      "max_torque_permille": null,
-      "following_error_counts": null,
-      "position_window_counts": null,
-      "halt_option": null,
-      "fault_reaction": null,
-      "quick_stop_decel": null
-    }
-  },
   "timing": {
     "loop_period_s": 0.02,
     "telemetry_period_s": 0.2,
@@ -252,6 +156,32 @@
     "driver_timeout_s": 0.6,
     "auto_start_delay_s": 2.0,
     "premove_timeout_s": 8.0
+  },
+  "gls": {
+    "enabled": false,
+    "host": "192.168.4.1",
+    "port": 2112,
+    "connect_timeout_s": 2.0,
+    "keepalive_s": 2.0,
+    "verify_timeout_s": 3.0,
+    "frame_gap_s": 0.1,
+    "stale_s": 0.5,
+    "expect_template": "\\x02[iec _GoodReadCond][f][$BC];[$XMCL];[$YMCL];[$AN2P];[$FAMS][e][e]\\x03",
+    "min_codes": 2,
+    "outlier_m": 0.0,
+    "xy_scale_m_per_count": 0.0,
+    "x_sign": 1,
+    "y_sign": 1,
+    "angle_sign": 1,
+    "angle_offset_rad": 0.0,
+    "swap_xy": true,
+    "mount_x_m": 0.0,
+    "mount_y_m": 0.0,
+    "mount_yaw_rad": 0.0,
+    "fix_frames": 15,
+    "fix_spread_xy_m": 0.002,
+    "fix_spread_yaw_rad": 0.009,
+    "stationary_s": 1.0
   },
   "qr_base": {
     "ao_ip": "192.168.1.30",

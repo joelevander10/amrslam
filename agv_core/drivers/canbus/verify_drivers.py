@@ -24,9 +24,13 @@ OK, BAD, WARN = "\033[32mOK\033[0m", "\033[31mFAIL\033[0m", "\033[33mWARN\033[0m
 
 
 def sdo_read(bus, node, index, sub, timeout=0.4, collision_window=0.01):
-    """Expedited SDO upload. Returns (status, payload, note, latency_ms).
+    """SDO upload. Returns (status, payload, note, latency_ms).
 
-    status: True=data, False=SDO abort, None=timeout
+    Expedited, or segmented when the server opens one (string objects such as
+    1008h); a segmented transfer is always finished or aborted, never left open.
+
+    status: True=data, False=SDO abort (payload = the abort code, the server's
+    or the one we sent), None=timeout
     Collects *all* responses in the window so we can detect two devices
     answering on the same Node-ID.
 
@@ -81,10 +85,81 @@ def sdo_read(bus, node, index, sub, timeout=0.4, collision_window=0.01):
     cs = replies[0][0]
     if cs == 0x80:
         return False, struct.unpack_from("<I", replies[0], 4)[0], note, latency_ms
-    if cs & 0xE0 == 0x40:
-        size = 4 - ((cs >> 2) & 0x03) if cs & 0x02 else 4
+    if cs & 0xE0 == 0x40 and cs & 0x02:
+        size = 4 - ((cs >> 2) & 0x03) if cs & 0x01 else 4
         return True, replies[0][4:4 + size], note, latency_ms
-    return False, None, f"unexpected SCS 0x{cs:02X}", latency_ms
+    if cs & 0xE0 == 0x40:
+        # e=0: the server opened a SEGMENTED upload (strings such as 1008h) and
+        # bytes 4-7 are the length, not the value. Left unfinished, the transfer
+        # stays open in the server: the MLS answers our NEXT request with an
+        # abort for this object, which the mux filter skips, and that read times
+        # out (2026-10-27: verify_bus's 1008h read made read_mls snapshot report
+        # the sensor unpowered). Finish it, or abort it so the server is idle.
+        if len(replies) > 1:
+            _sdo_abort(bus, node, mux, SDO_ABORT_GENERAL)
+            return False, SDO_ABORT_GENERAL, f"segmented reply, {note}", latency_ms
+        size = struct.unpack_from("<I", replies[0], 4)[0] if cs & 0x01 else None
+        st, val, seg_note = _upload_segments(bus, node, mux, size, timeout)
+        return st, val, seg_note if seg_note != "ok" else note, latency_ms
+    _sdo_abort(bus, node, mux, SDO_ABORT_BAD_CS)
+    return False, SDO_ABORT_BAD_CS, f"unexpected SCS 0x{cs:02X}", latency_ms
+
+
+SDO_ABORT_TOGGLE = 0x05030000    # toggle bit not alternated
+SDO_ABORT_TIMEOUT = 0x05040000   # SDO protocol timed out
+SDO_ABORT_BAD_CS = 0x05040001    # command specifier not valid or unknown
+SDO_ABORT_GENERAL = 0x08000000   # general error
+SDO_SEGMENTED_MAX = 1024         # no object this bus reads comes near it
+
+
+def _sdo_abort(bus, node, mux, code):
+    """Abort SDO transfer: returns the server to idle so its next request is clean."""
+    bus.send(can.Message(arbitration_id=0x600 + node,
+                         data=bytes([0x80]) + mux + struct.pack("<I", code),
+                         is_extended_id=False))
+
+
+def _upload_segments(bus, node, mux, size, timeout):
+    """The segment phase of an SDO upload. Returns (status, payload, note).
+
+    Segment replies carry no multiplexer, so a reply is ours only if it is a
+    full 8-byte upload-segment frame (scs 0) with the toggle we asked for.
+    Every failure path ends with the transfer aborted, never left open.
+    """
+    out, toggle = bytearray(), 0
+    while True:
+        bus.send(can.Message(arbitration_id=0x600 + node,
+                             data=[0x60 | toggle, 0, 0, 0, 0, 0, 0, 0],
+                             is_extended_id=False))
+        deadline = time.perf_counter() + timeout
+        seg = None
+        while seg is None and time.perf_counter() < deadline:
+            m = bus.recv(timeout=max(0.0, deadline - time.perf_counter()))
+            if m is None:
+                break
+            data = bytes(m.data)
+            if m.arbitration_id != 0x580 + node or len(data) != 8:
+                continue
+            if data[0] == 0x80 and data[1:4] == mux:
+                return False, struct.unpack_from("<I", data, 4)[0], "ok"
+            if data[0] & 0xE0 == 0x00:
+                seg = data
+        if seg is None:
+            _sdo_abort(bus, node, mux, SDO_ABORT_TIMEOUT)
+            return None, None, f"timeout in segment {len(out) // 7 + 1}"
+        if seg[0] & 0x10 != toggle:
+            _sdo_abort(bus, node, mux, SDO_ABORT_TOGGLE)
+            return False, SDO_ABORT_TOGGLE, "segment toggle bit out of step"
+        out += seg[1:8 - ((seg[0] >> 1) & 0x07)]
+        if seg[0] & 0x01:
+            break
+        if len(out) > SDO_SEGMENTED_MAX:
+            _sdo_abort(bus, node, mux, SDO_ABORT_GENERAL)
+            return False, SDO_ABORT_GENERAL, f"segmented value over {SDO_SEGMENTED_MAX} bytes"
+        toggle ^= 0x10
+    if size is not None and len(out) != size:
+        return True, bytes(out), f"segmented: {len(out)} bytes, server announced {size}"
+    return True, bytes(out), "ok"
 
 
 def u32(b):

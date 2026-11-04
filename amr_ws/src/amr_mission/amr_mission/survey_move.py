@@ -1,5 +1,4 @@
-"""Preset survey moves (2026-09-19): "straight X m" and "spin 20/30/45/90/135/180 deg", press
-once (20 and 30 deg added 2026-10-23 for small heading corrections).
+"""Preset survey moves (2026-09-19): "straight X m" and "spin 45/90/135/180 deg", press once.
 
 Pure, clock-fed, no ROS. survey_move_node feeds odometry and stamps and publishes what
 `step` returns as a browser-style ManualCommand, so the mux's MANUAL rules (selector MANUAL,
@@ -20,9 +19,8 @@ import math
 from dataclasses import dataclass
 
 STRAIGHT, ROTATE = "straight", "rotate"
-ROTATE_STEPS_DEG = (20.0, 30.0, 45.0, 90.0, 135.0, 180.0)
+ROTATE_STEPS_DEG = (45.0, 90.0, 135.0, 180.0)
 STRAIGHT_MIN_M, STRAIGHT_MAX_M = 0.05, 10.0
-BROKEN_DEG = 5.0  # a heading correction this large in one move is a wrong match, not drift
 
 
 def wrap(a: float) -> float:
@@ -35,7 +33,7 @@ class MoveError(ValueError):
 
 @dataclass(frozen=True)
 class Profile:
-    v_mps: float = 0.30  # operator decision 2026-09-19
+    v_mps: float = 0.40  # operator decision 2026-11-03 (0.30 from 2026-09-19)
     w_rad_s: float = 0.20
     decel_mps2: float = 0.15  # our own slow-down, gentler than the mux's so it is followed
     decel_rad_s2: float = 0.15
@@ -155,13 +153,6 @@ def check_verdict(move: Move, corr_m: float, corr_rad: float, max_deg: float = 2
     lim_m = max(0.10, max_frac * abs(move.target)) if move.kind == STRAIGHT else 0.10
     ok = corr_rad <= math.radians(max_deg) and corr_m <= lim_m
     text = f"SLAM corrected {corr_m * 100:.0f} cm / {math.degrees(corr_rad):.1f} deg over this move"
-    if corr_rad > math.radians(BROKEN_DEG):
-        # a wrong match is already welded into the graph; driving it again does not undo it
-        # (2026-10-23: 20 deg and 21 deg slips, then a loop that never closed)
-        text += (
-            " - a wrong scan match: the map is broken from here. Abort the survey and start again "
-            "(or continue from the last saved revision)"
-        )
-    elif not ok:
+    if not ok:
         text += " - the map may have slipped here: back up and drive this stretch again, slowly"
     return ok, text

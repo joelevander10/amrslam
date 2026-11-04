@@ -8,8 +8,9 @@ import pytest
 
 URDF = os.path.join(os.path.dirname(__file__), "..", "urdf", "amr.urdf.xacro")
 
-# spec §2.3 minus floor_cam_frame (no camera, reconciliation D-4)
-REQUIRED_LINKS = {"base_footprint", "base_link", "laser_frame", "imu_frame"}
+# spec §2.3, with its floor_cam_frame named gls_frame (the GLS621, gls-wait-coding-plan §B.5):
+# floor_cam_frame itself must not exist, so there is exactly one name for the camera
+REQUIRED_LINKS = {"base_footprint", "base_link", "laser_frame", "imu_frame", "gls_frame"}
 VISUAL_ONLY_LINKS = {"wheel_left", "wheel_right"}
 
 
@@ -33,6 +34,7 @@ def test_links_present(urdf):
 def test_tree_shape(urdf):
     parent_of = _joints(urdf)
     assert parent_of["base_link"] == "base_footprint"
+    assert parent_of["gls_frame"] == "base_footprint"  # on the floor under the lens, z = 0
     for child in ("laser_frame", "imu_frame", "wheel_left", "wheel_right"):
         assert parent_of[child] == "base_link"
 
@@ -76,3 +78,40 @@ def test_args_override():
             o = j.find("origin")
             assert o.get("xyz").split()[0] == "0.42"
             assert o.get("rpy").split()[2] == "0.1"
+
+
+def _gls_origin(root: ET.Element):
+    for j in root.iter("joint"):
+        if j.find("child").get("link") == "gls_frame":
+            o = j.find("origin")
+            return [float(v) for v in o.get("xyz").split()], [float(v) for v in o.get("rpy").split()]
+    raise AssertionError("no gls_frame joint")
+
+
+def test_gls_frame_defaults_and_args(urdf):
+    xyz, rpy = _gls_origin(urdf)
+    assert xyz == [0.0, 0.0, 0.0] and rpy == [0.0, 0.0, 0.0]  # placeholders until the calibration spin
+    out = subprocess.run(
+        ["xacro", URDF, "gls_x:=0.31", "gls_y:=-0.02", "gls_yaw:=0.05"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    xyz, rpy = _gls_origin(ET.fromstring(out.stdout))
+    assert xyz == pytest.approx([0.31, -0.02, 0.0]) and rpy == pytest.approx([0.0, 0.0, 0.05])
+
+
+def test_description_launch_takes_the_gls_mount_from_the_profile():
+    """One source for T_BC: description.launch.py's gls_* defaults are the profile's gls.mount_*."""
+    import importlib.util  # noqa: PLC0415
+
+    from agv_core import config  # noqa: PLC0415
+
+    path = os.path.join(os.path.dirname(__file__), "..", "launch", "description.launch.py")
+    spec = importlib.util.spec_from_file_location("description_launch", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    args = {name: default for name, default, _ in mod.XACRO_ARGS}
+    assert float(args["gls_x"]) == config.GLS_MOUNT_X_M
+    assert float(args["gls_y"]) == config.GLS_MOUNT_Y_M
+    assert float(args["gls_yaw"]) == config.GLS_MOUNT_YAW_RAD

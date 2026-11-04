@@ -19,7 +19,6 @@ the only third-party needs are flask, numpy and pyyaml.
 from __future__ import annotations
 
 import argparse
-import json
 import math
 import os
 import sys
@@ -71,7 +70,7 @@ FOV = math.radians(95.0)
 MODE = {"STARTING": 0, "IDLE": 1, "MAPPING": 2, "NAVIGATION": 3, "TRANSITIONING": 4, "FAULT": 5}
 MAP_STATES = {0: "IDLE", 1: "MAPPING", 2: "RETURN_REVIEW", 3: "SAVING", 4: "SAVED"}
 LOC_STATES = {0: "UNLOCALIZED", 1: "CHECKING", 2: "READY", 3: "LOST"}
-RUN_STATES = {0: "IDLE", 1: "READY", 2: "EXECUTING", 3: "PAUSED", 4: "BLOCKED", 5: "FAULT", 6: "DONE"}
+RUN_STATES = {0: "IDLE", 1: "READY", 2: "EXECUTING", 3: "PAUSED", 4: "BLOCKED", 5: "FAULT", 6: "DONE", 7: "WAITING"}
 DI_NAMES = [
     "spare",
     "start",
@@ -81,7 +80,10 @@ DI_NAMES = [
     "pendant_rvs",
     "pendant_left",
     "pendant_right",
-] + [f"spare{i}" for i in range(8, 16)]
+    "E-stop OK (safety PLC)",  # DI08, panel.di_estop_ok (emergency-suite plan)
+] + [f"spare{i}" for i in range(9, 16)]
+EMG_NAMES = {0: "NORMAL", 1: "ACTIVE", 2: "RESET_NEEDED", 3: "RESETTING", 4: "RESET_FAILED"}
+EMG_RESET_S = 1.5  # the demo's "drives leave STO" time after Reset
 DO_NAMES = ["horn_lights"] + [f"spare{i}" for i in range(1, 16)]
 SCENARIOS = [
     ("idle", "Idle"),
@@ -94,7 +96,8 @@ SCENARIOS = [
     ("runfault", "Run fault"),
     ("lost", "Loc lost"),
     ("layerfault", "Layer fault"),
-    ("commissioning", "Commissioning"),
+    ("estop", "E-stop (run aborted)"),
+    ("resetfail", "E-stop reset failed"),
     ("offline", "Disconnected"),
 ]
 
@@ -235,9 +238,6 @@ class DemoAdapter:
 
     def __init__(self, maps_dir: str, state_dir: str) -> None:
         self.maps_dir = maps_dir
-        self.evidence_dir = os.path.join(state_dir, "commissioning")
-        self.pp_unlocked = False  # the real profile ships pp locked; the DEMO bar can flip it
-        self.comm_plan: dict | None = None
         self.lock = threading.RLock()
         self.sim = Sim(fixtures.surfaces_only(gridio.read(WORLD_YAML)))
         self.live = DemoLive(self)
@@ -248,7 +248,6 @@ class DemoAdapter:
         self.exec_plan: list | None = None
         self.exec_i, self.exec_t = 0, 0.0
         self.seq = 0
-        self.completed_jobs = 0
         self.scenario("idle")
         threading.Thread(target=self._loop, daemon=True, name="demo-sim").start()
 
@@ -257,11 +256,11 @@ class DemoAdapter:
     def _reset(self) -> None:
         self.mode = mode_dict()
         self.panel = {"valid": True, "mode_auto": False}
+        self.estop_ok, self.emg, self.emg_t, self.emg_active_t = True, 0, time.monotonic(), None
         self.drives = {"operational": True, "left": "Operation enabled", "right": "Operation enabled"}
         self.mapping = None
         self.loc = None
         self.run = None
-        self.comm = None
         self.exec_plan = None
         self.offline = False
         self.manual = (0.0, 0.0, 0.0)
@@ -399,30 +398,16 @@ class DemoAdapter:
                     manual_available=True,
                 )
                 self._event(2, "supervisor", "LAYER_EXITED", self.mode["reason"])
-            elif name == "commissioning":
-                self.comm = {
-                    "phase": 1,
-                    "phase_name": "PREPARED",
-                    "generation": 1,
-                    "plan_id": "square_1m",
-                    "segment": 0,
-                    "segments": 8,
-                    "kind": "",
-                    "progress_left_m": 0.0,
-                    "progress_right_m": 0.0,
-                    "speed_mps": 0.0,
-                    "pose_x_m": 0.0,
-                    "pose_y_m": 0.0,
-                    "heading_deg": 0.0,
-                    "gyro_heading_deg": 0.0,
-                    "completed": self.completed_jobs,
-                    "reason": "plan held; press physical Start under MANUAL",
-                    "results_path": "",
-                    "backend": "pv",
-                    "run_id": "",
-                }
-                self.comm_plan = None
-                self.mode["manual_available"] = False
+            elif name in ("estop", "resetfail"):
+                self._nav()
+                s.x, s.y, s.yaw = 4.2, 0.0, 0.0
+                self.loc = self._loc(2)
+                self.panel["mode_auto"] = True
+                self.run = self._run(2, step_index=0, step_id="s1", step_type="straight")
+                self._estop(pressed=True)
+                if name == "resetfail":
+                    self.estop_ok = True
+                    self._emg_set(4)
             elif name == "offline":
                 self.offline = True
             self._event(0, "demo", "SCENARIO", f"scenario -> {name}")
@@ -431,9 +416,9 @@ class DemoAdapter:
         d = {
             "generation": self.mode["generation"],
             "state": state,
-            "map_id": "line_section",
+            "map_id": "aisle_a",
             "revision": 0,
-            "description": "tape arrow A, facing the rack ends",
+            "description": "floor mark A, facing the rack ends",
             "start": {"x": 0.0, "y": 0.0, "theta": 0.0},
             "closure_available": state >= 2,
             "closure_dx_m": 0.031,
@@ -457,44 +442,65 @@ class DemoAdapter:
                     self.run = self._run(5, reason="selector switched to MANUAL during the run")
                     self.exec_plan = None
                 return "AUTO" if self.panel["mode_auto"] else "MANUAL"
-            if what == "estop":
-                op = not self.drives["operational"]
-                st = "Operation enabled" if op else "Switch on disabled"
-                self.drives = {"operational": op, "left": st, "right": st}
-                if not op:
-                    self.exec_plan = None
-                    self.sim.v = self.sim.w = 0.0
-                    if self.run and self.run["state"] == 2:
-                        self.run = self._run(5, reason="drives not operational")
-                return "released" if op else "pressed"
+            if what == "estop":  # press, or twist to release (the PLC still wants Reset)
+                self._estop(pressed=self.estop_ok)
+                return "E-stop pressed" if not self.estop_ok else "E-stop released: press Reset"
             if what == "start":
-                if self.comm and self.comm["phase_name"] == "PREPARED" and not self.panel["mode_auto"]:
-                    self.comm_t = time.monotonic()
-                    run_id = f"{self.comm['plan_id']}-{int(self.comm_t * 1000) % 100_000_000}"
-                    kind = self.comm_plan["segments"][0]["kind"] if self.comm_plan else "straight"
-                    self.comm.update(
-                        phase=2,
-                        phase_name="RUNNING",
-                        segment=1,
-                        kind=kind,
-                        reason="",
-                        run_id=run_id if self.comm.get("backend") == "pp" else "",
-                    )
-                    return "commissioning started"
                 if not self.panel["mode_auto"]:
                     return "Start ignored: selector MANUAL"
                 if self.run and (self.run["state"] == 1 or self.run.get("resume_prepared")):
                     self._start_exec(resume=self.run["state"] != 1)
                     return "EXECUTING"
                 return "Start ignored: nothing ready"
-            if what == "pp":
-                self.pp_unlocked = not self.pp_unlocked
-                return "PP unlocked (demo only)" if self.pp_unlocked else "PP locked"
             if what == "reset":
+                if self.emg in (2, 4) and self.estop_ok:
+                    self._emg_set(3)
+                    return "Reset: resetting…"
+                if self.emg == 3:
+                    return "Reset: already resetting"
+                if self.emg:
+                    return "Reset ignored: the E-stop is still pressed"
                 if self.run and self.run["state"] == 5:
                     self.run = self._run(0, reason="fault acknowledged (physical Reset)")
                 return "reset"
         return "?"
+
+    # ---- emergency (the controller's emergency.py, played by hand) -----------------------
+
+    def _emg_set(self, state: int) -> None:
+        now = time.monotonic()
+        if state != self.emg:
+            self.emg_t = now
+            if state == 0:
+                self.emg_active_t = None
+            elif self.emg_active_t is None:
+                self.emg_active_t = now
+        self.emg = state
+        if state:
+            st = "Switch on disabled"
+            self.drives = {"operational": False, "left": st, "right": st}
+
+    def _estop(self, pressed: bool) -> None:
+        self.estop_ok = not pressed
+        if pressed:
+            self._emg_set(1)
+            self.exec_plan = None
+            self.manual = (0.0, 0.0, 0.0)
+            self.sim.v = self.sim.w = 0.0
+            # owner answer E3: an emergency aborts the run in any state; nothing resumes
+            if self.run and self.run["state"] in (1, 2, 3, 4):
+                self.run = self._run(0, reason="aborted: emergency stop")
+                self._event(2, "route_executor", "ESTOP", "run aborted: emergency stop")
+            self._event(2, "panel", "ESTOP", "E-stop pressed (DI08 LOW)")
+        elif self.emg == 1:
+            self._emg_set(2)
+            self._event(1, "panel", "ESTOP_RESET_NEEDED", "E-stop released, waiting for Reset")
+
+    def _emg_tick(self, now: float) -> None:
+        if self.emg == 3 and now - self.emg_t >= EMG_RESET_S:
+            self._emg_set(0)
+            self.drives = {"operational": True, "left": "Operation enabled", "right": "Operation enabled"}
+            self._event(0, "panel", "ESTOP", "emergency cleared")
 
     # ---- executor ---------------------------------------------------------------------
 
@@ -561,6 +567,7 @@ class DemoAdapter:
             with self.lock:
                 s = self.sim
                 now = time.monotonic()
+                self._emg_tick(now)
                 if self.exec_plan and self.drives["operational"] and self.panel["mode_auto"]:
                     self._exec_tick()
                 elif self.drives["operational"] and not self.panel["mode_auto"] and now < self.manual[2]:
@@ -572,75 +579,6 @@ class DemoAdapter:
                     s.reveal()
                 if self.run and self.run["state"] != 2:
                     self.run.update(pose_x=s.x, pose_y=s.y, pose_yaw=s.yaw)
-                if self.comm and self.comm["phase_name"] == "RUNNING" and self.comm_plan:
-                    self._comm_plan_tick(now)
-                elif self.comm and self.comm["phase_name"] == "RUNNING":
-                    t = now - self.comm_t
-                    seg = min(8, 1 + int(t / 4))
-                    self.comm.update(
-                        segment=seg,
-                        kind="straight" if seg % 2 else "pivot",
-                        progress_left_m=round(0.25 * (t % 4), 3),
-                        progress_right_m=round(0.25 * (t % 4), 3),
-                        speed_mps=0.25 if seg % 2 else 0.0,
-                    )
-                    if t > 32:
-                        self.completed_jobs += 1
-                        self.comm.update(
-                            phase=4,
-                            phase_name="DONE",
-                            speed_mps=0.0,
-                            completed=self.completed_jobs,
-                            reason="8/8 segments",
-                            results_path="~/.amr/commissioning/square_1m-demo.json",
-                        )
-
-    def _comm_plan_tick(self, now: float) -> None:
-        seg = self.comm_plan["segments"][0]
-        dur = max(0.5, float(seg["duration_s"]))
-        f = min(1.0, (now - self.comm_t) / dur)
-        self.comm.update(
-            progress_left_m=round(f * seg["left_m"], 4),
-            progress_right_m=round(f * seg["right_m"], 4),
-            speed_mps=self.comm_plan["speed_mps"] if f < 1.0 else 0.0,
-            heading_deg=round(f * seg["commanded"]["heading_deg"], 2),
-            gyro_heading_deg=round(f * seg["commanded"]["heading_deg"] * 1.004, 2),
-        )
-        if f < 1.0:
-            return
-        self.completed_jobs += 1
-        ev = {
-            "plan_id": self.comm["plan_id"],
-            "phase": "DONE",
-            "reason": "",
-            "plan": self.comm_plan,
-            "results": [],
-            "gyro_heading_deg": self.comm["gyro_heading_deg"],
-            "backend": self.comm.get("backend", "pv"),
-            "run_id": self.comm.get("run_id", ""),
-            "pp_result": {"outcome": "done", "error_counts": [-7, 4]}
-            if self.comm.get("backend") == "pp"
-            else None,
-            "profile": "agv-01 (demo)",
-        }
-        os.makedirs(self.evidence_dir, exist_ok=True)
-        path = os.path.join(
-            self.evidence_dir, f"{self.comm['plan_id']}-{time.strftime('%Y%m%d-%H%M%S')}.json"
-        )
-        with open(path, "w", encoding="utf-8") as fh:
-            json.dump(ev, fh, indent=1)
-        self.comm.update(phase=4, phase_name="DONE", completed=self.completed_jobs, results_path=path)
-
-    def pp_status(self) -> dict:
-        return {
-            "available": self.pp_unlocked,
-            "reason": "" if self.pp_unlocked else "pp locked in the profile (pp.enabled false)",
-            "state": "idle",
-            "run_id": "",
-            "outcome": "",
-            "age_s": 0.1,
-        }
-
     # ---- server.Adapter: state ------------------------------------------------------
 
     def state(self) -> dict:
@@ -668,11 +606,21 @@ class DemoAdapter:
                     "allowed": (1 if self.mode["manual_available"] else 0) | (2 if self.exec_plan else 0),
                 },
                 "panel": dict(self.panel, age_s=0.02),
+                "emergency": {
+                    "state": self.emg,
+                    "state_name": EMG_NAMES[self.emg],
+                    "estop_ok": self.estop_ok,
+                    "since_s": time.monotonic() - self.emg_t,
+                    "active_s": None if self.emg_active_t is None else time.monotonic() - self.emg_active_t,
+                },
                 "drives": dict(self.drives, age_s=0.05),
                 "mux": {
                     "source": src,
                     "inhibited": not self.drives["operational"],
-                    "reason": "" if self.drives["operational"] else "drives not operational",
+                    "code": "ESTOP" if self.emg else "",
+                    "reason": "E-stop"
+                    if self.emg
+                    else ("" if self.drives["operational"] else "drives not operational"),
                     "generation": self.mode["generation"],
                     "left_rad_s": wl,
                     "right_rad_s": wr,
@@ -699,8 +647,6 @@ class DemoAdapter:
         return "demo-instance", self.mode["generation"]
 
     def manual_allowed(self):
-        if self.comm and self.comm["phase_name"] in ("PREPARED", "RUNNING"):
-            return False, "a commissioning job is held or running; clear it first"
         if self.panel["mode_auto"]:
             return False, "selector is AUTO"
         return True, ""
@@ -761,9 +707,7 @@ class DemoAdapter:
     def survey_move_stop(self):
         return False, "no move running"
 
-    def survey_request(self, operation, map_id, description, request_id, cont=None):
-        if cont is not None:
-            return False, "", "demo: continuing a saved survey needs slam_toolbox on the vehicle"
+    def survey_request(self, operation, map_id, description, request_id):
         with self.lock:
             name = {0: "start", 1: "returned", 2: "save", 3: "abort"}[operation]
             if name == "start":
@@ -812,12 +756,6 @@ class DemoAdapter:
 
     def get_operation(self, operation_id):
         return self.ops.get(operation_id)
-
-    def line_clear(self):
-        return True, "cleared"
-
-    def line_mission(self, name):
-        return False, "demo: there is no line layer"
 
     def recover(self):
         with self.lock:
@@ -896,12 +834,21 @@ class DemoAdapter:
             self.run["reason"] = "resume prepared; press physical Start under AUTO"
             return True, "resume prepared"
 
+    def continue_wait(self):
+        with self.lock:
+            if not self.run or self.run.get("state_name") != "WAITING":
+                return False, "nothing is waiting: Continue only releases a wait step"
+        return False, "the demo has no wait steps"
+
     def ack_fault(self):
         with self.lock:
             if not self.run or self.run["state"] != 5:
                 return False, "no fault"
             self.run = self._run(0, reason="fault acknowledged")
             return True, "acknowledged"
+
+    def record_label(self, role, name, note):
+        return False, "label not recorded: the demo has no floor-label camera"
 
     # ---- diagnostics ------------------------------------------------------------------
 
@@ -970,6 +917,7 @@ class DemoAdapter:
         with self.lock:
             di = [False] * 16
             di[3] = self.panel["mode_auto"]
+            di[8] = self.estop_ok
             horn = bool(self.drives["operational"] and (self.sim.v or self.sim.w))
         do = [False] * 16
         do[0] = horn
@@ -984,7 +932,7 @@ class DemoAdapter:
             "scans": int(time.monotonic() * 50) % 10**7,
             "errors": 0,
             "writes": 412,
-            "detail": "192.168.1.30:502 (demo)",
+            "detail": "192.168.1.40:502 (demo)",
             "age_s": 0.02,
         }
 
@@ -1005,87 +953,6 @@ class DemoAdapter:
 
     def events(self, since: int = 0) -> list[dict]:
         return [e for e in self.events_ if e["n"] > since]
-
-    # ---- commissioning ----------------------------------------------------------------
-
-    def commissioning(self) -> dict | None:
-        with self.lock:
-            return (
-                dict(self.comm, age_s=0.1)
-                if self.comm
-                else {
-                    "phase": 0,
-                    "phase_name": "IDLE",
-                    "generation": 1,
-                    "plan_id": "",
-                    "segment": 0,
-                    "segments": 0,
-                    "kind": "",
-                    "progress_left_m": 0.0,
-                    "progress_right_m": 0.0,
-                    "speed_mps": 0.0,
-                    "pose_x_m": 0.0,
-                    "pose_y_m": 0.0,
-                    "heading_deg": 0.0,
-                    "gyro_heading_deg": 0.0,
-                    "completed": self.completed_jobs,
-                    "reason": "",
-                    "results_path": "",
-                    "backend": "pv",
-                    "run_id": "",
-                    "age_s": 0.1,
-                }
-            )
-
-    def commissioning_plan(self, plan_json: str):
-        """The real planner and the real job's backend rules, minus the node around them."""
-        try:
-            from agv_core import (
-                blindrun,  # noqa: PLC0415
-                config,  # noqa: PLC0415
-            )
-
-            from amr_base import commissioning as cj  # noqa: PLC0415
-            from amr_base import pp  # noqa: PLC0415
-
-            spec = json.loads(plan_json)
-            planned = blindrun.plan(spec.get("segments"), spec.get("speed"), 1_080_000)
-            backend = spec.get("backend", "pv")
-            if backend not in cj.BACKENDS:
-                raise ValueError(f"backend must be one of {', '.join(cj.BACKENDS)}")
-            if planned["speed_mps"] > config.BLIND_MAX_SPEED_MPS + 1e-9:
-                raise ValueError(f"speed exceeds blind_run.max_speed_mps ({config.BLIND_MAX_SPEED_MPS:g})")
-            out = dict(planned, backend=backend)
-            if backend == "pp":
-                if len(planned["segments"]) != 1:
-                    raise ValueError("a pp plan is exactly one segment (one move per Start)")
-                if not self.pp_unlocked:
-                    raise ValueError("pp not available: pp locked in the profile (pp.enabled false)")
-                ms = pp.move_spec(planned["segments"][0], config.BLIND_ACCEL_RPM_S, config.BLIND_ACCEL_RPM_S)
-                out["pp"] = cj.pp_spec_dict(ms)
-        except Exception as e:  # noqa: BLE001  - show the planner's own message, as the node does
-            return False, str(e), ""
-        with self.lock:
-            self.scenario("commissioning")
-            self.comm_plan = out if len(planned["segments"]) == 1 else None
-            self.comm.update(
-                segments=len(planned["segments"]),
-                plan_id=str(spec.get("id") or "plan"),
-                backend=backend,
-                speed_mps=0.0,
-            )
-        return (
-            True,
-            f"plan {spec.get('id') or 'plan'} held: press physical Start under MANUAL to run",
-            json.dumps(out),
-        )
-
-    def commissioning_clear(self):
-        with self.lock:
-            self.comm = None
-            self.comm_plan = None
-            self.mode["manual_available"] = True
-            return True, "cleared"
 
 
 # ---- seed data -------------------------------------------------------------------------
@@ -1145,7 +1012,6 @@ BAR = """
   <div style="display:flex;flex-wrap:wrap;gap:4px">
    <button data-p="selector">Selector AUTO/MANUAL</button><button data-p="start">&#9654; Start</button>
    <button data-p="reset">Reset</button>
-   <button data-p="pp" title="Flip the demo PP availability">PP lock</button>
    <button data-p="estop" style="background:#b3261e;color:#fff">E-stop</button>
   </div>
  </div>

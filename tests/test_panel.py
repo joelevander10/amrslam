@@ -152,6 +152,12 @@ def test_panel_profile():
             lambda d: d["panel"].update(di_reset=-1), "channel in 0..")
     refused("debounce_scans below 1 is refused",
             lambda d: d["panel"].update(debounce_scans=0), "debounce_scans")
+    refused("estop_low_scans below 1 is refused",
+            lambda d: d["panel"].update(estop_low_scans=0), "estop_low_scans")
+    refused("an E-stop LOW filter longer than 0.2 s is refused",
+            lambda d: d["panel"].update(estop_low_scans=5), "estop_low_scans")
+    refused("manual_arm_scans below 1 is refused",
+            lambda d: d["panel"].update(manual_arm_scans=0), "manual_arm_scans")
     refused("the panel cannot be enabled without the DI scan that feeds it",
             lambda d: d["dio"].update(enabled=False), "never respond")
 
@@ -162,13 +168,14 @@ def test_panel_profile():
     # 2026-10-02: remapped to documentation/electrical/01-schematic/io-mapping.md
     # (DI00 start, DI01 reset, DI02 selector, DI03-06 pendant), and the selector
     # reads ON = MANUAL (panel.auto_when_on false), per the operator at the panel.
-    check("the shipped profile matches io-mapping.md: DI00 start, DI01 reset, "
-          "DI02 selector",
+    # 2026-10-27 (MCQ4-4, operator): DI00 start, DI01 selector, DI02 reset.
+    check("the shipped profile matches io-mapping.md: DI00 start, DI01 selector, "
+          "DI02 reset",
           (config.PANEL_DI_RESET, config.PANEL_DI_START,
-           config.PANEL_DI_AUTO) == (1, 0, 2))
+           config.PANEL_DI_AUTO) == (2, 0, 1))
     check("...and the DI names say the same",
           (config.DIO_DI_NAMES[0], config.DIO_DI_NAMES[1], config.DIO_DI_NAMES[2])
-          == ("PB Start", "PB Reset", "SS Auto/Manual"))
+          == ("PB Start", "SS Manual/Auto", "PB Reset"))
     check("the selector reads ON = MANUAL", config.PANEL_AUTO_WHEN_ON is False)
 
     refused("a pendant channel on a panel channel is refused",
@@ -223,6 +230,85 @@ def test_pendant():
           intent(True, False, True, True) == (True, False, False, False))
 
 
+C = 13                                  # PB Continue (DI0D on MCQ4-4)
+
+
+def test_continue():
+    """PB Continue (2026-10-30) is a pushbutton with exactly Start's rules."""
+    print("\npanel: continue")
+
+    def img(cont=False, **kw):
+        di = image(**kw)
+        di[C] = cont
+        return di
+
+    sc = panel.PanelScan(R, S, A, 1, continue_ch=C)
+    out = run(sc, [img(), img(cont=True), img(cont=True), img()])
+    check("pressing Continue is one edge, holding it is not another",
+          [o.cont for o in out] == [False, True, False, False], str([o.cont for o in out]))
+    check("and it is not a Start", not any(o.start for o in out))
+
+    sc = panel.PanelScan(R, S, A, 1, continue_ch=C)
+    out = run(sc, [img(cont=True), img(cont=True)])
+    check("Continue held down at boot never fires", not any(o.cont for o in out))
+
+    sc = panel.PanelScan(R, S, A, 1, continue_ch=C)
+    run(sc, [img()])
+    sc.scan(img(), comms_ok=False)
+    out = run(sc, [img(cont=True), img(cont=True)])
+    check("a reconnect with Continue down is a baseline, not a press", not any(o.cont for o in out))
+
+    sc = scanner()
+    out = run(sc, [img(), img(cont=True)])
+    check("without a Continue channel, DI13 is never an edge", not any(o.cont for o in out))
+
+
+def test_destinations():
+    """Destination buttons (2026-11-03): Start's edge rules, and one button at a time."""
+    print("\npanel: destination buttons")
+    U, I, P = 10, 11, 12
+
+    def img(*down):
+        di = [False] * 16
+        for ch in down:
+            di[ch] = True
+        return di
+
+    def edges(be, frames, comms_ok=True):
+        return [be.scan(f, comms_ok) for f in frames]
+
+    be = panel.ButtonEdges((U, I, P), 1)
+    out = edges(be, [img(), img(I), img(I), img()])
+    check("pressing ITG is one edge, holding it is not another",
+          [o[0] for o in out] == [(False,) * 3, (False, True, False), (False,) * 3, (False,) * 3],
+          str(out))
+    check("a single press selects that button",
+          panel.single_press(*out[1]) == 1, str(panel.single_press(*out[1])))
+
+    be = panel.ButtonEdges((U, I, P), 1)
+    out = edges(be, [img(P), img(P)])
+    check("a destination held down at boot never fires", not any(any(o[0]) for o in out))
+
+    be = panel.ButtonEdges((U, I, P), 1)
+    edges(be, [img()])
+    check("comms loss reports nothing", be.scan(img(U), comms_ok=False) is None)
+    out = edges(be, [img(U), img(U)])
+    check("a reconnect with UBC down is a baseline, not a press", not any(any(o[0]) for o in out))
+
+    be = panel.ButtonEdges((U, I, P), 2)
+    out = edges(be, [img(), img(), img(U), img()])
+    check("a one-scan blip is not a press under debounce 2", not any(o and any(o[0]) for o in out), str(out))
+
+    be = panel.ButtonEdges((U, I, P), 1)
+    out = edges(be, [img(), img(U, P)])
+    check("two pressed together select nothing", panel.single_press(*out[1]) is None)
+    be = panel.ButtonEdges((U, I, P), 1)
+    out = edges(be, [img(), img(U), img(U, I)])
+    check("a second press while another is held selects nothing",
+          panel.single_press(*out[2]) is None and out[2][0] == (False, True, False))
+    check("nothing to report selects nothing", panel.single_press(None, None) is None)
+
+
 # The four controller-driven cases (Reset means ready, the manual watchdog,
 # edge-only events, panel loss ends a jog) went with canworker at U11
 # (2026-09-21); their ROS equivalents live in amr_base/test (panel_node,
@@ -234,4 +320,6 @@ TESTS = [
     test_comms_loss_cannot_synthesise_a_press,
     test_panel_profile,
     test_pendant,
+    test_continue,
+    test_destinations,
 ]

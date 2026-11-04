@@ -114,34 +114,12 @@ def test_can_monitoring():
     check("the PDO ranges stop where CiA 301 says they do",
           not any(guard.is_allowed(i) for i in (0x13FF, 0x1C00)))
 
-    # The line sensor's own list (mls-marker-plan, 2026-10-09): exactly these, and no
-    # store, factory reset, offset calibration, zero teach or inversion.
-    check("the MLS write list is exactly variant, markers, polarity, teach lock and event reset",
-          set(guard.SENSOR_ALLOWED) == {(0x2006, 1), (0x2028, 1), (0x2028, 2), (0x2028, 3),
-                                        (0x202D, 5), (0x2029, 0), (0x2080, 1)})
-    check("the MLS list refuses store, defaults, offset calibration, zero teach, inversion",
-          not any(guard.is_sensor_allowed(i, s) for i, s in
-                  ((0x1010, 1), (0x1011, 1), (0x202A, 0), (0x202B, 0), (0x202C, 0),
-                   (0x2027, 0), (0x2025, 0), (0x2026, 0), (0x202D, 1), (0x2006, 2),
-                   (0x2070, 6), (0x2070, 7), (0x2080, 2))))
-    check("the MLS list makes no drive object writable, and the drive list none of it",
-          not any(guard.is_sensor_allowed(i, 0) for i in guard.ALLOWED)
-          and not any(guard.is_allowed(i) for i, _ in guard.SENSOR_ALLOWED))
-    # read_mls is the only MLS writer and must write through the guard.
-    rm = (ROOT / "agv_core/drivers/canbus/read_mls.py").read_text(encoding="utf-8")
-    check("read_mls writes only through its guarded wrapper",
-          "guard.check_sensor(" in rm and rm.count("sdo_write(") == 1,
-          f"{rm.count('sdo_write(')} sdo_write( calls")
-
     # Every write by the bus owner (amr_base.canopen since U11 retired canworker)
     # must go through the guard, not around it. _raw_write is the shutdown path,
     # where raising would leave the motors energised: 6040h/60FFh only, and the
     # call count is pinned so a new bypass cannot slip in unnoticed.
     co = (ROOT / "amr_ws/src/amr_base/amr_base/canopen.py").read_text(encoding="utf-8")
     check("DriveLink.write() calls the guard", "guard.check(index, value, sub)" in co)
-    # The one runtime MLS write (2080h:01, mls-diagnostics-plan E2) has its own method,
-    # on the line-sensor list, never the drives'.
-    check("DriveLink.write_sensor() calls the line-sensor guard", "guard.check_sensor(index, sub)" in co)
     direct = [ln.strip() for ln in co.splitlines()
               if "_raw_write(" in ln and "def " not in ln
               and not ln.strip().startswith(("#", "*", '"'))]

@@ -12,6 +12,11 @@ import time
 from dataclasses import dataclass, field
 
 IDLE, READY, EXECUTING, PAUSED, BLOCKED, FAULT, DONE = 0, 1, 2, 3, 4, 5, 6
+# WAITING (2026-10-30, gls-wait-coding-plan §A.3): stopped at a route `wait` step until the
+# operator presses Continue or Start. Deliberately NOT in ACTIVE: nothing is moving or half
+# done, so the per-tick prerequisite faults, the MANUAL-takeover abort and the emergency hold
+# that guard a moving run do not apply; the Continue gate re-checks everything instead.
+WAITING = 7
 NAMES = {
     IDLE: "IDLE",
     READY: "READY",
@@ -20,6 +25,7 @@ NAMES = {
     BLOCKED: "BLOCKED",
     FAULT: "FAULT",
     DONE: "DONE",
+    WAITING: "WAITING",
 }
 ACTIVE = (EXECUTING, PAUSED, BLOCKED)
 MAX_PASSES = 100  # repeat_count bound: a route pass count above this is refused at load
@@ -128,6 +134,25 @@ class RunFsm:
             self.resume_prepared = False
             self.reason = f"prepared resume withdrawn: {why}"
 
+    # ---- waits ---------------------------------------------------------------------
+
+    def wait(self, name: str) -> bool:
+        """EXECUTING reached a wait step: stop there until Continue (or Start)."""
+        if self.state != EXECUTING:
+            return False
+        self.resume_prepared = False
+        where = f" at {name}" if name else ""
+        return self._set(WAITING, f"waiting{where} ({self.progress()}): press Continue")
+
+    def continue_(self) -> bool:
+        """Continue (or Start) at a wait: past the wait step, EXECUTING the next one. A wait is
+        never the last step (compiler rule), so this never completes the run."""
+        if self.state != WAITING:
+            self.reason = f"Continue ignored in {NAMES[self.state]}"
+            return False
+        self._set(EXECUTING, f"continued {self.progress()}")
+        return self.step_done()
+
     # ---- interruptions ----------------------------------------------------------------
 
     def pause(self, reason: str = "paused by operator") -> bool:
@@ -145,7 +170,7 @@ class RunFsm:
 
     def abort(self, reason: str) -> bool:
         """Operator abort or MANUAL takeover: the run is discarded."""
-        if self.state not in (READY, *ACTIVE):
+        if self.state not in (READY, WAITING, *ACTIVE):
             self.reason = f"abort ignored in {NAMES[self.state]}"
             return False
         self.run_id, self.step_index, self.pass_index, self.resume_prepared = "", -1, 0, False

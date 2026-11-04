@@ -51,6 +51,8 @@ def test_qr_profile():
     config.load(config.profile_path("amr-qr-01"))
     try:
         check("amr-qr-01 is platform qr_analog", config.PLATFORM == config.PLATFORM_QR)
+        check("no GLS camera, no destination buttons on the QR",
+              not config.GLS_ENABLED and config.PANEL_DESTINATIONS == ())
         check("track and wheel are the QR's", (config.TRACK_M, config.WHEEL_DIA_M) == (0.37652, 0.18))
         check("the right motor is mirrored (QR wiring)", config.INVERT_RIGHT and not config.INVERT_LEFT)
         check("top speed derives from motor_max_rpm, under the voltage cap",
@@ -89,9 +91,8 @@ def test_qr_profile():
     qr_refuses("an encoder timeout under 3 event periods is refused", qb(enc_timeout_s=0.03), "event periods")
     qr_refuses("a coil hold shorter than two DIO scans is refused", qb(coil_hold_s=0.04), "coil_hold_s")
     qr_refuses("a direction dwell shorter than a DIO scan is refused", qb(dir_dwell_s=0.01), "dir_dwell_s")
-    qr_refuses("profile position on analog drivers is refused",
-               lambda d: d["pp"].update(enabled=True, vendor_ref="x",
-                                        expect={k: 1 for k in d["pp"]["expect"]}), "pp.enabled must be false")
+    qr_refuses("an E-stop-ok input other than qr_base.di_estop is refused",
+               lambda d: d["panel"].update(di_estop_ok=10), "must be qr_base.di_estop")
     qr_refuses("drive monitoring (BLV-R objects) is refused", lambda d: d["monitor"].update(enabled=True),
                "monitor.enabled")
     qr_refuses("a nonstandard IMU baud rate is refused", qb(imu_baud=12345), "imu_baud")
