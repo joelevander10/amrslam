@@ -5,7 +5,7 @@ Day-to-day operation of the AMR QR (profile `amr-qr-01`) once
 [RUNBOOK.md](RUNBOOK.md) §2; the RUNBOOK has the full detail for every page. The
 differences: the AMR QR has **two buttons instead of a selector switch**, no Manual Arm
 switch, no horn, no Reset or Continue button (the Run page has a **Continue** instead), a
-**push mode** for the brakes, and it drives slower (about 0.27 m/s).
+**push mode** for the brakes, and routes run at 0.50 m/s on straights, 0.30 m/s on curves.
 
 The software is gvievo-01 **KYB trackless** (2026-11-03) with the AMR QR hardware on top:
 route **wait steps** with Continue, a **Go home** last step, smooth **S-curve** speed
@@ -92,9 +92,8 @@ On the **Manual**, **Maps** or **Run** page (selector must be MANUAL):
 
 - **Hold** a pad button, or hold W/A/S/D / the arrow keys. Releasing stops the vehicle.
   So do Space, Esc, the centre Stop button, and switching browser tab.
-- The speed menu offers 0.10–0.40 m/s. The AMR QR is capped by `vehicle.motor_max_rpm`
-  (about 0.28 m/s until the feedforward calibration raises it), so higher settings are
-  clamped.
+- The speed menu offers 0.10–0.40 m/s; the AMR QR's top speed is 0.53 m/s
+  (`vehicle.motor_max_rpm` 1680).
 - While surveying, spins are capped at 0.27 rad/s.
 
 ## 3. Make a map (Maps page)
@@ -183,11 +182,14 @@ ros2 run amr_mission map_edit --map block_c --rev 1 --despeckle-rect -50 -50 50 
    to a wait point, an arc centre, a step end or a route line (of this route and the
    saved ones on this map); untick **Snap** or hold Shift to measure exactly where you
    click. A third click starts a new measurement; Esc clears it.
-5. **Speed** is not a route setting. On the AMR QR every straight and arc runs at
-   **0.27 m/s** (95 % of its top speed, from `vehicle.motor_max_rpm`), a reverse at half
-   that, spins at 0.37 rad/s. Every speed change is a smooth **S-curve** (start ≈ 0.1 m/s²,
-   braking ≈ 0.125 m/s², jerk 0.1 m/s³): from standstill it reaches 0.27 m/s in about
-   3.7 s and 0.6 m. Consecutive straights and arcs are driven as one continuous move with
+5. **Speed** is not a route setting. On the AMR QR every straight runs at **0.50 m/s**,
+   every arc and the Go home curve at **0.30 m/s**, a reverse at 0.25 m/s, spins at
+   0.37 rad/s (2026-11-05: `motor_max_rpm` 1680 = 0.53 m/s top, `qr_base.v_max_v` 8 V;
+   routes run at most at 95 % of the top speed). Every speed change is a smooth
+   **S-curve** (start ≈ 0.1 m/s², braking ≈ 0.125 m/s², jerk 0.1 m/s³): from standstill it
+   reaches 0.50 m/s in about 6 s and 1.5 m, and slows 0.50 → 0.30 before an arc over about
+   1.5 m. Above 0.40 m/s the red protective field must be long enough to stop in: check
+   it in Safety Designer. Consecutive straights and arcs are driven as one continuous move with
    no stop between them; a turn in place, a reverse or a wait ends such a chain. Field
    stops and the E-stop are **not** softened.
 6. **Validate**. Red steps mean the footprint hits a wall or unknown (grey) cells. Move

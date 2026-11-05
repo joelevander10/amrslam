@@ -57,7 +57,7 @@ def test_qr_profile():
         check("track and wheel are the QR's", (config.TRACK_M, config.WHEEL_DIA_M) == (0.4263, 0.18))
         check("the right motor is mirrored (QR wiring)", config.INVERT_RIGHT and not config.INVERT_LEFT)
         check("top speed derives from motor_max_rpm, under the voltage cap",
-              0.1 < config.MAX_SPEED_MPS < 0.5, f"{config.MAX_SPEED_MPS:.3f} m/s")
+              0.1 < config.MAX_SPEED_MPS < 1.0, f"{config.MAX_SPEED_MPS:.3f} m/s")
         check("mux accel ceiling is 0.5 m/s^2 from the software ramp",
               abs(config.ACCEL_RPM_S * config.MPS_PER_RPM - 0.5) < 0.01)
         names = [s["name"] for s in config.describe()]
@@ -79,7 +79,7 @@ def test_qr_profile():
     qr_refuses("a typo'd qr_base key is refused",
                lambda d: d["qr_base"].update(kp=d["qr_base"].pop("kp_v_per_rad_s")), "unknown key")
     qr_refuses("motor_max_rpm beyond the feedforward headroom is refused",
-               lambda d: d["vehicle"].update(motor_max_rpm=3000.0), "needs")
+               lambda d: d["vehicle"].update(motor_max_rpm=10000.0), "needs")
     qr_refuses("v_max above the module's full scale is refused", qb(v_max_v=12.0), "v_max_v")
     qr_refuses("two motor coils on one channel are refused", qb(do_left_rev=4), "must be distinct")
     qr_refuses("a motor coil shared with the horn is refused",

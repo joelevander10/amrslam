@@ -5,7 +5,7 @@
     "track_m": 0.4263,
     "wheel_dia_m": 0.18,
     "gear_ratio": 30.0,
-    "motor_max_rpm": 900.0,
+    "motor_max_rpm": 1680.0,
     "invert_left": false,
     "invert_right": true
   },
@@ -220,7 +220,7 @@
     "imu_gyro_sign": 1.0,
     "ff_motor_rpm_per_volt": 972.0,
     "ff_offset_v": 0.21,
-    "v_max_v": 2.0,
+    "v_max_v": 8.0,
     "kp_v_per_rad_s": 0.05,
     "ki_v_per_rad": 0.3,
     "i_max_v": 0.3,
