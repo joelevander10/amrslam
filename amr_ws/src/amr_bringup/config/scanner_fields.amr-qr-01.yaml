@@ -15,16 +15,17 @@
 # scale  = AUTO speed factor while occupied; the protective field is a stop (0.0)
 # rect   = the field's outline in the scanner frame (x forward, y left, metres). DOCUMENTARY:
 #          nothing in the software uses the sizes; only the nesting is checked.
-#          VERIFY against Safety Designer - placeholders until measured.
+#          Reach ahead from the operator (2026-11-05): protective 50 cm, warning 60 cm; the
+#          widths are still placeholders - VERIFY against Safety Designer.
 monitoring_case: 1
 fields:
   protective:
     path: 1
     active: false
     scale: 0.0
-    rect: {x_min: -0.02, x_max: 0.50, y_min: -0.40, y_max: 0.40}   # VERIFY
+    rect: {x_min: -0.02, x_max: 0.50, y_min: -0.40, y_max: 0.40}   # 50 cm ahead (operator 2026-11-05); width VERIFY
   warning_1:          # the only warning field: yellow LED -> AUTO at half speed
     path: 0
     active: false
     scale: 0.5
-    rect: {x_min: -0.02, x_max: 1.20, y_min: -0.60, y_max: 0.60}   # VERIFY
+    rect: {x_min: -0.02, x_max: 0.60, y_min: -0.60, y_max: 0.60}   # 60 cm ahead (operator 2026-11-05); width VERIFY
