@@ -225,7 +225,7 @@ def test_a_wheel_scale_reports_the_turn_of_a_nominal_wheel_over_the_same_ground(
     """qr_base.wheel_scale_*: a right wheel 1.46 % smaller covers less ground per turn, so its
     radians and speed are scaled down by that much (counts stay raw) - odometry then sees the
     drift the gyro sees, and the speed loop turns that wheel faster to drive straight."""
-    from amr_base.qr_encoders import WheelEncoder, TPDO
+    from amr_base.qr_encoders import TPDO, WheelEncoder
 
     nominal = WheelEncoder(2, 8192.0, 1 << 32)
     small = WheelEncoder(2, 8192.0, 1 << 32, scale=0.9854)
