@@ -65,7 +65,7 @@ class SurveyMoveNode(Node):
         dp("settle_s", 1.5)
         dp("input_age_s", 0.5)
         dp("max_correction_deg", 2.0)
-        dp("v_mps", 0.40)
+        dp("v_mps", sm.survey_speed())  # 0.40, or what a slower vehicle's wheels can do
         dp("w_rad_s", 0.20)
         p = self.get_parameter
         self.cmd_valid = float(p("cmd_valid_s").value)

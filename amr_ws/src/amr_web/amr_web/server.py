@@ -327,7 +327,9 @@ def create_app(
     # `sub` the strip inside it.
     @app.get("/maps")
     def page_maps():
-        return render_template("maps.html", page="run", sub="maps")
+        from amr_mission.survey_move import survey_speed  # noqa: PLC0415
+
+        return render_template("maps.html", page="run", sub="maps", survey_v=survey_speed())
 
     @app.get("/editor")
     def page_editor():

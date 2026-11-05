@@ -80,7 +80,7 @@ FRAMES = ("map",)
 ROUTE_V_MPS = 0.60  # straights; arcs run at ARC_V_MPS (owner 2026-11-03)
 
 
-def _top_speed_cap(v: float) -> float:
+def top_speed_cap(v: float) -> float:
     """v, capped at 95 % of the vehicle's top speed (agv_core.config.MAX_SPEED_MPS, from
     motor_max_rpm). gvievo-01 (1.26 m/s) keeps 0.60. The AMR QR tops out near 0.28 m/s: a
     0.60 m/s route there would be clipped by the mux's wheel limit, which flattens the S-curve
@@ -94,7 +94,8 @@ def _top_speed_cap(v: float) -> float:
         return v
 
 
-VEHICLE_V_MAX = _top_speed_cap(ROUTE_V_MPS)
+_top_speed_cap = top_speed_cap  # the old private name
+VEHICLE_V_MAX = top_speed_cap(ROUTE_V_MPS)
 VEHICLE_W_MAX = 0.37  # spin: 0.24 -> 0.34 (+40 %) on 2026-09-18, -> 0.37 (+10 %) on 2026-09-19
 # Arcs turn at v/R: 0.40 m/s on the 1.0 m minimum radius is 0.40 rad/s, above the spin cap.
 # Their own ceiling (the permit w_max of an arc step) keeps 0.40 m/s possible from R 1.0 m.

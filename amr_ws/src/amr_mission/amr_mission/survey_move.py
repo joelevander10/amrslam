@@ -27,13 +27,28 @@ def wrap(a: float) -> float:
     return math.atan2(math.sin(a), math.cos(a))
 
 
+SURVEY_V_MPS = 0.40  # the preset straight's speed (operator decision 2026-11-03)
+
+
+def survey_speed() -> float:
+    """SURVEY_V_MPS, capped at 95 % of the vehicle's top speed like the routes
+    (amr_navigation.route.top_speed_cap): 0.40 on gvievo-01, 0.27 on the AMR QR, whose wheels
+    cannot do 0.40 - the mux would clip it and the move's own slow-down would start late."""
+    try:
+        from amr_navigation.route import top_speed_cap  # noqa: PLC0415
+
+        return top_speed_cap(SURVEY_V_MPS)
+    except Exception:  # noqa: BLE001
+        return SURVEY_V_MPS
+
+
 class MoveError(ValueError):
     pass
 
 
 @dataclass(frozen=True)
 class Profile:
-    v_mps: float = 0.40  # operator decision 2026-11-03 (0.30 from 2026-09-19)
+    v_mps: float = 0.40  # operator decision 2026-11-03 (0.30 from 2026-09-19); see SURVEY_V_MPS
     w_rad_s: float = 0.20
     decel_mps2: float = 0.15  # our own slow-down, gentler than the mux's so it is followed
     decel_rad_s2: float = 0.15
