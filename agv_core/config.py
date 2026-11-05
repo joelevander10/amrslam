@@ -401,6 +401,13 @@ qr_base.*
     readback showing both low for dir_dwell_s, before the other coil is
     raised. FWD and REV are never commanded high together.
 
+    vehicle.track_m on qr_analog is the EFFECTIVE track - what turning in place
+    actually takes - not the 0.37652 m between the wheel centres (the URDF keeps
+    that). Tyre width and castor scrub make a diff-drive turn as if the wheels
+    were further apart: 2026-11-05, 3 turns each way, the encoders read 13.2 %
+    more than the gyro, so 0.37652 x 1.132 = 0.4263 m. With it, odometry turns
+    as much as the vehicle does and a commanded spin rate is the one driven.
+
     Straight-line trim: wheel_scale_left / wheel_scale_right are each wheel's
     effective rolling size divided by vehicle.wheel_dia_m (1.0 = nominal). The
     encoder readings are multiplied by them, so odometry measures the ground

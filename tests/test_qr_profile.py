@@ -53,7 +53,8 @@ def test_qr_profile():
         check("amr-qr-01 is platform qr_analog", config.PLATFORM == config.PLATFORM_QR)
         check("no GLS camera, no destination buttons on the QR",
               not config.GLS_ENABLED and config.PANEL_DESTINATIONS == ())
-        check("track and wheel are the QR's", (config.TRACK_M, config.WHEEL_DIA_M) == (0.37652, 0.18))
+        # effective track from the 2026-11-05 spin test (wheels 0.37652 m apart, see config notes)
+        check("track and wheel are the QR's", (config.TRACK_M, config.WHEEL_DIA_M) == (0.4263, 0.18))
         check("the right motor is mirrored (QR wiring)", config.INVERT_RIGHT and not config.INVERT_LEFT)
         check("top speed derives from motor_max_rpm, under the voltage cap",
               0.1 < config.MAX_SPEED_MPS < 0.5, f"{config.MAX_SPEED_MPS:.3f} m/s")

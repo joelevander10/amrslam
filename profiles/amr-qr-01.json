@@ -2,7 +2,7 @@
   "profile_name": "amr-qr-01",
   "platform": "qr_analog",
   "vehicle": {
-    "track_m": 0.37652,
+    "track_m": 0.4263,
     "wheel_dia_m": 0.18,
     "gear_ratio": 30.0,
     "motor_max_rpm": 900.0,
