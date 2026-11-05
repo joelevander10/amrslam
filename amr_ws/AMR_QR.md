@@ -125,12 +125,12 @@ Route yang meminta lebih cepat tetap jalan, tapi di-clamp oleh mux.
    hidup lagi sebelum FAULT, roda bisa tersentak. Kalau sinyal stop seperti itu ada,
    sambungkan ke DI kosong. Stack gvievo menangani "lidar stop → lanjut otomatis"
    lewat feedback torsi driver, dan fitur itu **tidak** tersedia di AMR QR.
-9. **Field scanner dipakai** (sama dengan gvievo-01) sejak lidar yang rusak diganti.
-   `scanner_fields.yaml` adalah field set agv-01: protective = output path 0, warning 2 =
-   path 1, warning 1 = path 2, status `false` = terisi. Field set lidar baru di SICK Safety
-   Designer harus sama. Cek: `ros2 topic echo /output_paths --field status` → area kosong
-   semua `True`; tangan di depan scanner (≤ 0.5 m) → index 0 `False`. Kalau tidak cocok,
-   AUTO akan berhenti terus ("lidar stop") atau tidak berhenti sama sekali.
+9. **Field scanner dipakai** sejak lidar yang rusak diganti, dengan field set AMR QR
+   sendiri: `scanner_fields.amr-qr-01.yaml` (gvievo tetap `scanner_fields.yaml`). Satu
+   warning field di output path 0 (LED kuning → AUTO setengah kecepatan, "Warning 1") dan
+   protective di path 1 (LED merah → berhenti). Diukur 2026-11-05: hijau `[true, true]`,
+   kuning `[false, true]`, merah `[false, false]`. Executor juga membaca protective dari
+   path 1 (`field_output_index`). Kalau field di Safety Designer diubah, ukur ulang.
 
 ---
 

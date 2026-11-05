@@ -55,7 +55,17 @@ def executor_overrides() -> dict:
     from agv_core import config  # noqa: PLC0415 - the vehicle profile (AGV_PROFILE)
 
     if config.PLATFORM == config.PLATFORM_QR:
-        return {"start_gate_m": 0.20, "start_gate_deg": 10.0, "web_continue": True}
+        from amr_bringup import scanner_fields  # noqa: PLC0415 - launch-time import
+
+        # the executor reads the protective field from /output_paths too: the QR's is path 1
+        # (scanner_fields.amr-qr-01.yaml), not gvievo-01's 0
+        protective = scanner_fields.load()["fields"]["protective"]["path"]
+        return {
+            "start_gate_m": 0.20,
+            "start_gate_deg": 10.0,
+            "web_continue": True,
+            "field_output_index": protective,
+        }
     return {}
 
 

@@ -307,10 +307,12 @@ real stop.
 - **Scanner fields: same as gvievo-01** since the broken nanoScan3 was replaced
   (2026-11-02). The warning fields slow or stop AUTO and the protective field stops it
   ("lidar stop", resumes by itself). There are no scan filters any more: the noise of
-  September/October came from the broken unit. The new scanner's field set must match
-  `amr_bringup/config/scanner_fields.yaml` (protective = output path 0, warning 2 = path 1,
-  warning 1 = path 2). Check once: `ros2 topic echo /output_paths --field status` shows
-  all `True` with the area empty and index 0 `False` with a hand 0.3 m in front.
+  September/October came from the broken unit. The AMR QR's own field set is
+  `amr_bringup/config/scanner_fields.amr-qr-01.yaml`: **one warning field on output path 0**
+  (LED yellow → AUTO at half speed, "Warning 1") and **the protective field on path 1** (LED
+  red → stop, "lidar stop"). Measured 2026-11-05: green `[true, true]`, yellow
+  `[false, true]`, red `[false, false]` (`ros2 topic echo /output_paths --field status`).
+  If the fields are changed in Safety Designer, measure again and update that file.
   The analog drives have no torque feedback, so a stop the scanner's OSSD makes in
   hardware is seen as a stall (see AMR_QR.md §5 no. 8).
 - **No Manual Arm switch, no horn, no pendant, no Reset / Continue / destination buttons,

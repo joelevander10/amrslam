@@ -194,7 +194,7 @@ def _compose(context):
                     # (2026-11-02): the "occupied with the area empty" readings of 2026-09-24
                     # came from the faulty unit. Its field set must match scanner_fields.yaml.
                     "field_source": "scanner" if real else "assume_clear",
-                    # path indices, polarity, the x0.5 factor and the warning-2 stop distance: config/scanner_fields.yaml
+                    # path indices, polarity, factors, warning-2 stop: config/scanner_fields[.<profile>].yaml
                     **scanner_fields.mux_params(scanner_fields.load()),
                     # auto speed changes take twice as long (owner 2026-11-03, after the field
                     # runs): a_max and d_max halved, auto_jerk quartered, so dv/a + a/j doubles.

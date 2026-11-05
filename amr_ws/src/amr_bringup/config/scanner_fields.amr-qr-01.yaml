@@ -1,0 +1,30 @@
+# nanoScan3 field set on the AMR QR (profile amr-qr-01), as read off the scanner on
+# 2026-11-05 with `ros2 topic echo /output_paths` (scanner 192.168.3.2, monitoring case 1):
+#
+#   LED green  (all clear)          status [true,  true ]
+#   LED yellow (warning field)      status [false, true ]   -> path 0 = the warning field
+#   LED red    (protective field)   status [false, false]   -> path 1 = the protective field
+#                                                              (is_safe[1] true: the OSSD path)
+#
+# Only paths 0 and 1 are valid on this unit: ONE warning field, no warning_2. The
+# scanner's verified configuration (SICK Safety Designer) is the authority; this copy only
+# tells the software which path is which. Change both together.
+#
+# path   = the /output_paths index that carries the field's state
+# active = the path's status while the field is OCCUPIED (false here, like gvievo-01)
+# scale  = AUTO speed factor while occupied; the protective field is a stop (0.0)
+# rect   = the field's outline in the scanner frame (x forward, y left, metres). DOCUMENTARY:
+#          nothing in the software uses the sizes; only the nesting is checked.
+#          VERIFY against Safety Designer - placeholders until measured.
+monitoring_case: 1
+fields:
+  protective:
+    path: 1
+    active: false
+    scale: 0.0
+    rect: {x_min: -0.02, x_max: 0.50, y_min: -0.40, y_max: 0.40}   # VERIFY
+  warning_1:          # the only warning field: yellow LED -> AUTO at half speed
+    path: 0
+    active: false
+    scale: 0.5
+    rect: {x_min: -0.02, x_max: 1.20, y_min: -0.60, y_max: 0.60}   # VERIFY
