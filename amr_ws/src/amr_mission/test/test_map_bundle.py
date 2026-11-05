@@ -445,3 +445,47 @@ def test_stray_or_misaligned_dynamic_files_are_refused(tmp_path):
     _list_all(stage)
     with pytest.raises(mb.BundleError, match="not aligned"):
         mb.verify(stage)
+
+
+# ---- map rotation (2026-11-05): straighten a map onto a reference line ----------------------
+
+
+def test_derive_rotation_turns_the_map_masks_and_start_mark_and_drops_the_pose_graph(tmp_path):
+    import json  # noqa: PLC0415
+    import math  # noqa: PLC0415
+
+    maps = _published(tmp_path)
+    mb.derive_edit(maps, "line_section", 1, [{"op": "dynamic", "polygon": _rect(-0.5, -0.3, 0.0, 0.0)}])
+    parent = mb.verify(mb.revision_dir(maps, "line_section", 2))
+    _, g2 = mb.load(maps, "line_section", 2)
+    path, rev, new = mb.derive_rotation(maps, "line_section", 2, math.radians(90), note="wall along X")
+    m = mb.verify(path)
+    assert rev == 3 and (m.width, m.height) == (g2.height, g2.width)  # a quarter turn swaps them
+    assert "posegraph.posegraph" not in m.files and "posegraph.data" not in m.files
+    assert {"dynamic.pgm", "dynamic.yaml", "edits.json"} <= set(m.files)
+    # the start mark turns with the map: (x, y, yaw) -> (-y, x, yaw + 90 deg)
+    s0, s1 = parent.start, m.start
+    assert math.isclose(s1["x_m"], -s0["y_m"], abs_tol=1e-9)
+    assert math.isclose(s1["y_m"], s0["x_m"], abs_tol=1e-9)
+    assert math.isclose(s1["yaw_rad"], math.atan2(math.sin(s0["yaw_rad"] + math.pi / 2),
+                                                  math.cos(s0["yaw_rad"] + math.pi / 2)), abs_tol=1e-9)
+    assert s1["description"] == s0["description"]
+    # a wall cell and a dynamic cell land where the rotation sends them
+    _, g3 = mb.load(maps, "line_section", 3)
+    assert g3.data[g3.world_to_cell(0.225, 0.2)] == 100  # the wall cell (0.2, -0.225) turned
+    dyn = mb.load_mask(path, "dynamic")
+    assert dyn.data[dyn.world_to_cell(0.15, -0.25)] == 100  # (-0.25, -0.15) turned by +90 deg
+    doc = json.load(open(os.path.join(path, "edits.json")))
+    assert doc["ops"] == [{"op": "rotate", "angle_deg": 90.0}] and doc["parent"]["revision"] == 2
+    assert doc["note"] == "wall along X"
+    # the parent stays as it was
+    assert mb.verify(mb.revision_dir(maps, "line_section", 2)).files == parent.files
+
+
+def test_derive_rotation_refuses_a_nothing_angle(tmp_path):
+    from amr_maps import rotate as maprot  # noqa: PLC0415
+
+    maps = _published(tmp_path)
+    with pytest.raises(maprot.RotateError):
+        mb.derive_rotation(maps, "line_section", 1, 0.0)
+    assert mb.list_revisions(maps, "line_section") == [1]

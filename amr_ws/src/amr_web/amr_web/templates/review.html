@@ -31,6 +31,14 @@
     <div id="rv-ops" class="list"><div class="none">no edits</div></div>
     <label class="field" style="margin-top:1rem">Note <input id="rv-note" placeholder="trolleys along rack C marked dynamic"></label>
     <div class="bar"><button id="btn-rv-save" class="big run">Save as new revision</button></div>
+    <div class="sep"></div>
+    <h3>Rotate map <small>straighten onto a wall</small></h3>
+    <div class="bar" style="margin-top:0">
+      <button id="tool-align" class="tool" title="Drag a line along a long straight wall: the map is turned so that wall runs exactly along X or Y">Reference line</button>
+    </div>
+    <label class="field">Rotate by <span class="inline"><input id="rv-rot-deg" type="number" step="0.1" min="-180" max="180" value="0" title="+ = counter-clockwise, -180..180"> deg</span></label>
+    <p id="rv-rot-note" class="note">Draw a reference line along a long, straight wall, or type an angle (+ = counter-clockwise). The map, its dynamic / keepout areas and the survey start mark turn together, about the map origin.</p>
+    <div class="bar"><button id="btn-rv-rotate" class="big run" disabled>Save rotated revision</button></div>
     <p id="rv-msg" class="note"></p>
   </aside>
   <div class="canvas-wrap">

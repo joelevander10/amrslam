@@ -33,6 +33,7 @@ from flask import Flask, Response, jsonify, redirect, render_template, request, 
 
 from amr_maps import edit as mapedit
 from amr_maps import grid as gridio
+from amr_maps import rotate as maprot
 from amr_mission import map_bundle as mb
 from amr_navigation import footprint as fpmod
 from amr_navigation import store
@@ -478,6 +479,39 @@ def create_app(
         img = np.where(dyn.data >= 65, 255, 0).astype(np.uint8)
         png = encode_gray(np.flipud(img))
         return Response(png, mimetype="image/png", headers={"Cache-Control": "max-age=3600"})
+
+    @app.post("/api/maps/<map_id>/<int:rev>/rotate")
+    def api_map_rotate(map_id: str, rev: int):
+        """Straighten a map: a NEW revision turned by angle_deg (+ = counter-clockwise) about
+        the map origin - map, masks and survey start mark together (amr_maps.rotate). The
+        Review page computes the angle from a reference line drawn along a wall."""
+        d, err = _body()
+        if err:
+            return err
+        note, angle = d.get("note", ""), d.get("angle_deg")
+        if not isinstance(note, str):
+            return _result(False, "note must be text", 400)
+        if isinstance(angle, bool) or not isinstance(angle, (int, float)) or not math.isfinite(angle):
+            return _result(False, "angle_deg must be a number", 400)
+        try:
+            bundle(map_id, rev)
+            _path, new_rev, new = mb.derive_rotation(
+                app.config["MAPS_DIR"], map_id, rev, math.radians(float(angle)), note
+            )
+        except maprot.RotateError as e:
+            return _result(False, str(e), 422)
+        except (mb.BundleError, gridio.GridError) as e:
+            return _result(False, str(e), 404)
+        return jsonify(
+            {
+                "ok": True,
+                "map_id": map_id,
+                "revision": new_rev,
+                "parent_revision": rev,
+                "message": f"{map_id} rev{new_rev} saved from rev{rev}, turned {float(angle):+.2f} deg "
+                f"({new.width} x {new.height} cells)",
+            }
+        )
 
     @app.post("/api/maps/<map_id>/<int:rev>/edit")
     def api_map_edit(map_id: str, rev: int):

@@ -5,6 +5,7 @@
 const view = new MapView(document.getElementById('rv-canvas'));
 const $ = id => document.getElementById(id);
 let mapId = null, mapRev = null, ops = [], history = [], future = [], saving = false, mapToken = 0;
+let refLine = null;  // [[x, y], [x, y]] the wall drawn with Reference line, map metres
 
 // op per tool, as amr_maps.edit expects it; colours per kind on the canvas and in the list
 const TOOLS = {
@@ -40,12 +41,44 @@ function redo() { if (!future.length) return; history.push(JSON.stringify(ops));
 function setTool(t) {
   view.tool = t; view._rect = null;
   Object.keys(TOOLS).forEach(k => TOOLS[k].btn.classList.toggle('on', k === t));
-  $('rv-tool-note').textContent = t ? TOOLS[t].note : '';
+  $('tool-align').classList.toggle('on', t === 'align');
+  $('rv-tool-note').textContent = t && TOOLS[t] ? TOOLS[t].note : '';
   view.draw();
 }
 Object.keys(TOOLS).forEach(k => { TOOLS[k].btn.onclick = () => setTool(view.tool === k ? null : k); });
+$('tool-align').onclick = () => setTool(view.tool === 'align' ? null : 'align');
+
+// Rotate map (amr_maps.rotate.align_angle mirrored): the turn that brings the reference line
+// onto the NEAREST axis direction, so at most 45 deg either way. + = counter-clockwise.
+const wrapA = a => Math.atan2(Math.sin(a), Math.cos(a));
+function alignAngle(p, q) {
+  const a = Math.atan2(q[1] - p[1], q[0] - p[0]);
+  return wrapA(Math.round(a / (Math.PI / 2)) * (Math.PI / 2) - a);
+}
+const rotDeg = () => { const v = parseFloat($('rv-rot-deg').value); return Number.isFinite(v) ? v : 0; };
+function rotNote() {
+  const deg = rotDeg();
+  if (refLine) {
+    const a = Math.atan2(refLine[1][1] - refLine[0][1], refLine[1][0] - refLine[0][0]) * 180 / Math.PI;
+    const len = Math.hypot(refLine[1][0] - refLine[0][0], refLine[1][1] - refLine[0][1]);
+    const axis = Math.abs(Math.cos((a + deg) * Math.PI / 180)) > 0.7 ? 'X' : 'Y';
+    $('rv-rot-note').textContent = `Reference line ${num(len, 2)} m at ${num(a, 2)}°: turning ${deg > 0 ? '+' : ''}${num(deg, 2)}° lays it along ${axis}. A longer line is a more exact angle.`;
+  } else if (deg) {
+    $('rv-rot-note').textContent = `Turn the map ${deg > 0 ? '+' : ''}${num(deg, 2)}° (${deg > 0 ? 'counter-clockwise' : 'clockwise'}) about its origin.`;
+  }
+}
+$('rv-rot-deg').oninput = () => { rotNote(); refresh(); };
 
 view.onDrag = (a, b, done) => {
+  if (view.tool === 'align' && view.meta) {
+    refLine = [a, b];
+    if (done) {
+      if (Math.hypot(b[0] - a[0], b[1] - a[1]) < 0.3) { refLine = null; log('reference line shorter than 0.3 m: ignored', 'warn'); refresh(); return; }
+      $('rv-rot-deg').value = (alignAngle(a, b) * 180 / Math.PI).toFixed(2);
+      rotNote(); refresh();
+    }
+    return;
+  }
   if (!TOOLS[view.tool] || !view.meta) return;
   const poly = rect(a, b);
   if (!done) { view._rect = poly; return; }
@@ -64,7 +97,14 @@ view.overlays.push((c, v) => {
     else v.fillPolygon(o.polygon, st.fill, st.stroke);
     v.text(o.polygon[3][0], o.polygon[3][1], String(i + 1), st.stroke);
   });
-  if (v._rect && v.tool) { const st = style(v.tool); v.fillPolygon(v._rect, st.fill, null); v.dashed(v._rect, st.stroke); }
+  if (v._rect && v.tool && TOOLS[v.tool]) { const st = style(v.tool); v.fillPolygon(v._rect, st.fill, null); v.dashed(v._rect, st.stroke); }
+  if (refLine) {
+    // the wall as drawn, and dashed: where the rotation will lay it (turned about the origin)
+    const [p, q] = refLine, t = rotDeg() * Math.PI / 180, c = Math.cos(t), s = Math.sin(t);
+    v.line(p[0], p[1], q[0], q[1], INK.turn, 3);
+    const r = ([x, y]) => [c * x - s * y, s * x + c * y];
+    v.dashed([r(p), r(q)], INK.pose);
+  }
 });
 
 function refresh() {
@@ -74,6 +114,9 @@ function refresh() {
       `<span class="v">${mm(w)} × ${mm(h)}<i>mm</i> <button class="tool" data-del="${i}" title="remove this edit">×</button></span></div>`;
   }).join('') : '<div class="none">no edits</div>';
   $('btn-rv-save').disabled = saving || !ops.length;
+  const deg = rotDeg(), canRotate = !saving && !ops.length && Math.abs(deg) >= 0.05 && Math.abs(deg) <= 180;
+  $('btn-rv-rotate').disabled = !canRotate;
+  $('btn-rv-rotate').title = ops.length ? 'Save or clear the area edits first: a rotation is its own revision' : '';
   view.draw();
 }
 $('rv-ops').onclick = e => {
@@ -113,10 +156,30 @@ $('btn-rv-save').onclick = async () => {
   } finally { saving = false; refresh(); }
 };
 
+$('btn-rv-rotate').onclick = async () => {
+  const deg = rotDeg();
+  if (saving || ops.length || Math.abs(deg) < 0.05) return;
+  if (!window.confirm(`Save ${mapId} turned ${deg > 0 ? '+' : ''}${deg.toFixed(2)}° as a new revision? Routes are drawn again on the rotated map.`)) return;
+  const forMap = mapId, forRev = mapRev, c = mapToken;
+  saving = true; refresh();
+  try {
+    const { status, data } = await api(`/api/maps/${forMap}/${forRev}/rotate`, { angle_deg: deg, note: $('rv-note').value.trim() });
+    if (status !== 200) { $('rv-msg').textContent = `not saved: ${data.message || status}`; log(`map rotation refused: ${data.message || status}`, 'bad'); return; }
+    log(data.message);
+    if (c !== mapToken) return;
+    $('rv-note').value = '';
+    await fillMapSelect($('rv-map'));
+    $('rv-map').value = shown = `${forMap}/${data.revision}`;
+    await selectMap(shown);
+    $('rv-msg').textContent = `${data.message}. Use it on the Run page; draw the routes for it in Routes.`;
+  } finally { saving = false; refresh(); }
+};
+
 async function selectMap(value) {
   [mapId, mapRev] = value.split('/'); mapRev = +mapRev;
   mapToken += 1; const c = mapToken;
-  ops = []; history = []; future = []; view._rect = null; $('rv-msg').textContent = ''; refresh();
+  ops = []; history = []; future = []; view._rect = null; $('rv-msg').textContent = '';
+  refLine = null; $('rv-rot-deg').value = '0'; refresh();
   const loaded = await view.load(mapId, mapRev);
   if (!loaded || c !== mapToken) return;
   showInfo();

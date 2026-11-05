@@ -28,6 +28,7 @@ import contextlib
 import fcntl
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -40,6 +41,7 @@ import yaml
 
 from amr_maps import edit
 from amr_maps import grid as gridio
+from amr_maps import rotate as maprot
 
 MANIFEST = "manifest.yaml"
 REV_RE = re.compile(r"^rev(\d+)$")
@@ -304,6 +306,7 @@ def derive_revision(
     from_revision: int,
     extra: dict[str, str],
     drop: tuple[str, ...] = (),
+    manifest_changes: dict | None = None,
 ) -> tuple[str, int]:
     """A NEW revision = a verified revision's files minus `drop`, plus `extra` {bundle name:
     source path} (replacing a same-named file), e.g. a keepout mask. Revisions are immutable
@@ -313,6 +316,8 @@ def derive_revision(
     src_dir = revision_dir(maps_dir, map_id, from_revision)
     with map_lock(maps_dir, map_id):
         m = load_manifest(src_dir, map_id, from_revision)
+        for key, value in (manifest_changes or {}).items():  # e.g. a rotation's new geometry
+            setattr(m, key, value)
         revision = next_revision(maps_dir, map_id)
         stage = staging_dir(maps_dir, map_id, revision)
         try:
@@ -393,6 +398,61 @@ def derive_edit(
         extra[EDITS] = os.path.join(tmp, EDITS)
         path, revision = derive_revision(maps_dir, map_id, from_revision, extra, drop)
     return path, revision, res
+
+
+POSEGRAPH = ("posegraph.posegraph", "posegraph.data")
+
+
+def derive_rotation(
+    maps_dir: str, map_id: str, from_revision: int, theta: float, note: str = ""
+) -> tuple[str, int, gridio.Grid]:
+    """A NEW revision: this one turned by theta (rad, + = ccw) about its frame origin
+    (amr_maps.rotate) - the map, the dynamic and keepout masks and the survey start mark move
+    together; the return-to-start review vector turns with them. The slam_toolbox pose graph is
+    NOT carried: it holds the old frame, and nothing in the rotated revision may disagree with
+    the map. edits.json records the parent and the angle. Returns (path, revision, new grid).
+    Routes stay on the revision they were drawn on: a route for the rotated map is drawn on it."""
+    theta = maprot.check_angle(theta)
+    src_dir = revision_dir(maps_dir, map_id, from_revision)
+    parent, grid = load(maps_dir, map_id, from_revision)
+    new = maprot.rotate_grid(grid, theta)
+    s = parent.start or {}
+    sx, sy, syaw = maprot.rotate_pose(
+        float(s.get("x_m", 0.0)), float(s.get("y_m", 0.0)), float(s.get("yaw_rad", 0.0)), theta
+    )
+    r = dict(parent.review or {})
+    if "dx_m" in r and "dy_m" in r:
+        r["dx_m"], r["dy_m"] = maprot.rotate_point(float(r["dx_m"]), float(r["dy_m"]), theta)
+    with tempfile.TemporaryDirectory(prefix="amr_rotate_") as tmp:
+        gridio.write(new, os.path.join(tmp, "map"))
+        extra = {"map.pgm": os.path.join(tmp, "map.pgm"), "map.yaml": os.path.join(tmp, "map.yaml")}
+        for mask in MASKS:
+            g = load_mask(src_dir, mask)
+            if g is not None:
+                gridio.write(maprot.rotate_like(g, new, theta), os.path.join(tmp, mask))
+                extra[f"{mask}.pgm"] = os.path.join(tmp, f"{mask}.pgm")
+                extra[f"{mask}.yaml"] = os.path.join(tmp, f"{mask}.yaml")
+        deg = math.degrees(theta)
+        doc = {
+            "parent": {"revision": int(from_revision), "sha256": parent.sha256},
+            "created": now_iso(),
+            "note": str(note)[:500],
+            "ops": [{"op": "rotate", "angle_deg": round(deg, 4)}],
+            "cells": [],
+            "dynamic_cells": 0,
+        }
+        with open(os.path.join(tmp, EDITS), "w") as fh:
+            json.dump(doc, fh, indent=1)
+        extra[EDITS] = os.path.join(tmp, EDITS)
+        changes = {
+            "origin": [new.meta.origin_x, new.meta.origin_y, 0.0],
+            "width": new.width,
+            "height": new.height,
+            "start": {**s, "x_m": sx, "y_m": sy, "yaw_rad": syaw},
+            "review": r,
+        }
+        path, revision = derive_revision(maps_dir, map_id, from_revision, extra, POSEGRAPH, changes)
+    return path, revision, new
 
 
 def _fsync_path(path: str, directory: bool = False) -> None:

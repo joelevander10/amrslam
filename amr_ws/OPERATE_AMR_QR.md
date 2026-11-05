@@ -143,6 +143,15 @@ Each rectangle is one edit; later ones win where they overlap; Undo / Redo / × 
 edits. After saving: on **Routes**, open each route on the new revision, **Validate**,
 **Save revision**, create the mission again; on **Run**, activate the new revision.
 
+**Rotate map** (straighten it, same page, its own revision): press **Reference line** and
+drag a line along a long, straight wall. The angle that lays that wall exactly along X or Y
+(the nearest one, at most 45°) appears in **Rotate by**; you can also type an angle (+ =
+counter-clockwise). **Save rotated revision** turns the map, its dynamic / keepout areas and
+the survey start mark together about the map origin. Save or clear any area edits first.
+The rotated revision has no slam pose graph (it described the old orientation). Routes stay
+on the revision they were drawn on: draw the routes for the rotated map on it, then Use it
+on the Run page and set the initial pose as usual.
+
 From a shell, the same, e.g. remove the noise of a whole map:
 ```bash
 ros2 run amr_mission map_edit --map block_c --rev 1 --despeckle-rect -50 -50 50 50 --note "noise"

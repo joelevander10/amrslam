@@ -320,6 +320,25 @@ def test_web_continue_is_the_amr_qr_only(env, tmp_path, monkeypatch):
     assert "data-push-mode" in maps_page and "/static/pushmode.js" in maps_page, "push mode on Maps"
 
 
+def test_rotate_endpoint_saves_a_turned_revision(env):
+    """Review page, Rotate map: a NEW revision turned by angle_deg; bad input is refused and
+    nothing is written."""
+    client, _stub, maps, _rev_dir, manifest = env
+    assert client.post("/api/maps/sim_factory/1/rotate", json={"angle_deg": "x"}).status_code == 400
+    assert client.post("/api/maps/sim_factory/1/rotate", json={"angle_deg": 0.0}).status_code == 422
+    assert client.post("/api/maps/sim_factory/1/rotate", json={"angle_deg": 200}).status_code == 422
+    assert client.post("/api/maps/sim_factory/9/rotate", json={"angle_deg": 5}).status_code == 404
+    assert mb.list_revisions(maps, "sim_factory") == [1]
+    r = client.post("/api/maps/sim_factory/1/rotate", json={"angle_deg": -2.5, "note": "rack wall"})
+    assert r.status_code == 200 and r.json["revision"] == 2 and "-2.50 deg" in r.json["message"]
+    m = mb.verify(mb.revision_dir(maps, "sim_factory", 2))
+    assert m.width > manifest.width and mb.load_edits(mb.revision_dir(maps, "sim_factory", 2))["ops"] == [
+        {"op": "rotate", "angle_deg": -2.5}
+    ]
+    page = client.get("/review?map=sim_factory&rev=2").get_data(as_text=True)
+    assert 'id="tool-align"' in page and 'id="btn-rv-rotate"' in page
+
+
 def test_mode_and_survey_are_asynchronous_operations(env):
     client, stub, *_ = env
     r = client.post(
