@@ -840,6 +840,9 @@ class DemoAdapter:
                 return False, "nothing is waiting: Continue only releases a wait step"
         return False, "the demo has no wait steps"
 
+    def rejoin(self):
+        return False, "nothing to continue: the demo remembers no stopped run"
+
     def ack_fault(self):
         with self.lock:
             if not self.run or self.run["state"] != 5:

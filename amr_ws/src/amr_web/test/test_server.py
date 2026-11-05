@@ -257,6 +257,20 @@ def test_push_mode_brake_endpoints_delegate(env):
     assert client.get("/api/brakes/release").status_code == 405  # a GET never changes the brakes
 
 
+def test_continue_route_from_here_delegates_for_both_roles(env):
+    """The Run page's 'Continue route from here' (a stopped run, at its step) is for the
+    operator too: it only loads - the physical Start moves the vehicle."""
+    from amr_web import role as rolemod  # noqa: PLC0415
+
+    client, stub, *_ = env
+    for role in ("operator", "engineer"):
+        client.post("/api/role", json={"role": role, "pin": rolemod.DEFAULT_PIN})
+        r = client.post("/api/mission/rejoin", json={})
+        assert r.status_code == 200 and r.json["ok"] and stub.calls[-1][0] == "rejoin", role
+        assert 'id="btn-run-rejoin"' in client.get("/run").get_data(as_text=True), role
+    assert client.get("/api/mission/rejoin").status_code == 405
+
+
 def test_web_continue_is_the_amr_qr_only(env, tmp_path, monkeypatch):
     """The Run page's Continue (a route wait step) exists on the AMR QR only: its panel has no
     Continue button. Elsewhere the endpoint refuses and the button is not on the page."""

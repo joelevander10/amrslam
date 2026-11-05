@@ -76,9 +76,11 @@ drive, lease and permit freshness itself and stops the vehicle whatever the exec
 from __future__ import annotations
 
 import collections
+import json
 import math
 import os
 import threading
+import time
 
 import rclpy
 from agv_core import alarms
@@ -143,6 +145,157 @@ def _yaw(q) -> float:
     return math.atan2(2.0 * q.w * q.z, 1.0 - 2.0 * q.z * q.z)
 
 
+CHECKPOINT_FILE = "route_checkpoint.json"
+REJOIN_OK, REJOIN_DONE, REJOIN_FAR = "ok", "done", "far"
+
+
+def load_checkpoint(path: str) -> dict | None:
+    """The remembered stop point, or None (no file, unreadable, or not a checkpoint)."""
+    if not path:
+        return None
+    try:
+        with open(path) as fh:
+            cp = json.load(fh)
+        keys = ("mission_id", "map", "route", "pass_index", "step_index", "step_id", "n_steps")
+        return cp if isinstance(cp, dict) and all(k in cp for k in keys) else None
+    except (OSError, ValueError):
+        return None
+
+
+def save_checkpoint(path: str, cp: dict | None, log=None) -> None:
+    """Write (or, for None, remove) the checkpoint atomically. Best effort: a failure is
+    logged and the checkpoint stays in memory."""
+    if not path:
+        return
+    try:
+        if cp is None:
+            if os.path.exists(path):
+                os.remove(path)
+            return
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w") as fh:
+            json.dump(cp, fh, indent=2)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except OSError as e:
+        if log is not None:
+            log.warn(f"route checkpoint not saved to {path}: {e}")
+
+
+def checkpoint_text(cp: dict) -> str:
+    """For the operator: which route, where, and why it stopped."""
+    passes = int(cp.get("n_passes") or 1)
+    where = f"step {cp['step_index']} {cp.get('step_id', '')}".strip()
+    if passes > 1:
+        where = f"pass {int(cp['pass_index']) + 1}/{passes} {where}"
+    kind = "aborted" if cp.get("kind") == "aborted" else "fault"
+    return f"{cp['mission_id']} · {where} · {kind}: {cp.get('reason', '')} ({cp.get('stopped_at', '')})"
+
+
+def checkpoint_mismatch(cp: dict, mission: dict, compiled, passes: int) -> str | None:
+    """Why the checkpoint cannot be continued with this mission as loaded now, or None."""
+    for key in ("map", "route"):
+        a, b = cp.get(key) or {}, mission.get(key) or {}
+        if (a.get("id"), int(a.get("revision", -1)), a.get("sha256")) != (
+            b.get("id"),
+            int(b.get("revision", -2)),
+            b.get("sha256"),
+        ):
+            return (
+                f"the mission's {key} changed since the run stopped; "
+                "load it and start from the route start"
+            )
+    k = int(cp["step_index"])
+    if int(cp.get("n_steps", -1)) != len(compiled.steps) or not 0 <= k < len(compiled.steps):
+        return "the route's steps changed since the run stopped"
+    if compiled.steps[k].id != cp.get("step_id"):
+        return f"step {k} is {compiled.steps[k].id} now, not {cp.get('step_id')}"
+    if not 0 <= int(cp["pass_index"]) < passes:
+        return "the route's repeat count changed since the run stopped"
+    return None
+
+
+def _path_heading(st: CompiledStep, along: float) -> float:
+    """The heading the vehicle should have `along` metres into a straight / arc / home leg."""
+    if st.type == ARC and st.radius_m > 0:
+        frac = max(0.0, min(1.0, along / (st.radius_m * abs(st.signed_angle_rad) or 1.0)))
+        return wrap(st.start[2] + st.signed_angle_rad * frac)
+    if st.type == HOME and st.samples:
+        if len(st.samples) < 2:
+            return st.start[2]
+        acc, best = 0.0, st.samples[-1]
+        for a, b in zip(st.samples, st.samples[1:]):  # noqa: B905 - pairs of one list
+            seg = math.hypot(b[0] - a[0], b[1] - a[1])
+            if acc + seg >= along:
+                best = a
+                break
+            acc += seg
+        if len(best) > 2:
+            return best[2]
+    return st.start[2]
+
+
+def rejoin_check(
+    st: CompiledStep,
+    pose,
+    along_cross: tuple[float, float],
+    *,
+    corridor: float,
+    pos_tol: float,
+    verify_pos: float,
+    verify_yaw: float,
+    heading_tol: float,
+    turn_tol: float,
+) -> tuple[str, str, float | None]:
+    """Can a run continue on step `st` from `pose`? (REJOIN_OK | REJOIN_DONE | REJOIN_FAR,
+    why, remaining signed turn for a turn in place else None). Pure.
+
+      wait      at the wait pose (verify_pos / verify_yaw), as Continue requires
+      rotate    on the turn point (verify_pos), heading somewhere on the turn's own arc of
+                headings; the part left is what it turns. All of it done: REJOIN_DONE
+      others    within `corridor` of the line, not before its start, heading within
+                heading_tol of the path's there. Less than pos_tol left: REJOIN_DONE"""
+    if st.type == WAIT:
+        d = math.hypot(pose[0] - st.start[0], pose[1] - st.start[1])
+        a = abs(wrap(pose[2] - st.start[2]))
+        if d > verify_pos or a > verify_yaw:
+            return REJOIN_FAR, f"{d:.2f} m / {math.degrees(a):.0f} deg off the wait point", None
+        return REJOIN_OK, "", None
+    if st.type == ROTATE:
+        d = math.hypot(pose[0] - st.start[0], pose[1] - st.start[1])
+        if d > verify_pos:
+            return REJOIN_FAR, f"{d:.2f} m from the turn point (allowed {verify_pos:.2f} m)", None
+        sign = 1.0 if st.signed_angle_rad >= 0 else -1.0
+        mag = abs(st.signed_angle_rad)
+        done = (sign * (pose[2] - st.start[2])) % (2.0 * math.pi)  # turned so far, its direction
+        if done > mag + verify_yaw:
+            done -= 2.0 * math.pi  # a little short of the turn's start heading
+        if done < -verify_yaw:
+            return REJOIN_FAR, (
+                f"heading {math.degrees(pose[2]):.0f} deg is not on the turn from "
+                f"{math.degrees(st.start[2]):.0f} to {math.degrees(st.end[2]):.0f} deg"
+            ), None
+        left = mag - done
+        if abs(left) <= turn_tol:
+            return REJOIN_DONE, "", None
+        return REJOIN_OK, "", sign * left
+    along, cross = along_cross
+    if abs(cross) > corridor:
+        return REJOIN_FAR, f"{cross:+.2f} m beside the path (allowed {corridor:.2f} m)", None
+    if along < -pos_tol:
+        return REJOIN_FAR, f"{-along:.2f} m before the step's start", None
+    if along >= st.length_m - pos_tol:
+        return REJOIN_DONE, "", None
+    a = abs(wrap(pose[2] - _path_heading(st, along)))
+    if a > heading_tol:
+        return REJOIN_FAR, (
+            f"heading {math.degrees(a):.0f} deg off the path (allowed {math.degrees(heading_tol):.0f} deg)"
+        ), None
+    return REJOIN_OK, "", None
+
+
 def mission_matches_active_map(mission: dict, active: tuple[str, int, str]) -> str | None:
     """P4 (unified plan §5.6): a mission may only load onto the map AMCL is running.
 
@@ -164,10 +317,21 @@ def mission_matches_active_map(mission: dict, active: tuple[str, int, str]) -> s
 class RouteExecutor(Node):
     _abort_code = ""  # catalogue code for the next IDLE event, if an abort names one
     _still_since: float | None = None  # wheels at rest since ("Record label here")
+    # Continue route from here (set in __init__; class defaults for nodes built without it)
+    checkpoint: dict | None = None
+    checkpoint_path = ""
+    _saved_stop_seq = 0
+    rejoin_heading = math.radians(20.0)
 
     def __init__(self) -> None:
         super().__init__("route_executor")
         self.declare_parameter("maps_dir", os.path.expanduser("~/amr_maps"))
+        # route_checkpoint.json lives here: where the last run was aborted or faulted, so it can
+        # be continued from there after a restart (2026-11-05). "" = memory only.
+        self.declare_parameter("state_dir", os.environ.get("AMR_STATE_DIR", os.path.expanduser("~/.amr")))
+        # Continue route from here: the vehicle's heading may differ from the path's this much
+        # on a straight / arc / home leg (a turn in place is measured on its own arc of headings).
+        self.declare_parameter("rejoin_heading_deg", 20.0)
         self.declare_parameter("footprint_yaml", "")
         # Layer identity (unified plan U0/U4): stamped into every RunState and MotionPermit;
         # the active_map_* values are what a mission must match (U4 enforces).
@@ -278,6 +442,9 @@ class RouteExecutor(Node):
         self.declare_parameter("goal_cancel_timeout_s", 5.0)
         p = self.get_parameter
         self.maps_dir = os.path.expanduser(p("maps_dir").value)
+        sd = str(p("state_dir").value or "")
+        self.checkpoint_path = os.path.join(os.path.expanduser(sd), CHECKPOINT_FILE) if sd else ""
+        self.rejoin_heading = math.radians(float(p("rejoin_heading_deg").value))
         self.fp = fpmod.load(p("footprint_yaml").value or fpmod.default_path())
         self.start_gate_m, self.start_gate_rad = (
             p("start_gate_m").value,
@@ -329,6 +496,8 @@ class RouteExecutor(Node):
         self.manifest = None
         self.grid = None
         self.mission = None
+        self.checkpoint = load_checkpoint(self.checkpoint_path)  # survives a restart
+        self._saved_stop_seq = 0
         # one goal attempt (run, pass, step, attempt) at a time; see goal_attempts.py (R08)
         self.goals = ga.GoalAttempts(
             self._lock, self._now, self._on_goal_error, lambda msg: self.get_logger().warn(msg)
@@ -419,6 +588,7 @@ class RouteExecutor(Node):
         self.create_service(Trigger, "/amr/resume", self._srv_resume, callback_group=srv)
         self.create_service(Trigger, "/amr/ack_fault", self._srv_ack, callback_group=srv)
         self.create_service(Trigger, "/amr/continue", self._srv_continue, callback_group=srv)
+        self.create_service(Trigger, "/amr/rejoin", self._srv_rejoin, callback_group=srv)
         self.create_service(RecordLabel, "/amr/labels/record", self._srv_record_label, callback_group=srv)
         self.create_timer(0.1, self._tick, callback_group=srv)
         self.create_timer(0.5, self._publish_state, callback_group=io)
@@ -607,9 +777,10 @@ class RouteExecutor(Node):
             res.accepted, res.message = self._load_mission(req.mission_id)
             return res
 
-    def _load_mission(self, mission_id: str) -> tuple[bool, str]:
+    def _load_mission(self, mission_id: str, checkpoint: dict | None = None) -> tuple[bool, str]:
         """Load and validate a mission into READY (the web's Load, and a destination button).
-        (accepted, message); the caller holds the lock and has checked the emergency."""
+        (accepted, message); the caller holds the lock and has checked the emergency.
+        `checkpoint`: load it to continue where that run stopped (Continue route from here)."""
         with self._lock:
             try:
                 mission = store.load_mission(self.maps_dir, mission_id)
@@ -658,7 +829,13 @@ class RouteExecutor(Node):
                     )
             except (store.StoreError, mb.BundleError, KeyError, ValueError) as e:
                 return False, f"refused: {e}"
-            ok = self.fsm.load(mission_id, len(v.compiled.steps), route.repeat_count)
+            start_at = None
+            if checkpoint is not None:
+                why = checkpoint_mismatch(checkpoint, mission, v.compiled, route.repeat_count)
+                if why:
+                    return False, f"refused: {why}"
+                start_at = (int(checkpoint["pass_index"]), int(checkpoint["step_index"]))
+            ok = self.fsm.load(mission_id, len(v.compiled.steps), route.repeat_count, start_at)
             if not ok:
                 return False, self.fsm.reason
             self.mission, self.manifest, self.grid, self.route, self.compiled = (
@@ -694,6 +871,60 @@ class RouteExecutor(Node):
             res.success = self.fsm.state != fsm.WAITING
             res.message = self.fsm.reason
             return res
+
+    def _srv_rejoin(self, _req, res: Trigger.Response):
+        """Continue route from here: load the last aborted / faulted run's mission at the step
+        where it stopped. Nothing moves: Start (AUTO) then checks the vehicle is on that step
+        (_rejoin_gate) instead of at the route start."""
+        with self._lock:
+            if self._emergency(self._now()):
+                res.success, res.message = False, "refused: E-stop active - release it first"
+                return res
+            cp = self.checkpoint
+            if cp is None:
+                res.success = False
+                res.message = "nothing to continue: no aborted or faulted run is remembered"
+                return res
+            if self.fsm.state == fsm.FAULT:
+                res.success, res.message = False, "acknowledge the fault first (Ack fault)"
+                return res
+            res.success, res.message = self._load_mission(str(cp["mission_id"]), cp)
+            return res
+
+    def _sync_checkpoint(self) -> None:
+        """Persist a newly abandoned run (RunFsm.last_stop) as the checkpoint; drop it once a
+        run finishes. Called with the lock held, whenever the run state is published."""
+        stop = self.fsm.last_stop
+        if stop is not None and stop["seq"] != self._saved_stop_seq and getattr(self, "mission", None):
+            self._saved_stop_seq = stop["seq"]
+            st = None
+            if self.compiled is not None and 0 <= stop["step_index"] < len(self.compiled.steps):
+                st = self.compiled.steps[stop["step_index"]]
+            self.checkpoint = {
+                "schema": 1,
+                "mission_id": stop["mission_id"],
+                "map": dict(self.mission["map"]),
+                "route": dict(self.mission["route"]),
+                "pass_index": stop["pass_index"],
+                "step_index": stop["step_index"],
+                "step_id": st.id if st is not None else "",
+                "step_type": st.type if st is not None else "",
+                "n_steps": len(self.compiled.steps) if self.compiled is not None else 0,
+                "n_passes": self.fsm.n_passes,
+                "kind": stop["kind"],
+                "reason": stop["reason"],
+                "stopped_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            }
+            save_checkpoint(self.checkpoint_path, self.checkpoint, self.get_logger())
+        elif self.fsm.state == fsm.DONE and self.checkpoint is not None:
+            self._clear_checkpoint("the run finished")
+
+    def _clear_checkpoint(self, why: str) -> None:
+        if self.checkpoint is None:
+            return
+        self.checkpoint = None
+        save_checkpoint(self.checkpoint_path, None, self.get_logger())
+        self.get_logger().info(f"route checkpoint cleared: {why}")
 
     def _srv_abort(self, _req, res: Trigger.Response):
         with self._lock:
@@ -794,6 +1025,40 @@ class RouteExecutor(Node):
     def _auto(self) -> bool:
         return self._panel is not None and self._panel.valid and self._panel.mode_auto
 
+    def _rejoin_gate(self) -> tuple[bool, str, tuple[tuple[int, int], float | None] | None]:
+        """Continue route from here: is the vehicle on the step the run stopped at (or, if that
+        one is already finished, on the next)? (ok, why, ((pass, step), remaining turn or None))."""
+        pose = self._pose()
+        if pose is None:
+            return False, "no pose", None
+        p0, k0 = self.fsm.start_at
+        cands = [(p0, k0)]
+        if k0 + 1 < len(self.compiled.steps):
+            cands.append((p0, k0 + 1))
+        elif p0 + 1 < self.fsm.n_passes:
+            cands.append((p0 + 1, 0))
+        whys = []
+        for pk in cands:
+            st = self.compiled.steps[pk[1]]
+            verdict, why, turn = rejoin_check(
+                st,
+                pose,
+                self._along_cross(st, pose) if st.type not in (ROTATE, WAIT) else (0.0, 0.0),
+                corridor=self._resume_corridor(),
+                pos_tol=self.route.limits.position_tolerance_m,
+                verify_pos=self.verify_pos,
+                verify_yaw=self.verify_yaw,
+                heading_tol=self.rejoin_heading,
+                turn_tol=self.turn_tol,
+            )
+            if verdict == REJOIN_OK:
+                return True, "", (pk, turn)
+            if verdict == REJOIN_FAR:
+                whys.append(f"step {st.id}: {why}")
+        if not whys:
+            return False, "the route is already finished at this point: load it again to run it", None
+        return False, "not on the route where it stopped (" + "; ".join(whys) + "); jog it back", None
+
     def _start_gate(self) -> tuple[bool, str]:
         pose = self._pose()
         if pose is None:
@@ -856,13 +1121,28 @@ class RouteExecutor(Node):
 
     def _start_ready(self, prefix: str = "") -> None:
         """Start the READY mission: the start gate and the prerequisites, then the pre-move
-        warning. `prefix` names the destination button that asked, for the operator."""
-        gate_ok, why = self._start_gate()
+        warning. `prefix` names the destination button that asked, for the operator. A
+        mission loaded to continue (fsm.start_at) is gated on the vehicle being on the step
+        it continues at instead of on the route start."""
+        rejoin = self.fsm.start_at is not None
+        turn = None
+        if rejoin:
+            gate_ok, why, plan = self._rejoin_gate()
+            if gate_ok:
+                self.fsm.start_at, turn = plan
+        else:
+            gate_ok, why = self._start_gate()
         pre = self._prereqs()
         if pre:
             gate_ok, why = False, pre
         if self.fsm.start(self._auto(), gate_ok, why):
             self._reset_step_state()
+            if rejoin:
+                if turn is not None:  # part of a turn in place is left: that part only
+                    self.turn_target, self.turn_centre = turn, self._odom_xy
+                self._mark_resume()
+            else:
+                self._clear_checkpoint("a new run started from the route start")
             self._begin_premove()
         if prefix:
             self.fsm.reason = f"{prefix}: {self.fsm.reason}"
@@ -1768,6 +2048,7 @@ class RouteExecutor(Node):
         self._run_started = None
 
     def _publish_state(self) -> None:
+        self._sync_checkpoint()
         m = RunState()
         m.generation = self.generation
         m.header.stamp = self.get_clock().now().to_msg()
@@ -1800,6 +2081,10 @@ class RouteExecutor(Node):
             m.wait_name, m.wait_label_id = st.name, st.label_id or ""
             m.waiting_s = self._now() - self.wait_since if self.wait_since is not None else 0.0
             m.continue_refused = self.continue_refused
+        cp = self.checkpoint
+        if cp is not None:
+            m.rejoin_available = self.fsm.state in (fsm.IDLE, fsm.READY, fsm.DONE, fsm.FAULT)
+            m.rejoin_text = checkpoint_text(cp)
         pose = self._pose()
         if pose is not None:
             m.pose_valid, m.pose_x, m.pose_y, m.pose_yaw = True, pose[0], pose[1], pose[2]

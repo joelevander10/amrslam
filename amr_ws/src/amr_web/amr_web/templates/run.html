@@ -62,6 +62,12 @@
       <h2>Mission <small>route executor</small></h2>
       <label class="field">Mission <select id="run-mission"></select></label>
       <div class="bar"><button id="btn-run-load" class="big run">Load (READY)</button></div>
+      {# After an Abort or a FAULT (acknowledged): load the same mission at the step where it
+         stopped. Start then checks the vehicle is on that step, not on the route start. #}
+      <div id="rejoin-box" class="warn-box" style="margin-top:.6rem" hidden>
+        <b>Stopped route</b> <span id="rejoin-text"></span>
+        <div class="bar"><button id="btn-run-rejoin" class="big run" title="Load the stopped run at the step where it stopped; then AUTO + Start">Continue route from here</button></div>
+      </div>
       <p id="run-emg" class="note bad" hidden></p>
       <div id="run-state" class="tel-grid" style="margin-top:1rem"></div>
       <p id="run-reason" class="note"></p>

@@ -70,6 +70,8 @@ $('btn-run-pause').onclick = () => api('/api/mission/pause').then(r => log(r.dat
 $('btn-run-resume').onclick = () => api('/api/mission/resume').then(r => log(r.data.message));
 $('btn-run-abort').onclick = () => api('/api/mission/abort').then(r => log(r.data.message));
 $('btn-run-ack').onclick = () => api('/api/mission/ack').then(r => log(r.data.message));
+// Continue route from here: the executor reloads the stopped run at its step (READY); Start moves it
+$('btn-run-rejoin').onclick = () => api('/api/mission/rejoin').then(r => log(r.data.message));
 // AMR QR only (run.html): releases a route wait step, the panel's START does the same
 if ($('btn-run-continue')) $('btn-run-continue').onclick = () => api('/api/mission/continue').then(r => log(r.data.message));
 
@@ -144,6 +146,16 @@ onState(st => {
   ['btn-run-load', 'btn-run-resume'].forEach(id => { $(id).disabled = !!emg; $(id).title = emg; });
   $('run-emg').hidden = !emg; $('run-emg').textContent = emg;
   const r = st.run;
+  // a run aborted or faulted part-way (route_checkpoint.json): offer to continue it from there
+  const rj = !!r && !!r.rejoin_available;
+  $('rejoin-box').hidden = !rj;
+  if (rj) {
+    $('rejoin-text').textContent = r.rejoin_text || '';
+    const fault = r.state_name === 'FAULT';
+    $('btn-run-rejoin').disabled = !!emg || fault;
+    $('btn-run-rejoin').title = emg || (fault ? 'Acknowledge the fault first (Ack fault)'
+      : 'Load the stopped run at the step where it stopped; then AUTO + Start');
+  }
   if ($('btn-run-continue')) {
     const waiting = !!r && r.state_name === 'WAITING';
     $('btn-run-continue').disabled = !!emg || !waiting;

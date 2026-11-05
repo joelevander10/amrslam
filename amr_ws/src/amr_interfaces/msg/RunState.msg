@@ -45,3 +45,8 @@ string wait_name            # WAITING: the step's operator name ("UBC hitch"), "
 string wait_label_id        # WAITING: the GLS floor label expected there, "" if none
 float64 waiting_s           # WAITING: how long it has waited
 string continue_refused     # WAITING: why the last Continue/Start was refused, "" if none
+# Continue route from here (2026-11-05). APPEND ONLY. rejoin_available: a run was aborted or
+# faulted part-way and is remembered (route_checkpoint.json) while nothing runs; /amr/rejoin
+# loads it at that step. rejoin_text: mission, pass/step and why it stopped, for the operator.
+bool rejoin_available
+string rejoin_text

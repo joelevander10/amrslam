@@ -225,13 +225,44 @@ Keep the vehicle in **MANUAL** until step 6.
      retries by itself until the path is clear, with no limit, and after 10 s blocked it
      refreshes its view of nearby obstacles (stale marks of someone who walked past) -
      see §6.
-   - **Abort** (web) ends the run; the mission must be loaded again.
+   - **Abort** (web), STOP in AUTO, or a FAULT ends the run - but the AMR **remembers the
+     step** where it stopped, also across a restart or power cut (§5a).
 8. **Finished**: run state `DONE`. For another run, **Load** again and press **START**
    (you are still in AUTO). To leave navigation, press **STOP** (MANUAL), **Abort** any
    open run, then **Return to idle**.
 
 Mode changes (new survey, another map) are refused while a run is READY, EXECUTING,
 PAUSED or BLOCKED. Abort it first.
+
+## 5a. Continue a route after Abort or FAULT
+
+When a run is aborted (web **Abort**, or **STOP** in AUTO) or faults part-way, the Run page
+shows a **Stopped route** box on the Mission tab: the mission, the step, why it stopped and
+when. It is kept in `~/.amr/route_checkpoint.json`, so it is still there after a service
+restart or power cut. Operator and engineer can both use it.
+
+1. A FAULT: fix the cause and press **Ack fault** first (the button stays grey until then).
+   After a restart: activate the same map and localise (initial pose + **Confirm**).
+2. Press **Continue route from here**. The run state becomes `READY` at that step (not at
+   step 1). Nothing moves.
+3. **START** (AUTO, then START again, as for any run). Instead of the route-start check, it
+   checks the AMR is **on the step where it stopped**:
+   - straight / arc / reverse / go-home: at most **0.30 m** beside the path, not before the
+     step's start, heading within **20°** of the path's there;
+   - turn in place: within 0.15 m of the turn point and facing somewhere on that turn. It
+     turns **only the part that is left** (stopped at 30° of a 90° turn: it turns 60°);
+   - wait step: at the wait point, then it waits again.
+
+   If that step was already finished (for example "endpoint missed" at its end), it starts
+   on the next step. Too far off: the reason says how far ("0.45 m beside the path...");
+   jog it back near the line in MANUAL and press START again.
+4. Then the 2 s pre-move warning, and it drives on from there to the end of the route
+   (and the remaining passes of a repeated route).
+
+The stopped route is forgotten when the run **finishes** (`DONE`) or when a run is started
+**from the route start** (a normal Load + START). It can't be continued - the button says
+why - if the map, the route or its steps changed since it stopped; then Load and start from
+the route start.
 
 ## 6. When something stops
 
@@ -243,7 +274,8 @@ PAUSED or BLOCKED. Abort it first.
 | Run `WAITING` | A wait step in the route | Do the job, step clear, press **Continue** (Run page) or **START** |
 | Continue refused | AUTO off, not localised, vehicle moved off the wait point, or E-stop | Read the reason under the run state; fix it and press Continue again |
 | Run `FAULT`, "drives did not power up" | No torque within 8 s of START (E-stop, push mode, I/O lost) | Fix it, then START again |
-| Run `FAULT` | Sensor, drive, localisation or a tolerance exceeded | Read the reason. With the vehicle still, press **STOP** in MANUAL (= Reset) or **Acknowledge fault**. Then localise / reposition / load / START again |
+| Run `FAULT` | Sensor, drive, localisation or a tolerance exceeded | Read the reason, fix it, press **Ack fault** (or **STOP** in MANUAL). Then **Continue route from here** + START to go on from that step (§5a), or Load + START from the route start |
+| Run aborted (Abort / STOP in AUTO) | The run was ended by hand | **Continue route from here** + START (§5a), or Load + START from the route start |
 | Localisation `LOST` | Sensor stale, pose uncertain or jumped | Set the initial pose again and **Confirm** |
 | Drives `FAULT: ... stalled` | A wheel was commanded but did not turn for 2 s: blocked wheel, driver alarm or disabled, no motor power | Fix the cause, then `ros2 service call /drives/ack_fault std_srvs/srv/Trigger` |
 | Drives `FAULT: ... AGAINST the command` | Wheel turned the wrong way: a sign in the profile is wrong | **Do not drive.** Recheck `invert_*` / `enc_invert_*` on blocks (INSTALL step 17) |

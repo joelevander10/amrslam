@@ -69,6 +69,7 @@ class Adapter(Protocol):
     def prepare_resume(self) -> tuple[bool, str]: ...
     def ack_fault(self) -> tuple[bool, str]: ...
     def continue_wait(self) -> tuple[bool, str]: ...
+    def rejoin(self) -> tuple[bool, str]: ...
     def brakes_release(self) -> tuple[bool, str]: ...
     def brakes_engage(self) -> tuple[bool, str]: ...
     def record_label(self, role: str, name: str, note: str) -> tuple[bool, str]: ...
@@ -1131,6 +1132,15 @@ def create_app(
     @app.post("/api/mission/ack")
     def api_mission_ack():
         return _call(adapter.ack_fault)
+
+    @app.post("/api/mission/rejoin")
+    def api_mission_rejoin():
+        """Continue route from here (both roles): load the last aborted / faulted run at the
+        step where it stopped. Nothing moves - the physical Start does, after its checks."""
+        why = _emergency_refusal()
+        if why:
+            return _result(False, why, 409)
+        return _call(adapter.rejoin)
 
     @app.post("/api/mission/continue")
     def api_mission_continue():

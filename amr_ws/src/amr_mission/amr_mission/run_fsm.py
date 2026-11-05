@@ -50,6 +50,13 @@ class RunFsm:
     pass_index: int = 0
     resume_prepared: bool = False
     history: list[tuple[int, str]] = field(default_factory=list)
+    # Continue a route after an Abort or a FAULT (2026-11-05). start_at: the (pass, step) a
+    # READY run starts at instead of (0, 0) - set by load(), used once by start(). last_stop:
+    # where the last run was abandoned, as {mission_id, pass_index, step_index, kind, reason,
+    # seq}; the executor persists it (route_checkpoint.json). Both None normally.
+    start_at: tuple[int, int] | None = None
+    last_stop: dict | None = None
+    _stop_seq: int = 0
 
     def _set(self, state: int, reason: str) -> bool:
         self.state, self.reason = state, reason
@@ -58,9 +65,13 @@ class RunFsm:
 
     # ---- loading -------------------------------------------------------------------
 
-    def load(self, mission_id: str, n_steps: int, passes: int = 1) -> bool:
+    def load(
+        self, mission_id: str, n_steps: int, passes: int = 1, start_at: tuple[int, int] | None = None
+    ) -> bool:
         """A mission may be (re)loaded when nothing is running: IDLE, READY or DONE.
-        `passes` is the route's repeat_count: the step list is executed that many times."""
+        `passes` is the route's repeat_count: the step list is executed that many times.
+        `start_at` (pass, step): Start begins there instead of at the route start - the
+        "Continue route from here" after an Abort or a FAULT."""
         if self.state not in (IDLE, READY, DONE):
             self.reason = f"cannot load while {NAMES[self.state]}"
             return False
@@ -70,8 +81,20 @@ class RunFsm:
         if type(n_steps) is not int or n_steps < 1:
             self.reason = f"cannot load: route has no steps ({n_steps!r})"
             return False
+        if start_at is not None:
+            sp, sk = start_at
+            if not (type(sp) is int and type(sk) is int and 0 <= sp < passes and 0 <= sk < n_steps):
+                self.reason = f"cannot load: no pass {start_at[0]} step {start_at[1]} in this route"
+                return False
         self.mission_id, self.n_steps, self.n_passes = mission_id, n_steps, passes
         self.run_id, self.step_index, self.pass_index, self.resume_prepared = "", -1, 0, False
+        self.start_at = start_at
+        if start_at is not None:
+            return self._set(
+                READY,
+                f"mission {mission_id} loaded to continue at pass {start_at[0] + 1}/{passes} step "
+                f"{start_at[1]}; AUTO + Start to continue from where the vehicle stands",
+            )
         return self._set(
             READY, f"mission {mission_id} loaded ({n_steps} steps x {passes} passes); AUTO + Start to run"
         )
@@ -80,10 +103,25 @@ class RunFsm:
         """Human-readable pass/step position (RunState has no pass field yet)."""
         return f"pass {self.pass_index + 1}/{self.n_passes} step {self.step_index}"
 
+    def _record_stop(self, kind: str, reason: str) -> None:
+        """A run abandoned part-way (abort or fault while WAITING/EXECUTING/PAUSED/BLOCKED):
+        remember where, so it can be continued from there."""
+        if self.state in (WAITING, *ACTIVE) and self.step_index >= 0 and self.mission_id:
+            self._stop_seq += 1
+            self.last_stop = {
+                "mission_id": self.mission_id,
+                "pass_index": self.pass_index,
+                "step_index": self.step_index,
+                "kind": kind,
+                "reason": reason,
+                "seq": self._stop_seq,
+            }
+
     def unready(self, reason: str) -> bool:
         """A prerequisite lapsed while waiting (nothing was moving): back to IDLE, no acknowledgement."""
         if self.state != READY:
             return False
+        self.start_at = None
         return self._set(IDLE, reason)
 
     # ---- start / resume -------------------------------------------------------------
@@ -99,6 +137,10 @@ class RunFsm:
                 self.reason = f"Start refused: {gate_reason}"
                 return False
             self.run_id, self.step_index, self.pass_index = new_run_id(), 0, 0
+            if self.start_at is not None:
+                self.pass_index, self.step_index = self.start_at
+                self.start_at = None
+                return self._set(EXECUTING, f"run {self.run_id} continued at {self.progress()}")
             return self._set(EXECUTING, f"run {self.run_id} started")
         if self.state in (PAUSED, BLOCKED):
             if not auto:
@@ -173,13 +215,16 @@ class RunFsm:
         if self.state not in (READY, WAITING, *ACTIVE):
             self.reason = f"abort ignored in {NAMES[self.state]}"
             return False
+        self._record_stop("aborted", reason)
+        self.start_at = None
         self.run_id, self.step_index, self.pass_index, self.resume_prepared = "", -1, 0, False
         return self._set(IDLE, reason)
 
     def fault(self, reason: str) -> bool:
         if self.state == FAULT:
             return False
-        self.resume_prepared = False
+        self._record_stop("fault", reason)
+        self.resume_prepared, self.start_at = False, None
         return self._set(FAULT, reason)
 
     def ack(self) -> bool:

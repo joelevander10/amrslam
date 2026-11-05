@@ -141,6 +141,7 @@ Route yang meminta lebih cepat tetap jalan, tapi di-clamp oleh mux.
 | `tests/run_all.py` | 762 check, semua lulus (731 KYB trackless + 31 profil QR). Runner mem-pin `AGV_PROFILE=agv-01` |
 | `amr_base/test/test_qr_*.py` | 48 lulus, plus `qr_base_node` end-to-end dengan hardware simulasi: standby di AUTO, armed saat run minta daya, push mode, emergency ACTIVE/NORMAL tanpa Reset |
 | `amr_mission/test/test_wait_step.py` | lulus, termasuk Continue dari web (hanya WAITING, ditolak saat E-stop / di luar titik wait) |
+| `amr_mission/test/test_rejoin.py` (2026-11-05) | 13 lulus: lanjut route dari titik berhenti setelah Abort/FAULT (straight, arc, sisa putaran, wait, step yang sudah selesai → step berikut, file `route_checkpoint.json` tahan restart, ditolak kalau route/map berubah) |
 | `amr_web/test` | lulus: tombol Continue hanya di QR, bagian GLS tersembunyi tanpa kamera, push mode, edit peta |
 | Test paket lain | Sama persis dengan baseline KYB trackless di mesin tanpa ROS |
 

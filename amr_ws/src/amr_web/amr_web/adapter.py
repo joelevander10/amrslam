@@ -310,6 +310,7 @@ class RosAdapter(Node):
             "abort": self.create_client(Trigger, "/amr/abort", callback_group=g),
             "resume": self.create_client(Trigger, "/amr/resume", callback_group=g),
             "continue": self.create_client(Trigger, "/amr/continue", callback_group=g),
+            "rejoin": self.create_client(Trigger, "/amr/rejoin", callback_group=g),
             "ack": self.create_client(Trigger, "/amr/ack_fault", callback_group=g),
             # push mode (AMR QR): disarm = 0 V, coils low, brakes RELEASED; arm = back to rest
             # with brakes. Neither moves the vehicle: motion still needs a held jog.
@@ -916,6 +917,10 @@ class RosAdapter(Node):
 
     def ack_fault(self) -> tuple[bool, str]:
         return self._trigger("ack")
+
+    def rejoin(self) -> tuple[bool, str]:
+        """Continue route from here: the executor loads the last aborted / faulted run at its step."""
+        return self._trigger("rejoin")
 
     def continue_wait(self) -> tuple[bool, str]:
         """The web Continue (AMR QR): the executor releases a WAITING run, nothing else."""
