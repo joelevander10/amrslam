@@ -401,6 +401,16 @@ qr_base.*
     readback showing both low for dir_dwell_s, before the other coil is
     raised. FWD and REV are never commanded high together.
 
+    Straight-line trim: wheel_scale_left / wheel_scale_right are each wheel's
+    effective rolling size divided by vehicle.wheel_dia_m (1.0 = nominal). The
+    encoder readings are multiplied by them, so odometry measures the ground
+    each wheel really covered and the speed loops make both wheels cover the
+    same ground - a vehicle that drifts to one side with both encoders reading
+    the same distance drives straight. Measure them with a 5 m straight run:
+    the gyro's heading change against the encoders' (2026-11-05: left 1.0073,
+    right 0.9927, the vehicle drifted 11 deg right over 5 m). Mechanical causes
+    (tyre size, pressure, a dragging brake) are better fixed first.
+
     Wheel loop: volts = ff_offset_v + |w_motor_rpm| / ff_motor_rpm_per_volt
     (feedforward) + PI on the encoder speed error, clamped to v_max_v, integral
     clamped to +/-i_max_v and frozen while saturated. Below zero_rad_s the wheel
@@ -688,6 +698,9 @@ _QR_SCHEMA = {
         "enc_mode":              ("QR_ENC_MODE", str),
         "enc_event_ms":          ("QR_ENC_EVENT_MS", int),
         "enc_timeout_s":         ("QR_ENC_TIMEOUT_S", float),
+        # each wheel's effective rolling size / vehicle.wheel_dia_m (straight-line trim)
+        "wheel_scale_left":      ("QR_WHEEL_SCALE_LEFT", float),
+        "wheel_scale_right":     ("QR_WHEEL_SCALE_RIGHT", float),
         # WitMotion IMU
         "imu_port":              ("QR_IMU_PORT", str),
         "imu_baud":              ("QR_IMU_BAUD", int),
@@ -1353,6 +1366,10 @@ def _validate_qr(ns, check):
           f"qr_base.enc_timeout_s ({g('QR_ENC_TIMEOUT_S')}) must be >= 3 event periods "
           f"({3 * g('QR_ENC_EVENT_MS') / 1000.0:g} s), or one late frame is a fault")
     check(g("QR_ENC_TIMEOUT_S") <= 1.0, "qr_base.enc_timeout_s must be <= 1 s")
+    for side in ("left", "right"):
+        check(0.95 <= g(f"QR_WHEEL_SCALE_{side.upper()}") <= 1.05,
+              f"qr_base.wheel_scale_{side} must be in 0.95..1.05 (a wheel more than 5 % "
+              f"off the nominal size is a wrong wheel_dia_m or a flat tyre, not a trim)")
 
     # -- IMU -----------------------------------------------------------------
     check(bool(g("QR_IMU_PORT")), "qr_base.imu_port must be set")

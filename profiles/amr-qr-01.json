@@ -212,6 +212,8 @@
     "enc_mode": "auto",
     "enc_event_ms": 20,
     "enc_timeout_s": 0.2,
+    "wheel_scale_left": 1.0073,
+    "wheel_scale_right": 0.9927,
     "imu_port": "/dev/amr_imu",
     "imu_baud": 115200,
     "imu_timeout_s": 0.5,

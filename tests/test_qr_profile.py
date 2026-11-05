@@ -95,6 +95,7 @@ def test_qr_profile():
                lambda d: d["panel"].update(di_estop_ok=10), "must be qr_base.di_estop")
     qr_refuses("drive monitoring (BLV-R objects) is refused", lambda d: d["monitor"].update(enabled=True),
                "monitor.enabled")
+    qr_refuses("a wheel scale more than 5 % off is refused", qb(wheel_scale_right=0.9), "wheel_scale_right")
     qr_refuses("a nonstandard IMU baud rate is refused", qb(imu_baud=12345), "imu_baud")
     qr_refuses("a gyro sign other than +-1 is refused", qb(imu_gyro_sign=0.5), "imu_gyro_sign")
     check("the real profile is restored afterwards", config.PROFILE_NAME == "agv-01")

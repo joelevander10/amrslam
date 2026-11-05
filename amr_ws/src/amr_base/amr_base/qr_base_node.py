@@ -334,6 +334,9 @@ class QrBaseNode(Node):
                     config.QR_ENC_MODE,
                     config.QR_ENC_EVENT_MS,
                     log=self.get_logger().info,
+                    # straight-line trim: both wheels measured in nominal-wheel terms
+                    scale_left=config.QR_WHEEL_SCALE_LEFT,
+                    scale_right=config.QR_WHEEL_SCALE_RIGHT,
                 )
                 encs.start()
                 self._can_state.update(state="up", detail=how)

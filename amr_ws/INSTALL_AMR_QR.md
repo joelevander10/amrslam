@@ -111,7 +111,7 @@ only a restart. Rebuild after a pull that adds a package, a node or a message.
 **10. Offline tests** (no hardware)
 ```bash
 cd ~/agv_can && python3 tests/run_all.py | tail -2
-# 762 checks, "all checks passed". The suite pins AGV_PROFILE=agv-01 itself, so the
+# 763 checks, "all checks passed". The suite pins AGV_PROFILE=agv-01 itself, so the
 # amr-qr-01 export from step 7 does not affect it.
 cd amr_ws/src && AGV_PROFILE=agv-01 python3 -m pytest -q amr_base/test/test_qr_*.py \
   amr_base/test/test_wasd_teleop.py amr_localization/test amr_description/test
@@ -327,7 +327,7 @@ cd amr_ws && rm -rf build install log
 colcon build --symlink-install && source install/setup.bash
 source env/vehicle.sh
 python3 -c "from agv_core import config; print(config.PROFILE_NAME, config.PLATFORM)"   # amr-qr-01 qr_analog
-cd ~/agv_can && python3 tests/run_all.py | tail -2                                     # 762 checks
+cd ~/agv_can && python3 tests/run_all.py | tail -2                                     # 763 checks
 ```
 `git status` listing `profiles/amr-qr-01.json` or `nanoscan3.amr-qr-01.yaml`: the repo
 already carries the robot's values (IMU 115200 baud, right encoder inverted, measured

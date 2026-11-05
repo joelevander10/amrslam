@@ -158,6 +158,9 @@ class WheelEncoder:
     counts_per_rev: float
     range_counts: int
     invert: bool = False
+    # effective rolling size / nominal (qr_base.wheel_scale_*): radians and speed are the
+    # turn a NOMINAL wheel would need to cover the same ground; counts stay raw
+    scale: float = 1.0
     window_s: float = 0.06
     max_step_revs: float = 100.0  # a bigger step between two readings is not believed
     unwrap: Unwrapper = field(init=False)
@@ -203,12 +206,12 @@ class WheelEncoder:
 
     @property
     def rad(self) -> float | None:
-        return None if self.counts is None else self.counts * 2.0 * math.pi / self.counts_per_rev
+        return None if self.counts is None else self.scale * self.counts * 2.0 * math.pi / self.counts_per_rev
 
     @property
     def rad_s(self) -> float | None:
         cps = self.speed.counts_per_s()
-        return None if cps is None else cps * 2.0 * math.pi / self.counts_per_rev
+        return None if cps is None else self.scale * cps * 2.0 * math.pi / self.counts_per_rev
 
 
 def range_from_6002(value: int | None) -> int | None:
@@ -248,6 +251,8 @@ class EncoderPair:
         sdo_timeout_s: float = 0.02,
         log=print,
         clock=time.monotonic,
+        scale_left: float = 1.0,
+        scale_right: float = 1.0,
     ) -> None:
         if mode not in ("auto", TPDO, SDO):
             raise ValueError(f"enc_mode {mode!r}")
@@ -260,8 +265,8 @@ class EncoderPair:
         self.auto_range = int(range_counts) == 0
         self.counts_per_rev = counts_per_rev
         start_range = FALLBACK_RANGE if self.auto_range else int(range_counts)
-        self.left = WheelEncoder(left_node, counts_per_rev, start_range, invert_left)
-        self.right = WheelEncoder(right_node, counts_per_rev, start_range, invert_right)
+        self.left = WheelEncoder(left_node, counts_per_rev, start_range, invert_left, scale=scale_left)
+        self.right = WheelEncoder(right_node, counts_per_rev, start_range, invert_right, scale=scale_right)
         self.info: dict[int, dict] = {}  # node -> {"units_per_rev", "range_6002", "range"}
         self.sdo_reads = 0
         self.sdo_timeouts = 0
