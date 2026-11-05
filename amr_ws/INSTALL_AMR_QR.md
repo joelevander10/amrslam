@@ -250,9 +250,28 @@ What to check:
 ## Part F — Lidar and the floor
 
 **18. Lidar**
-- The scanner is at 192.168.1.2 (`nanoscan3.amr-qr-01.yaml`); `host_ip: "auto"` picks
+- The scanner is at **192.168.3.2**, on its own subnet (`nanoscan3.amr-qr-01.yaml`). The
+  PC needs an address on 192.168.3.x on the port the scanner is cabled to - 192.168.3.1:
+  ```bash
+  # scanner on its own Ethernet port (replace enp2s0 with that port, see `ip link`):
+  sudo tee /etc/netplan/70-amr-nanoscan3.yaml >/dev/null <<'NP'
+  network:
+    version: 2
+    renderer: networkd
+    ethernets:
+      enp2s0:
+        dhcp4: no
+        addresses: [192.168.3.1/24]
+        optional: true
+  NP
+  sudo chmod 600 /etc/netplan/70-amr-nanoscan3.yaml && sudo netplan apply
+  ping -c2 192.168.3.2
+  ```
+  If the scanner shares the switch with the I/O modules, add 192.168.3.1/24 as a SECOND
+  address on that port instead of a new port section.
+  `host_ip: "auto"` picks
   this PC's address on the route to it. If no route exists at launch, `lidar.host_ip` in
-  the profile is used instead (set it to this PC's 192.168.1.x address).
+  the profile is used instead (set it to this PC's 192.168.3.x address, 192.168.3.1).
 - Start it:
   ```bash
   ros2 launch amr_bringup lidar.launch.py
@@ -331,7 +350,7 @@ cd ~/agv_can && python3 tests/run_all.py | tail -2                              
 ```
 `git status` listing `profiles/amr-qr-01.json` or `nanoscan3.amr-qr-01.yaml`: the repo
 already carries the robot's values (IMU 115200 baud, right encoder inverted, measured
-feedforward, scanner 192.168.1.2). Note anything else you changed on the robot before
+feedforward, scanner 192.168.3.2). Note anything else you changed on the robot before
 the checkout and put it back in the repo.
 
 Then re-run Part G step 20 (the unit files changed: watchdog, sudoers, journald), and

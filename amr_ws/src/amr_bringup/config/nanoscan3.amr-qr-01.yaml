@@ -1,14 +1,15 @@
 # sick_safetyscanners2 for the AMR QR's nanoScan3 (profile amr-qr-01).
 #
-# The scanner shares the I/O network with the DIO (192.168.1.40) and the analog module
-# (192.168.1.30). host_ip "auto": scanner.launch.py puts in this PC's address on the
-# route to sensor_ip, which is where the scanner must send its UDP data. See
+# The scanner is on its own subnet, 192.168.3.0/24 (2026-11-05; the I/O modules stay on
+# 192.168.1.x). This PC needs an address on 192.168.3.x - 192.168.3.1 by default, see
+# INSTALL_AMR_QR.md step 18. host_ip "auto": scanner.launch.py puts in this PC's address
+# on the route to sensor_ip, which is where the scanner must send its UDP data. See
 # nanoscan3.yaml (gvievo-01) for what each key does; only vehicle-specific values differ.
 sick_safetyscanners2_node:
   ros__parameters:
     frame_id: "laser_frame"
-    sensor_ip: "192.168.1.2"         # set on the scanner (SICK Safety Designer), 2026-09-24
-    host_ip: "auto"                  # or this PC's 192.168.1.x address
+    sensor_ip: "192.168.3.2"         # set on the scanner (SICK Safety Designer), 2026-11-05
+    host_ip: "auto"                  # or this PC's 192.168.3.x address
     interface_ip: "0.0.0.0"
     host_udp_port: 6060
     channel: 0

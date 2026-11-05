@@ -73,8 +73,8 @@
   },
   "lidar": {
     "enabled": false,
-    "host_ip": "192.168.1.10",
-    "sensor_ip": "192.168.1.2",
+    "host_ip": "192.168.3.1",
+    "sensor_ip": "192.168.3.2",
     "port": 6060,
     "reassembly_timeout_s": 0.06,
     "zone_block": 0,
