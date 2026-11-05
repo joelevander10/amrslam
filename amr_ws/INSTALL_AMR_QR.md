@@ -255,10 +255,13 @@ What to check:
   the profile is used instead (set it to this PC's 192.168.1.x address).
 - Start it:
   ```bash
-  ros2 launch amr_bringup lidar.launch.py foxglove:=true
+  ros2 launch amr_bringup lidar.launch.py
   ```
-- In Foxglove (`ws://<robot-ip>:8765`), a box 2 m ahead must appear at +x and a box to
-  the left at +y. If not, correct `laser_yaw` / `laser_x` in
+  (Foxglove was removed in KYB trackless.) Check the scan with the running service
+  instead: engineer view → **Maps** → **New map** shows the live scan, or on a PC with
+  ROS, `rviz2` with fixed frame `base_footprint` and a LaserScan display on `/scan`.
+- A box 2 m ahead must appear at +x (in front of the vehicle) and a box to the left at
+  +y. If not, correct `laser_yaw` / `laser_x` in
   `amr_description/config/vehicle.amr-qr-01.yaml`.
 - Measure the real front and rear overhang. Update `footprint.amr-qr-01.yaml` and
   `chassis_x` together, then rerun `pytest src/amr_description/test/test_vehicle.py`.
@@ -284,8 +287,8 @@ sudo systemctl enable --now amr.service
 journalctl -u amr.service -f
 ```
 The sudoers line lets the web page's **Restart** button restart `amr.service`.
-Open `http://<robot-ip>:5001/`. The Status page should show Mode `IDLE`, Selector
-`MANUAL` and Drives `ARMED`. Next: [OPERATE_AMR_QR.md](OPERATE_AMR_QR.md).
+Open `http://<robot-ip>:5001/` and press **↻** once. **Home** should show Mode `IDLE`, and
+the left rail Selector `MANUAL` and Drives `ARMED`. Next: [OPERATE_AMR_QR.md](OPERATE_AMR_QR.md).
 
 ---
 
