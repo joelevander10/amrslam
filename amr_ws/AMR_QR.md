@@ -50,7 +50,7 @@ Instalasi langkah demi langkah (dan update dari kode lama, Part U):
 | `amr_base/qr_calibrate.py`, `wasd_teleop.py` | Tool bench (`io`, `enc`, `imu`, `imu-setup`, `breakaway`, `ff`, `brake-off`) dan teleop WASD |
 | `amr_localization/speckle.py`, `scan_mask*.py`, `robot_fixed.py` | Filter scan di `scan_gate_node` (mati; untuk lidar rusak) |
 | `amr_description/vehicle.py`, `config/*.amr-qr-01.yaml` | Geometri per kendaraan (URDF, footprint) |
-| `amr_bringup/config/nanoscan3.amr-qr-01.yaml` | Scanner 192.168.3.2 (subnet sendiri; PC 192.168.3.1, host_ip auto) |
+| `amr_bringup/config/nanoscan3.amr-qr-01.yaml` | Scanner 192.168.3.2 (subnet sendiri; PC 192.168.3.10 di enp1s0, host_ip auto) |
 | `base/scanner/mapping_layer/navigation_layer.launch.py` | Pilih hardware & config sesuai profil, lifecycle slam_toolbox di Jazzy, start gate 0.20 m / 10° |
 | `amr_web`: halaman Manual (push mode), Maps (cek Map id), log alasan run, live view `/scan_gated` | Web |
 | `deploy/*` (user `amrslam`, `AGV_PROFILE=amr-qr-01`), `deploy/qr/*` (udev, slcan `can0`) | Deploy |

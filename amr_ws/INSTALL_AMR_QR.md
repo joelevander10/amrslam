@@ -271,7 +271,7 @@ What to check:
   address on that port instead of a new port section.
   `host_ip: "auto"` picks
   this PC's address on the route to it. If no route exists at launch, `lidar.host_ip` in
-  the profile is used instead (set it to this PC's 192.168.3.x address, 192.168.3.1).
+  the profile is used instead (set it to this PC's 192.168.3.x address, 192.168.3.10 on the AMR QR).
 - Start it:
   ```bash
   ros2 launch amr_bringup lidar.launch.py
