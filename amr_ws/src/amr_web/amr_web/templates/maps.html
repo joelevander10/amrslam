@@ -37,6 +37,7 @@
     <div class="sep"></div>
     <h3>Jog <small>survey spin cap 0.27 rad/s</small></h3>
     <div id="jog-maps"></div>
+    {% if qr %}<div class="sep"></div><div data-push-mode></div>{% endif %}
   </div>
   <div class="panel">
     <h2>Live map <small>/map · 1 Hz</small></h2>
@@ -49,4 +50,4 @@
   <div id="maps-list"><div class="none">loading…</div></div>
 </section>
 {% endblock %}
-{% block scripts %}<script src="/static/mapview.js"></script><script src="/static/liveview.js"></script><script src="/static/jogpad.js"></script><script src="/static/maps.js"></script>{% endblock %}
+{% block scripts %}<script src="/static/mapview.js"></script><script src="/static/liveview.js"></script><script src="/static/jogpad.js"></script><script src="/static/maps.js"></script>{% if qr %}<script src="/static/pushmode.js"></script>{% endif %}{% endblock %}

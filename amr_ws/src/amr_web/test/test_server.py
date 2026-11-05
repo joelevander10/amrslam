@@ -250,11 +250,35 @@ def test_coordinator_endpoints_delegate_and_never_touch_wheels(env):
 
 def test_push_mode_brake_endpoints_delegate(env):
     client, stub, *_ = env
+    base = stub.state()
+
+    def state(panel, run=None):
+        stub.state = lambda: {**base, "panel": panel, "run": run}
+
+    state({"valid": True, "mode_auto": False, "age_s": 0.05})
     for path, name in (("/api/brakes/release", "brakes_release"), ("/api/brakes/engage", "brakes_engage")):
         r = client.post(path, json={})
         assert r.status_code == 200 and r.json["ok"], path
         assert stub.calls[-1][0] == name
     assert client.get("/api/brakes/release").status_code == 405  # a GET never changes the brakes
+
+
+def test_the_brakes_are_released_only_in_manual_with_no_run(env):
+    """Push mode: refused in AUTO, with a run under way, or with no trusted panel image.
+    Brakes ON is never refused."""
+    client, stub, *_ = env
+    base = stub.state()
+    for panel, run, why in (
+        (None, None, "panel state unknown"),
+        ({"valid": True, "mode_auto": True, "age_s": 0.05}, None, "selector is AUTO"),
+        ({"valid": True, "mode_auto": False, "age_s": 0.05}, {"state_name": "WAITING"}, "run is WAITING"),
+        ({"valid": True, "mode_auto": False, "age_s": 0.05}, {"state_name": "EXECUTING"}, "run is EXECUTING"),
+    ):
+        stub.state = lambda panel=panel, run=run: {**base, "panel": panel, "run": run}
+        n = len(stub.calls)
+        r = client.post("/api/brakes/release", json={})
+        assert r.status_code == 409 and why in r.json["message"] and len(stub.calls) == n, why
+        assert client.post("/api/brakes/engage", json={}).status_code == 200
 
 
 def test_continue_route_from_here_delegates_for_both_roles(env):
@@ -291,6 +315,9 @@ def test_web_continue_is_the_amr_qr_only(env, tmp_path, monkeypatch):
     page = qr.get("/run").get_data(as_text=True)
     assert '<div class="bar"><button id="btn-run-continue"' in page
     assert 'id="btn-gls-record"' not in page  # no camera fitted
+    assert "data-push-mode" in page and "/static/pushmode.js" in page, "push mode on Run"
+    maps_page = qr.get("/maps").get_data(as_text=True)
+    assert "data-push-mode" in maps_page and "/static/pushmode.js" in maps_page, "push mode on Maps"
 
 
 def test_mode_and_survey_are_asynchronous_operations(env):

@@ -1156,8 +1156,25 @@ def create_app(
         return _call(adapter.continue_wait)
 
     # push mode (AMR QR): release / re-apply the brakes (drives disarmed / armed). No velocity.
+    def _push_refusal() -> str:
+        """Why the brakes may not be released now, or "": only in MANUAL with no run under way
+        (a released vehicle in AUTO would leave a run with drives that cannot hold it)."""
+        st = adapter.state()
+        st = st if isinstance(st, dict) else {}
+        panel, run = st.get("panel"), st.get("run") or {}
+        if not panel or not panel.get("valid"):
+            return "panel state unknown: brakes stay on"
+        if panel.get("mode_auto"):
+            return "selector is AUTO: press STOP (MANUAL) first"
+        if run.get("state_name") in ("EXECUTING", "PAUSED", "BLOCKED", "WAITING"):
+            return f"a run is {run['state_name']}: pause or abort it first"
+        return ""
+
     @app.post("/api/brakes/release")
     def api_brakes_release():
+        why = _push_refusal() or _emergency_refusal()
+        if why:
+            return _result(False, why, 409)
         return _call(adapter.brakes_release)
 
     @app.post("/api/brakes/engage")

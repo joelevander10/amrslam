@@ -57,6 +57,7 @@
       <div class="sep"></div>
       <h3>Jog <small>selector MANUAL</small></h3>
       <div id="jog-run"></div>
+      {% if qr %}<div class="sep"></div><div data-push-mode></div>{% endif %}
     </div>
     <div class="tabpane" data-tab="mission" hidden>
       <h2>Mission <small>route executor</small></h2>
@@ -92,5 +93,5 @@
   </div>
 </section>
 {% endblock %}
-{% block scripts %}<script src="/static/mapview.js"></script><script src="/static/liveview.js"></script><script src="/static/jogpad.js"></script><script src="/static/run.js"></script>
+{% block scripts %}<script src="/static/mapview.js"></script><script src="/static/liveview.js"></script><script src="/static/jogpad.js"></script><script src="/static/run.js"></script>{% if qr %}<script src="/static/pushmode.js"></script>{% endif %}
 <script>tabs('run-tabs');</script>{% endblock %}
