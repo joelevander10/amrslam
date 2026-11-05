@@ -45,7 +45,11 @@ def test_vehicle_file_matches_urdf_profile_and_footprint(profile):
     args = vehicle.xacro_args(profile, SHARE)
     assert set(args) <= _xacro_arg_names()
     prof = json.load(open(os.path.join(REPO, "profiles", f"{profile}.json")))
-    assert float(args["track_width"]) == pytest.approx(prof["vehicle"]["track_m"])
+    # The URDF draws the wheels where they are (centre to centre); the profile's track_m is
+    # the EFFECTIVE track odometry and kinematics use - wider by tyre / castor scrub, measured
+    # by the spin test (agv_core/config.py, qr_analog notes). Never narrower, at most +20 %.
+    physical, effective = float(args["track_width"]), prof["vehicle"]["track_m"]
+    assert physical - 1e-9 <= effective <= 1.2 * physical
     assert float(args["wheel_radius"]) == pytest.approx(prof["vehicle"]["wheel_dia_m"] / 2)
     fp = yaml.safe_load(open(vehicle.config_path("footprint", profile, SHARE)))
     xs = [p[0] for p in fp["polygon"]]
