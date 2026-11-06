@@ -94,8 +94,8 @@ On the **Manual**, **Maps** or **Run** page (selector must be MANUAL):
 
 - **Hold** a pad button, or hold W/A/S/D / the arrow keys. Releasing stops the vehicle.
   So do Space, Esc, the centre Stop button, and switching browser tab.
-- The speed menu offers 0.10–0.40 m/s; the AMR QR's top speed is 0.85 m/s
-  (`vehicle.motor_max_rpm` 2700).
+- The speed menu offers 0.10–0.40 m/s; the AMR QR's top speed is 0.94 m/s
+  (`vehicle.motor_max_rpm` 3000, `qr_base.v_max_v` 10 V: the drivers' full scale).
 - While surveying, spins are capped at 0.27 rad/s.
 
 ### 2a. USB keypad (same keypad and keys as the KIM2A)
@@ -218,7 +218,7 @@ ros2 run amr_mission map_edit --map block_c --rev 1 --despeckle-rect -50 -50 50 
    click. A third click starts a new measurement; Esc clears it.
 5. **Speed.** On the AMR QR every straight runs at **0.80 m/s** (`qr_base.route_v_mps`,
    2026-11-06), every arc and the Go home curve at **0.30 m/s**, a reverse at 0.30 m/s (never faster: the rear is not scanned), spins
-   at 0.37 rad/s (`motor_max_rpm` 2700 = 0.85 m/s top; routes run at most at 95 % of it).
+   at 0.37 rad/s (`motor_max_rpm` 3000 = 0.94 m/s top, `v_max_v` 10 V; routes run at most at 95 % of it).
    Every speed change is a smooth **S-curve** (start 0.2 m/s², braking 0.25 m/s², jerk
    0.4 m/s³; 2026-11-06): from standstill it reaches 0.80 m/s in about 4.5 s and 1.8 m,
    slows 0.80 → 0.30 before an arc over about 1.7 m, and stops from 0.80 in about 1.6 m
