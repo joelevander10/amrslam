@@ -193,8 +193,11 @@ ros2 run amr_mission map_edit --map block_c --rev 1 --despeckle-rect -50 -50 50 
 ## 4. Draw a route (Routes page) — nothing moves
 
 1. Pick the map `<id> rev N` and type a **Route id**.
-2. **Start pose**: click where the route starts and **drag toward the heading**. Use a
-   spot you can mark on the floor; the survey mark is easiest.
+2. **Start pose** (the route's homepost): click where the route starts and **drag toward
+   the heading**. Use a spot you can mark on the floor; the survey mark is easiest
+   (**Start = survey mark**). A route can have **its own homepost** anywhere on the map:
+   park the AMR on it, localise it (§5 steps 1–3, `READY`), then press **Start = AMR
+   here** - the start is exactly where the AMR stands. Mark that spot on the floor.
 3. Add steps from the start pose:
    - **Straight**: click a point ahead of the vehicle.
    - **CCW / CW** 45 / 90 / 180 / 270: turn in place.
@@ -250,7 +253,10 @@ Keep the vehicle in **MANUAL** until step 6.
 2. **Set the initial pose.** Press **Set initial pose on map**, click the vehicle's real
    position, **drag toward where it faces**, and release. Localisation becomes
    `CHECKING`. The red scan points should sit on the map's walls. Jog about 0.5 m
-   forward and back and turn a little to help it converge.
+   forward and back and turn a little to help it converge. Shortcuts with the AMR parked
+   exactly: **Initial pose = survey mark** (the map's homepost), or **Initial pose = route
+   start** (the homepost of the mission picked in the list - for a route with its own
+   homepost).
 3. **Confirm.** When **Can confirm** reads `YES` (scan match ≥ 0.6) and you can see the
    scan on the walls, press **Confirm: scans align**. Localisation becomes `READY`.
 4. **Position the vehicle** on the route's start with the jog pad (or by pushing it in

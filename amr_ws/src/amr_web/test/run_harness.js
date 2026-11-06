@@ -18,6 +18,7 @@ function el(id) {
   return els[id];
 }
 const stateFns = [];
+const posts = [];
 const gets = [];
 const missions = [
   { mission_id: 'mis1', map: { id: 'm1', revision: 1 }, route: { id: 'r1', revision: 1 } },
@@ -29,14 +30,14 @@ async function apiGet(url) {
   if (url === '/api/footprint') return { status: 200, data: { polygon: [] } };
   if (url === '/api/missions') return { status: 200, data: missions };
   const m = url.match(/routes\/(\w+)\/(\d+)$/);
-  if (m) return { status: 200, data: { compiled: { route: m[1], steps: [] } } };
+  if (m) return { status: 200, data: { compiled: { route: m[1], steps: [] }, route: { start: { x_m: m[1] === 'r1' ? 1.5 : 7.0, y_m: 2.0, yaw_deg: 90 } } } };
   return { status: 404, data: {} };
 }
 class MapView { constructor() { this.overlays = []; this.meta = null; } draw() {} async load() {} }
 const ctx = {
   console, JSON, Math, Promise,
   document: { getElementById: el, querySelectorAll: () => [], createElement: () => ({ value: '', textContent: '' }) },
-  MapView, apiGet, api: async () => ({ status: 200, data: {} }),
+  MapView, apiGet, api: async (url, body) => { posts.push({ url, body }); return { status: 200, data: { message: 'sent' } }; },
   onState: fn => stateFns.push(fn), tiles() {}, num: v => String(v), yesno: v => String(v), log() {},
   operation() {}, esc: s => s, alpha: c => c, INK: {}, LOC_LEVEL: {}, RUN_LEVEL: {}, MODE_LEVEL: {},
   lastState: null, liveOverlay() {}, pollLive() {}, jogpad() {},
@@ -63,5 +64,10 @@ const state = run => ({ mode: { mode_name: 'NAVIGATION', active_map_id: 'm1', ac
   out.no_refetch = gets.length === n;
   stateFns.forEach(f => f(state('mis1'))); await flush();   // another mission loaded (e.g. from another tablet)
   out.followed = preview();
+  // Initial pose = route start (2026-11-06): the selected mission's start, on the active map only
+  vm.runInContext("view.meta = { map_id: 'm1', revision: 1, sha256: 'abc' }", ctx);
+  ctx.lastState = state('mis1');
+  el('btn-pose-route').onclick(); await flush();
+  out.pose_post = posts.find(p => p.url === '/api/localization/initialpose') || null;
   console.log(JSON.stringify(out));
 })().catch(e => console.log(JSON.stringify({ error: String(e && e.stack || e) })));

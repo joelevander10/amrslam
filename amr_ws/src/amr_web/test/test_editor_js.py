@@ -138,3 +138,14 @@ def test_editor_speed_waypoints_split_a_straight_and_set_a_slow_zone():
         {"id": "s4", "x": 7000, "v": 0.25},
     ]
     assert "s2 · 1500 mm · 0.30 m/s" in out["split_options"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node not installed")
+def test_editor_start_at_the_amr_only_when_localised_on_this_map():
+    harness = pathlib.Path(__file__).with_name("editor_harness.js")
+    r = subprocess.run([NODE, str(harness)], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    assert "error" not in out, out
+    assert out["here_refused_start"] == {"x_m": 0, "y_m": 0, "yaw_deg": 0}  # CHECKING: unchanged
+    assert out["here_start"] == {"x_m": 3.25, "y_m": -1.5, "yaw_deg": 90}

@@ -280,6 +280,17 @@ $('btn-start-survey').onclick = () => {
   snapshot(); route.start = { x_m: st.x_m, y_m: st.y_m, yaw_deg: (st.yaw_rad || 0) * 180 / Math.PI }; refresh();
   log(`route start = survey start (${num(st.x_m, 2)}, ${num(st.y_m, 2)}, ${num(route.start.yaw_deg, 1)}°)${st.description ? ' — ' + st.description : ''}`);
 };
+// A homepost of its own (2026-11-06): the route start where the AMR stands now, parked on the
+// homepost and localised on THIS map - the pose the executor's START check will compare with.
+$('btn-start-here').onclick = () => {
+  const r = lastState && lastState.run, loc = lastState && lastState.localization, md = lastState && lastState.mode;
+  const onActive = md && view.meta && md.active_map_id === view.meta.map_id && +md.active_map_revision === +view.meta.revision;
+  if (!onActive) { log('the AMR is not running on this map: activate it (Run page) first', 'bad'); return; }
+  if (!loc || loc.state_name !== 'READY' || !r || !r.pose_valid) { log(`the AMR is not localised (${loc ? loc.state_name : 'no localisation'}): set its pose on the Run page and wait for READY`, 'bad'); return; }
+  snapshot(); route.start = { x_m: +r.pose_x, y_m: +r.pose_y, yaw_deg: +r.pose_yaw * 180 / Math.PI }; refresh();
+  log(`route start = the AMR (${num(route.start.x_m, 3)}, ${num(route.start.y_m, 3)}, ${num(route.start.yaw_deg, 1)}°)` +
+    (route.steps.length ? ' — the steps keep their end points: Validate before saving' : ''));
+};
 $('tool-line').onclick = () => setTool(view.tool === 'line' ? null : 'line');
 $('tool-measure').onclick = () => setTool(view.tool === 'measure' ? null : 'measure');
 $('btn-undo').onclick = undo; $('btn-redo').onclick = redo;

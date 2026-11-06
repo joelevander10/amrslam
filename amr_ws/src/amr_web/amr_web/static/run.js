@@ -45,6 +45,19 @@ $('btn-pose-survey').onclick = () => {
                                          sha256: view.meta.sha256, generation: lastState.mode.generation })
     .then(r => log(r.status === 200 ? `${r.data.message} (survey mark ${num(st.x_m, 2)}, ${num(st.y_m, 2)}, ${num(yaw * 180 / Math.PI, 1)}°)` : r.data.message, r.status === 200 ? '' : 'bad'));
 };
+// A route may start from its own homepost, not the survey mark (2026-11-06): with the AMR parked
+// on it, one press seeds the pose at the selected mission's route start - same identity checks.
+let routeStart = null;  // { x_m, y_m, yaw_deg, mission } of the mission in the list
+$('btn-pose-route').onclick = () => {
+  const rs = routeStart;
+  if (!rs || rs.mission !== $('run-mission').value) { log('pick the mission whose homepost the AMR is on', 'bad'); return; }
+  if (!viewIsActive()) { log('the viewed map is not the active map; pose not sent', 'bad'); return; }
+  dropPoseTool();
+  const yaw = rs.yaw_deg * Math.PI / 180;
+  api('/api/localization/initialpose', { x_m: rs.x_m, y_m: rs.y_m, yaw_rad: yaw, map_id: view.meta.map_id, map_revision: view.meta.revision,
+                                         sha256: view.meta.sha256, generation: lastState.mode.generation })
+    .then(r => log(r.status === 200 ? `${r.data.message} (route start of ${rs.mission}: ${num(rs.x_m, 2)}, ${num(rs.y_m, 2)}, ${num(rs.yaw_deg, 1)}°)` : r.data.message, r.status === 200 ? '' : 'bad'));
+};
 $('btn-loc-confirm').onclick = () => api('/api/localization/confirm').then(r => log(r.data.message, r.status === 200 ? '' : 'bad'));
 $('btn-loc-reset').onclick = () => api('/api/localization/reset').then(r => log(r.data.message));
 // "Record label here" (engineer only: the button is absent for the operator)
@@ -114,6 +127,7 @@ onState(st => {
   if ($('btn-gls-record')) $('btn-gls-record').disabled = !onActive;
   glsTiles(st.gls);
   $('btn-pose-survey').disabled = !onActive || !(view.meta && view.meta.start && view.meta.start.x_m !== undefined);
+  $('btn-pose-route').disabled = !onActive || !routeStart || routeStart.mission !== $('run-mission').value;
   if (!onActive && view.tool === 'initialpose') dropPoseTool();
   if (view.tool === 'initialpose' && m && m.generation !== poseGen) dropPoseTool();
   tiles('active-map', [m
@@ -217,11 +231,14 @@ async function loadMissions(prefer) {
   await sel.onchange({ target: sel });
 }
 $('run-mission').onchange = async e => {
-  const wanted = e.target.value; preview = null;
+  const wanted = e.target.value; preview = null; routeStart = null;
   const m = (await apiGet('/api/missions')).data.find(x => x.mission_id === wanted); if (!m) { view.draw(); return; }
   const { data } = await apiGet(`/api/maps/${m.map.id}/${m.map.revision}/routes/${m.route.id}/${m.route.revision}`);
   if ($('run-mission').value !== wanted) return;  // another mission was picked meanwhile
-  preview = data.compiled || null; view.draw();
+  preview = data.compiled || null;
+  const s = data.route && data.route.start;
+  routeStart = s && Number.isFinite(+s.x_m) ? { x_m: +s.x_m, y_m: +s.y_m, yaw_deg: +s.yaw_deg || 0, mission: wanted } : null;
+  view.draw();
 };
 (async () => {
   footprint = (await apiGet('/api/footprint')).data;

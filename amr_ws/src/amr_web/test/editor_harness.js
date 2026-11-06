@@ -92,8 +92,8 @@ const flush = () => new Promise(r => setImmediate(r));
   out.reverse_refused = els['ed-steps'].innerHTML === before;
   els['ed-len'].value = '1200'; els['btn-reverse-len'].onclick();
   out.reverse_rows = els['ed-steps'].innerHTML;
-  let savedSteps = null;
-  scripted['/api/maps/m1/1/routes/save'] = body => { savedSteps = JSON.parse(JSON.stringify(body.steps)); return { status: 200, data: { route_id: 'r', revision: 3, sha256: 'abcdef123456' } }; };
+  let savedSteps = null, lastSavedStart = null;
+  scripted['/api/maps/m1/1/routes/save'] = body => { savedSteps = JSON.parse(JSON.stringify(body.steps)); lastSavedStart = body.start ? JSON.parse(JSON.stringify(body.start)) : null; return { status: 200, data: { route_id: 'r', revision: 3, sha256: 'abcdef123456' } }; };
   await els['btn-save'].onclick();
   for (let i = 0; i < 3; i++) await flush();
   out.reverse_saved_step = savedSteps[savedSteps.length - 1];
@@ -167,5 +167,17 @@ const flush = () => new Promise(r => setImmediate(r));
   await els['btn-save'].onclick();
   for (let i = 0; i < 3; i++) await flush();
   out.split_saved = savedSteps.map(s => ({ id: s.id, x: Math.round(s.to.x_m * 1000), v: s.v_mps ?? null }));
+  // --- Start = AMR here (2026-11-06): only localised, READY, on the viewed map ---
+  els['btn-clear'].onclick();
+  ctx.lastState = { mode: { active_map_id: 'm1', active_map_revision: 1 }, localization: { state_name: 'CHECKING' },
+                    run: { pose_valid: true, pose_x: 3.25, pose_y: -1.5, pose_yaw: Math.PI / 2 } };
+  const startBefore = JSON.stringify(theView.meta);
+  els['btn-start-here'].onclick();
+  await els['btn-save'].onclick(); for (let i = 0; i < 3; i++) await flush();
+  out.here_refused_start = lastSavedStart;
+  ctx.lastState.localization.state_name = 'READY';
+  els['btn-start-here'].onclick();
+  await els['btn-save'].onclick(); for (let i = 0; i < 3; i++) await flush();
+  out.here_start = lastSavedStart;
   console.log(JSON.stringify(out));
 })().catch(e => { console.log(JSON.stringify({ error: String(e && e.stack || e) })); });
