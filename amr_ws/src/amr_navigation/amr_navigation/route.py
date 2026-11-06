@@ -22,6 +22,9 @@ STRAIGHT, ROTATE, REVERSE = "straight", "rotate", "reverse"
 # at most REVERSE_MAX_M and at half the trackless speed.
 REVERSE_MAX_M = 2.0
 REVERSE_SPEED_RATIO = 0.5
+# ... and never above 0.30 m/s (gvievo-01's half of 0.60): a faster route speed (AMR QR 0.80,
+# 2026-11-06) must not make the unscanned reverse faster.
+REVERSE_V_MAX_MPS = 0.30
 # An arc (2026-09-18) drives forward along a circle of radius_m through angle_deg, left
 # (ccw) or right (cw). Bounded: at least an eighth of a circle, at most a half, and a
 # radius of at least twice the wheel track (2 x 0.487 -> 1.0 m). It runs at ARC_V_MPS (owner
@@ -77,7 +80,28 @@ FRAMES = ("map",)
 # ONE trackless speed (2026-10-02): every forward straight and arc runs at VEHICLE_V_MAX.
 # It is no longer a route setting; the long-straight boost and the separate arc speed are
 # gone. Older files still load: their speed keys (LEGACY_SPEED_LIMITS) are read and dropped.
-ROUTE_V_MPS = 0.60  # straights; arcs run at ARC_V_MPS (owner 2026-11-03)
+ROUTE_V_MPS_DEFAULT = 0.60  # straights; arcs run at ARC_V_MPS (owner 2026-11-03)
+# A straight may carry its own, LOWER speed (2026-11-06, "slow zones"): v_mps on the step,
+# STEP_V_MIN..STEP_V_MAX in the file, capped at the route speed when compiled. Split a straight
+# into consecutive straights (they drive as one move, no stop) and give the middle one a lower
+# speed: the vehicle slows before it (the executor's taper) and speeds up again after it.
+STEP_V_MIN, STEP_V_MAX = 0.10, 2.0
+
+
+def route_speed() -> float:
+    """The straights' speed: qr_base.route_v_mps on the AMR QR (2026-11-06: 0.80), else
+    ROUTE_V_MPS_DEFAULT. No profile (a dev box): the default."""
+    try:
+        from agv_core import config  # noqa: PLC0415 - optional, as in top_speed_cap
+
+        if config.PLATFORM == config.PLATFORM_QR:
+            return float(config.QR_ROUTE_V_MPS)
+    except Exception:  # noqa: BLE001
+        pass
+    return ROUTE_V_MPS_DEFAULT
+
+
+ROUTE_V_MPS = route_speed()
 
 
 def top_speed_cap(v: float) -> float:
@@ -96,6 +120,28 @@ def top_speed_cap(v: float) -> float:
 
 _top_speed_cap = top_speed_cap  # the old private name
 VEHICLE_V_MAX = top_speed_cap(ROUTE_V_MPS)
+# The mux's AUTO braking (amr_bringup base.launch, cmd_mux_kinematics d_max, 2026-11-03) and
+# nav2_params.yaml's FollowPath approach ramp, which is written for ROUTE_V_MPS_DEFAULT.
+MUX_AUTO_D_MAX = 0.125
+APPROACH_DIST_MIN_M = 3.0
+
+
+def rpp_overrides(v: float | None = None) -> dict:
+    """controller_server parameters for a route speed above nav2_params.yaml's 0.60 ({} at or
+    below it): desired_linear_vel = the speed, and an approach ramp long enough that RPP never
+    asks to brake harder than the mux will - the ramp is linear in distance, so its demand
+    peaks at v^2 / D on entry; above MUX_AUTO_D_MAX the mux lags and the vehicle lands past
+    the endpoint. 0.80 m/s (AMR QR, 2026-11-06) -> D 5.2 m. Pure."""
+    v = VEHICLE_V_MAX if v is None else float(v)
+    if v <= ROUTE_V_MPS_DEFAULT + 1e-9:
+        return {}
+    approach = max(APPROACH_DIST_MIN_M, math.ceil(round(10.0 * v * v / MUX_AUTO_D_MAX, 6)) / 10.0)
+    return {
+        "FollowPath.desired_linear_vel": v,
+        "FollowPath.approach_velocity_scaling_dist": approach,
+    }
+
+
 VEHICLE_W_MAX = 0.37  # spin: 0.24 -> 0.34 (+40 %) on 2026-09-18, -> 0.37 (+10 %) on 2026-09-19
 # Arcs turn at v/R: 0.40 m/s on the 1.0 m minimum radius is 0.40 rad/s, above the spin cap.
 # Their own ceiling (the permit w_max of an arc step) keeps 0.40 m/s possible from R 1.0 m.
@@ -188,10 +234,14 @@ class Step:
     radius_m: float | None = None  # arc: >= ARC_MIN_RADIUS_M
     name: str = ""  # wait: shown to the operator
     label_id: str | None = None  # wait: the GLS floor label expected there, or None
+    v_mps: float | None = None  # straight: its own lower speed (slow zone), None = the route speed
 
     def to_dict(self) -> dict:
         if self.type == STRAIGHT:
-            return {"id": self.id, "type": STRAIGHT, "to": {"x_m": self.to[0], "y_m": self.to[1]}}
+            d = {"id": self.id, "type": STRAIGHT, "to": {"x_m": self.to[0], "y_m": self.to[1]}}
+            if self.v_mps is not None:
+                d["v_mps"] = self.v_mps
+            return d
         if self.type == REVERSE:
             return {"id": self.id, "type": REVERSE, "distance_m": self.distance_m}
         if self.type == ARC:
@@ -223,7 +273,14 @@ class Step:
             to = _field(d, "to", "step", sid)
             x = _float(_field(to, "x_m", "step.to", sid), "step.to.x_m", step_id=sid)
             y = _float(_field(to, "y_m", "step.to", sid), "step.to.y_m", step_id=sid)
-            return Step(sid, STRAIGHT, to=(x, y))
+            v = d.get("v_mps")
+            if v is not None:
+                v = _float(v, "step.v_mps", lim=STEP_V_MAX, step_id=sid)
+                if not STEP_V_MIN <= v <= STEP_V_MAX:
+                    raise RouteError(
+                        f"straight v_mps must be in [{STEP_V_MIN:g}, {STEP_V_MAX:g}] m/s, got {v:g}", sid
+                    )
+            return Step(sid, STRAIGHT, to=(x, y), v_mps=v)
         if t == ROTATE:
             direction = _field(d, "direction", "step", sid)
             if direction not in DIRECTIONS:

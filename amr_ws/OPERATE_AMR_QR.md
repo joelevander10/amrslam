@@ -5,7 +5,7 @@ Day-to-day operation of the AMR QR (profile `amr-qr-01`) once
 [RUNBOOK.md](RUNBOOK.md) §2; the RUNBOOK has the full detail for every page. The
 differences: the AMR QR has **two buttons instead of a selector switch**, no Manual Arm
 switch, no horn, no Reset or Continue button (the Run page has a **Continue** instead), a
-**push mode** for the brakes, and routes run at 0.50 m/s on straights, 0.30 m/s on curves.
+**push mode** for the brakes, and routes run at 0.80 m/s on straights (slower where a straight has its own speed), 0.30 m/s on curves.
 
 The software is gvievo-01 **KYB trackless** (2026-11-03) with the AMR QR hardware on top:
 route **wait steps** with Continue, a **Go home** last step, smooth **S-curve** speed
@@ -94,8 +94,8 @@ On the **Manual**, **Maps** or **Run** page (selector must be MANUAL):
 
 - **Hold** a pad button, or hold W/A/S/D / the arrow keys. Releasing stops the vehicle.
   So do Space, Esc, the centre Stop button, and switching browser tab.
-- The speed menu offers 0.10–0.40 m/s; the AMR QR's top speed is 0.53 m/s
-  (`vehicle.motor_max_rpm` 1680).
+- The speed menu offers 0.10–0.40 m/s; the AMR QR's top speed is 0.85 m/s
+  (`vehicle.motor_max_rpm` 2700).
 - While surveying, spins are capped at 0.27 rad/s.
 
 ### 2a. USB keypad (same keypad and keys as the KIM2A)
@@ -216,14 +216,23 @@ ros2 run amr_mission map_edit --map block_c --rev 1 --despeckle-rect -50 -50 50 
    to a wait point, an arc centre, a step end or a route line (of this route and the
    saved ones on this map); untick **Snap** or hold Shift to measure exactly where you
    click. A third click starts a new measurement; Esc clears it.
-5. **Speed** is not a route setting. On the AMR QR every straight runs at **0.50 m/s**,
-   every arc and the Go home curve at **0.30 m/s**, a reverse at 0.25 m/s, spins at
-   0.37 rad/s (2026-11-05: `motor_max_rpm` 1680 = 0.53 m/s top, `qr_base.v_max_v` 8 V;
-   routes run at most at 95 % of the top speed). Every speed change is a smooth
-   **S-curve** (start ≈ 0.1 m/s², braking ≈ 0.125 m/s², jerk 0.1 m/s³): from standstill it
-   reaches 0.50 m/s in about 6 s and 1.5 m, and slows 0.50 → 0.30 before an arc over about
-   1.5 m. Above 0.40 m/s the red protective field must be long enough to stop in: check
-   it in Safety Designer. Consecutive straights and arcs are driven as one continuous move with
+5. **Speed.** On the AMR QR every straight runs at **0.80 m/s** (`qr_base.route_v_mps`,
+   2026-11-06), every arc and the Go home curve at **0.30 m/s**, a reverse at 0.30 m/s (never faster: the rear is not scanned), spins
+   at 0.37 rad/s (`motor_max_rpm` 2700 = 0.85 m/s top; routes run at most at 95 % of it).
+   Every speed change is a smooth **S-curve** (start ≈ 0.1 m/s², braking ≈ 0.125 m/s², jerk
+   0.1 m/s³): from standstill it reaches 0.80 m/s in about 9 s and 3.6 m, and the stop at the
+   end of a move starts 5.2 m before it. A straight shorter than about 9 m never reaches
+   0.80. **At 0.80 m/s the red protective field must be about 1 m long** (§5b).
+
+   **Slow zones (speed waypoints).** A straight can have its own, lower speed: type it in the
+   straight's box in the **Steps** list (empty = the route speed), or in **Straight speed**
+   before adding straights. To slow down in the middle of a long straight, use **Speed
+   waypoint**: pick the straight, type where the waypoint goes (mm from its start), **Split**;
+   do it twice for a zone, then give the middle part e.g. 0.30. The parts drive as one move
+   with **no stop**: the AMR slows *before* the slow part (about 3 m before it from 0.80 to
+   0.30) so it enters it already slow, and speeds up again as soon as it leaves it (about
+   3.3 m to get back to 0.80). Slow parts are drawn orange on the map; a dot marks each
+   waypoint. Use them for doors, crossings, narrow aisles and wherever people walk. Consecutive straights and arcs are driven as one continuous move with
    no stop between them; a turn in place, a reverse or a wait ends such a chain. Field
    stops and the E-stop are **not** softened.
 6. **Validate**. Red steps mean the footprint hits a wall or unknown (grey) cells. Move
@@ -310,6 +319,16 @@ The stopped route is forgotten when the run **finishes** (`DONE`) or when a run 
 **from the route start** (a normal Load + START). It can't be continued - the button says
 why - if the map, the route or its steps changed since it stopped; then Load and start from
 the route start.
+
+## 5b. Safety at 0.80 m/s (read before the first fast run)
+
+The stopping distance grows with the square of the speed. Measured at 0.50 m/s the AMR QR
+stops in about 0.30 m on a red-field stop; at **0.80 m/s** expect **about 0.7 m** (scanner
+response, up to 0.3 s of coasting before the brake, then braking). The red field of 0.50 m is
+**too short** for that: lengthen it in Safety Designer to about **1.0 m** for 0.80 m/s, and
+yellow (slow to half) to about **1.8 m**, then **measure**: drive at a box at 0.80 m/s and
+check the gap left. Until then keep `qr_base.route_v_mps` at 0.50 (profile, restart), or
+put slow zones on every straight where something can step in.
 
 ## 6. When something stops
 

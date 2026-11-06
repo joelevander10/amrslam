@@ -119,3 +119,22 @@ def test_measure_tool_snaps_reads_out_mm_and_never_edits_the_route():
     assert "on draft · s3" in out["path_rows"] and "5.000, 0.000" in out["path_rows"]
     assert "select Measure" in out["measure_cleared"]
     assert out["after_undo_ids"] == ["s1", "s2", "s3", "s4", "s5", "s6", "s7"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node not installed")
+def test_editor_speed_waypoints_split_a_straight_and_set_a_slow_zone():
+    harness = pathlib.Path(__file__).with_name("editor_harness.js")
+    r = subprocess.run([NODE, str(harness)], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    assert "error" not in out, out
+    assert out["split_refused"] is True  # 10 mm from the end: under the 50 mm minimum
+    assert out["bad_speed_kept"] == ""  # 5 m/s is above the route speed: the box goes back
+    # 6 m split at 2 m, its tail at 1.5 m; the middle part is slow; a straight added slow
+    assert out["split_saved"] == [
+        {"id": "s1", "x": 2000, "v": None},
+        {"id": "s2", "x": 3500, "v": 0.3},
+        {"id": "s3", "x": 6000, "v": None},
+        {"id": "s4", "x": 7000, "v": 0.25},
+    ]
+    assert "s2 · 1500 mm · 0.30 m/s" in out["split_options"]

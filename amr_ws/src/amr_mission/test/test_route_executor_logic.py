@@ -663,8 +663,13 @@ def _line(sid, p0, p1, typ=STRAIGHT):
     yaw = math.atan2(p1[1] - p0[1], p1[0] - p0[0])
     pts = [(p0[0] + (p1[0] - p0[0]) * k / n, p0[1] + (p1[1] - p0[1]) * k / n, yaw) for k in range(n + 1)]
     return CompiledStep(
-        sid, typ, (p0[0], p0[1], yaw), (p1[0], p1[1], yaw),
-        length_m=math.hypot(p1[0] - p0[0], p1[1] - p0[1]), samples=pts, v_mps=0.5,
+        sid,
+        typ,
+        (p0[0], p0[1], yaw),
+        (p1[0], p1[1], yaw),
+        length_m=math.hypot(p1[0] - p0[0], p1[1] - p0[1]),
+        samples=pts,
+        v_mps=0.5,
     )
 
 
@@ -699,6 +704,29 @@ def test_an_open_route_and_a_short_approach_stay_one_chain():
     assert ren.chain_breaks(hook) == set()
     # a rotate already ends a chain, so a loop broken by one needs nothing more
     turn = CompiledStep("r", ROTATE, (4.0, 0.0, 0.0), (4.0, 0.0, math.pi / 2), signed_angle_rad=math.pi / 2)
-    loop = [_line("a", (0.0, 0.0), (4.0, 0.0)), turn, _line("b", (4.0, 0.0), (4.0, 3.0)),
-            _line("c", (4.0, 3.0), (0.0, 3.0)), _line("d", (0.0, 3.0), (0.0, 0.0))]
+    loop = [
+        _line("a", (0.0, 0.0), (4.0, 0.0)),
+        turn,
+        _line("b", (4.0, 0.0), (4.0, 3.0)),
+        _line("c", (4.0, 3.0), (0.0, 3.0)),
+        _line("d", (0.0, 3.0), (0.0, 0.0)),
+    ]
     assert ren.chain_breaks(loop) == set()  # b..d never returns near d's end (0, 0)
+
+
+def test_a_slow_zone_slows_before_it_and_speeds_up_after_it_without_a_stop():
+    s1, s2, s3 = (
+        _line("s1", (0.0, 0.0), (6.0, 0.0)),
+        _line("s2", (6.0, 0.0), (8.0, 0.0)),
+        _line("s3", (8.0, 0.0), (14.0, 0.0)),
+    )
+    s1.v_mps, s2.v_mps, s3.v_mps = 0.5, 0.3, 0.5
+    n = make_node([s1, s2, s3])
+    assert [s.id for s in n._chain(0)] == ["s1", "s2", "s3"]  # one move, no stop
+    n.fsm.start(True, True)
+    assert n._step_speed(s1, (1.0, 0.0, 0.0)) == 0.5  # far from the zone
+    assert n._step_speed(s1, (5.5, 0.0, 0.0)) == 0.3  # tapered down before it
+    n.fsm.step_done()
+    assert n._step_speed(s2, (7.0, 0.0, 0.0)) == 0.3  # in it
+    n.fsm.step_done()
+    assert n._step_speed(s3, (8.1, 0.0, 0.0)) == 0.5  # back up as soon as it is left

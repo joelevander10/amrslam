@@ -469,6 +469,15 @@ qr_base.*
     estop_active_low) takes the drives out of operation; it does not move the
     selector.
 
+    route_v_mps: the speed every forward straight of a route runs at (gvievo-01
+    keeps the fixed 0.60). It must fit under 95 % of the top speed that
+    vehicle.motor_max_rpm gives, so the S-curve is never flattened by the
+    wheel limit: 0.80 m/s needs motor_max_rpm >= 2680 (2700 = 0.848 m/s top,
+    2.99 V of feedforward). A straight in a route may be slower (its v_mps).
+    Above the speed the 2026-11-05 feedforward calibration covered (2.0 V,
+    1690 r/min) re-run `qr_calibrate ff` up to the new voltage on blocks, and
+    size the scanner's protective field for the stopping distance.
+
     USB keypad (keypad_*, amr_base qr_keypad): the KIM2A / Kayaba wireless
     keypad on the QR PC. W/A/S/D and the arrows are a second pendant (hold to
     drive, MANUAL only, pendant speeds and S-curve; W+A etc. curve); G is the
@@ -738,6 +747,8 @@ _QR_SCHEMA = {
         "runaway_rad_s":         ("QR_RUNAWAY_RAD_S", float),
         "runaway_s":             ("QR_RUNAWAY_S", float),
         "stall_s":               ("QR_STALL_S", float),
+        # route speed on straights (amr_navigation.route.route_speed)
+        "route_v_mps":             ("QR_ROUTE_V_MPS", float),
         # USB keypad on the QR PC (amr_base qr_keypad)
         "keypad_enabled":          ("QR_KEYPAD_ENABLED", bool),
         "keypad_name_contains":    ("QR_KEYPAD_NAME_CONTAINS", str),
@@ -1376,6 +1387,10 @@ def _validate_qr(ns, check):
         pch = [g(f"PENDANT_DI_{k}") for k in ("FWD", "RVS", "LEFT", "RIGHT")]
         check(g("QR_DI_ESTOP") not in pch, "qr_base.di_estop collides with a pendant channel")
     check(0.0 <= g("QR_AUTO_HOLD_S") <= 5.0, "qr_base.auto_hold_s must be in 0..5 s")
+    top = 0.95 * g("MAX_SPEED_MPS")
+    check(0.1 <= g("QR_ROUTE_V_MPS") <= top + 0.005,
+          f"qr_base.route_v_mps ({g('QR_ROUTE_V_MPS'):g}) must be in 0.1..{top:.2f} m/s - 95 % of the "
+          f"top speed vehicle.motor_max_rpm gives; raise motor_max_rpm (and calibrate) to go faster")
 
     # -- encoders ------------------------------------------------------------
     check(g("QR_ENC_COUNTS_PER_REV") > 0, "qr_base.enc_counts_per_rev must be > 0")

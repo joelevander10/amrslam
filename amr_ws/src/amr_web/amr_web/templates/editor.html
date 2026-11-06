@@ -18,6 +18,12 @@
     <label class="field">Straight length <small>mm, along the heading</small>
       <span class="inline"><input id="ed-len" type="number" step="1" min="50" placeholder="1500"><button id="btn-line-len" class="tool" title="Add a straight of this length from the route's end pose">Add</button><button id="btn-reverse-len" class="tool" title="Back up this far along the heading, facing forward: at most 2000 mm, at half the speed cap (the rear is not scanned)">Reverse</button></span>
     </label>
+    <label class="field">Straight speed <small>m/s · empty = route speed · for new straights</small>
+      <input id="ed-straight-v" type="number" step="0.05" min="0.1" max="{{ '%.2f' % trackless_v }}" placeholder="{{ '%.2f' % trackless_v }}" title="A slow zone: straights added with a speed here run at it; the vehicle slows down before them and speeds up again after them, without stopping">
+    </label>
+    <label class="field">Speed waypoint <small>split a straight · the parts drive as one move</small>
+      <span class="inline"><select id="ed-split-step" title="the straight to split"><option value="">— straight —</option></select><input id="ed-split-mm" type="number" step="1" min="50" placeholder="mm from its start" title="where the new waypoint goes, mm from the straight's start"><button id="btn-split" class="tool" title="Split the straight at this point into two straights. Then give one part its own speed in the step list.">Split</button></span>
+    </label>
     <label class="field" style="margin-top:1rem">Turn <small>viewed from above</small></label>
     <div class="turns">
       <button class="tool turn" data-dir="ccw" data-ang="45">CCW 45</button><button class="tool turn" data-dir="ccw" data-ang="90">CCW 90</button><button class="tool turn" data-dir="ccw" data-ang="180">CCW 180</button><button class="tool turn" data-dir="ccw" data-ang="270">CCW 270</button>
@@ -45,7 +51,7 @@
     <div class="sep"></div>
     <h3>Limits</h3>
     <label class="field">Repeat count <input id="ed-repeat" type="number" min="1" max="100" value="1"></label>
-    <p class="note">Speed <b id="ed-speed" data-v="{{ '%.2f' % trackless_v }}">{{ '%.2f' % trackless_v }}</b> m/s — the vehicle's trackless speed, not a route setting. Reverse runs at half; arcs at 0.30 m/s, a tight arc slower still.</p>
+    <p class="note">Speed <b id="ed-speed" data-v="{{ '%.2f' % trackless_v }}">{{ '%.2f' % trackless_v }}</b> m/s — the vehicle's trackless speed, not a route setting. Reverse runs at half; arcs at 0.30 m/s, a tight arc slower still. A straight can be slower (its speed box in the step list): a slow zone.</p>
     <div class="bar">
       <button id="btn-validate" class="big">Validate</button>
       <button id="btn-save" class="big run">Save revision</button>

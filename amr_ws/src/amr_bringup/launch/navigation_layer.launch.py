@@ -23,6 +23,7 @@ import os
 
 import yaml
 from ament_index_python.packages import get_package_share_directory
+from amr_navigation.route import rpp_overrides
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction, TimerAction
 from launch.substitutions import LaunchConfiguration
@@ -229,7 +230,8 @@ def _compose(context):
             executable="controller_server",
             name="controller_server",
             output="screen",
-            parameters=[nav2, costmap_params],  # the file overrides nav2_params.yaml's footprint
+            # the file overrides nav2_params.yaml's footprint; rpp_overrides its speed (AMR QR)
+            parameters=[nav2, costmap_params, rpp_overrides()],
             remappings=[("cmd_vel", cmd_vel)],
         ),
         "controller_server",

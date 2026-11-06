@@ -148,5 +148,24 @@ const flush = () => new Promise(r => setImmediate(r));
   await els['btn-save'].onclick();
   for (let i = 0; i < 3; i++) await flush();
   out.after_undo_ids = savedSteps.map(s => s.id);
+  // --- speed waypoints (2026-11-06): split a straight, give a part its own speed ---
+  els['btn-clear'].onclick();
+  els['ed-len'].value = '6000'; els['btn-line-len'].onclick();          // s1: 6 m at the route speed
+  ['ed-split-step', 'ed-split-mm', 'ed-straight-v'].forEach(id => doc.getElementById(id));
+  els['ed-split-step'].value = 's1';
+  Object.defineProperty(els['ed-split-mm'], 'valueAsNumber', { get() { return this.value === '' ? NaN : Number(this.value); }, configurable: true });
+  els['ed-split-mm'].value = '5990'; els['btn-split'].onclick();         // too close to the end: refused
+  out.split_refused = !els['ed-steps'].innerHTML.includes('s2');
+  els['ed-split-mm'].value = '2000'; els['btn-split'].onclick();         // s1 2 m + s2 4 m
+  els['ed-split-step'].value = 's2'; els['ed-split-mm'].value = '1500'; els['btn-split'].onclick();  // s2 1.5 m + s3 2.5 m
+  const change = (i, v) => { const t = { classList: new Set(['sv']), dataset: { i: String(i) }, value: v }; t.classList.contains = t.classList.has; els['ed-steps'].listeners.change.forEach(fn => fn({ target: t })); return t; };
+  change(1, '0.3');                                                       // s2 = the slow zone
+  out.bad_speed_kept = change(2, '5').value;                              // above the route speed: refused, box reset
+  els['ed-straight-v'].value = '0.25'; els['ed-len'].value = '1000'; els['btn-line-len'].onclick();  // s4 added slow
+  els['ed-straight-v'].value = '';
+  out.split_options = els['ed-split-step'].innerHTML;
+  await els['btn-save'].onclick();
+  for (let i = 0; i < 3; i++) await flush();
+  out.split_saved = savedSteps.map(s => ({ id: s.id, x: Math.round(s.to.x_m * 1000), v: s.v_mps ?? null }));
   console.log(JSON.stringify(out));
 })().catch(e => { console.log(JSON.stringify({ error: String(e && e.stack || e) })); });

@@ -26,6 +26,7 @@ from amr_navigation.route import (
     REVERSE,
     REVERSE_MAX_M,
     REVERSE_SPEED_RATIO,
+    REVERSE_V_MAX_MPS,
     ROTATE,
     STRAIGHT,
     VEHICLE_ARC_W_MAX,
@@ -92,9 +93,11 @@ def arc_speed(lim, radius: float) -> float:
     return min(ARC_V_MPS, float(lim.linear_mps), ARC_YAW_RATE_RATIO * VEHICLE_ARC_W_MAX * radius)
 
 
-def step_speed(lim, length_m: float) -> float:
-    """A forward straight's speed: the one trackless speed, whatever its length."""
-    return float(lim.linear_mps)
+def step_speed(lim, length_m: float, v_mps: float | None = None) -> float:
+    """A forward straight's speed: the route speed, or the step's own lower one (a slow zone,
+    route.Step.v_mps), never above the route speed."""
+    v = float(lim.linear_mps)
+    return v if v_mps is None else min(v, float(v_mps))
 
 
 @dataclass
@@ -178,8 +181,8 @@ def compile_route(route: Route, spacing: float = SAMPLE_SPACING_M) -> CompiledRo
                     end,
                     length_m=along,
                     samples=samples,
-                    duration_est_s=along / step_speed(lim, along),
-                    v_mps=step_speed(lim, along),
+                    duration_est_s=along / step_speed(lim, along, s.v_mps),
+                    v_mps=step_speed(lim, along, s.v_mps),
                 )
             )
             total_len += along
@@ -199,7 +202,7 @@ def compile_route(route: Route, spacing: float = SAMPLE_SPACING_M) -> CompiledRo
                 raise RouteError(f"route too long: more than {MAX_SAMPLES} path samples", sid)
             samples = [(x - c * dist * k / n, y - sn * dist * k / n, yaw) for k in range(n + 1)]
             end = (x - c * dist, y - sn * dist, yaw)
-            v = REVERSE_SPEED_RATIO * float(lim.linear_mps)
+            v = min(REVERSE_SPEED_RATIO * float(lim.linear_mps), REVERSE_V_MAX_MPS)
             steps.append(
                 CompiledStep(
                     sid,

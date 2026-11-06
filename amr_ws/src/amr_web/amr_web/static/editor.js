@@ -28,6 +28,7 @@ function redo() { if (!future.length) return; history.push(JSON.stringify(route)
 const mm = m => num(Math.round(m * 1000), 0);
 const MIN_STRAIGHT_M = 0.05;
 const REVERSE_MAX_M = 2.0;  // amr_navigation.route.REVERSE_MAX_M: the rear is outside the scanner's field
+const REVERSE_V = Math.min(SPEED_V / 2, 0.30);  // compiler: REVERSE_SPEED_RATIO, capped at REVERSE_V_MAX_MPS
 const ARC_MIN_R = 1.0, ARC_MIN_DEG = 45, ARC_MAX_DEG = 180;  // amr_navigation.route ARC_* bounds
 // mirrors amr_navigation compiler.arc_speed: 0.30 m/s (ARC_V_MPS), lowered so v/R <= 0.9 x VEHICLE_ARC_W_MAX
 const ARC_V_MPS = 0.30, ARC_YAW_RATE_RATIO = 0.9, VEHICLE_ARC_W_MAX = 0.45;
@@ -144,10 +145,60 @@ function addStraight(along) {
   const p = poseAfter(route.steps.length); if (!p) { log('set the start pose first', 'bad'); return false; }
   if (!(along >= MIN_STRAIGHT_M)) { log(`a straight only goes forward along the heading, at least ${mm(MIN_STRAIGHT_M)} mm; use a turn to change direction`, 'bad'); return false; }
   const id = nextId(), c = Math.cos(p.yaw), s = Math.sin(p.yaw);
-  snapshot(); route.steps.push({ id, type: 'straight', to: { x_m: p.x + c * along, y_m: p.y + s * along } }); refresh();
-  log(`${id}: straight ${mm(along)} mm`);
+  const v = straightV($('ed-straight-v').value);
+  if (v === false) return false;
+  const step = { id, type: 'straight', to: { x_m: p.x + c * along, y_m: p.y + s * along } };
+  if (v !== null) step.v_mps = v;
+  snapshot(); route.steps.push(step); refresh();
+  log(`${id}: straight ${mm(along)} mm${v !== null ? ` at ${num(v, 2)} m/s` : ''}`);
   return true;
 }
+// A straight's own speed (amr_navigation.route.Step.v_mps): '' = the route speed (null),
+// STEP_V_MIN..the route speed, else false (logged). A slow zone: the vehicle slows before
+// the step and speeds up again after it, without stopping (the steps are chained).
+const STEP_V_MIN = 0.10;
+function straightV(text) {
+  const t = String(text ?? '').trim();
+  if (t === '') return null;
+  const v = Number(t);
+  if (!Number.isFinite(v) || v < STEP_V_MIN || v > SPEED_V + 1e-9) {
+    log(`a straight's speed is ${num(STEP_V_MIN, 2)}–${num(SPEED_V, 2)} m/s (empty = the route speed)`, 'bad');
+    return false;
+  }
+  return Math.round(v * 100) / 100;
+}
+// Speed waypoint: split straight i at `d` metres from its start into two straights on the same
+// line; both keep its speed. The first keeps the id (missions and checkpoints name it).
+function splitStraight(i, d) {
+  const s = route.steps[i];
+  if (!s || s.type !== 'straight') { log('pick a straight to split', 'bad'); return; }
+  const a = poseAfter(i), L = stepLength(i);
+  if (!(d >= MIN_STRAIGHT_M && d <= L - MIN_STRAIGHT_M)) { log(`the waypoint must be ${mm(MIN_STRAIGHT_M)}–${mm(L - MIN_STRAIGHT_M)} mm from the start of ${s.id}`, 'bad'); return; }
+  const id = nextId(), tail = { id, type: 'straight', to: { ...s.to } };
+  if (s.v_mps != null) tail.v_mps = s.v_mps;
+  snapshot();
+  route.steps[i] = { ...s, to: { x_m: a.x + Math.cos(a.yaw) * d, y_m: a.y + Math.sin(a.yaw) * d } };
+  route.steps.splice(i + 1, 0, tail);
+  refresh();
+  log(`${s.id} split at ${mm(d)} mm: ${s.id} ${mm(d)} mm + ${id} ${mm(L - d)} mm. Set a speed on either part in the step list.`);
+}
+$('btn-split').onclick = () => {
+  const i = route.steps.findIndex(s => s.id === $('ed-split-step').value), v = $('ed-split-mm').valueAsNumber;
+  if (i < 0) { log('pick the straight to split', 'bad'); return; }
+  if (!Number.isFinite(v)) { log('type where the waypoint goes, in mm from the start of the straight', 'bad'); return; }
+  splitStraight(i, v / 1000);
+};
+// The speed box of a straight in the step list.
+$('ed-steps').addEventListener('change', e => {
+  const el = e.target; if (!el.classList || !el.classList.contains('sv')) return;
+  const s = route.steps[+el.dataset.i]; if (!s || s.type !== 'straight') return;
+  const v = straightV(el.value);
+  if (v === false) { el.value = s.v_mps ?? ''; return; }
+  snapshot();
+  if (v === null) delete s.v_mps; else s.v_mps = v;
+  refresh();
+  log(`${s.id}: ${v === null ? `route speed ${num(SPEED_V, 2)}` : `${num(v, 2)}`} m/s`);
+});
 view.onClick = w => {
   if (view.tool === 'measure') { measureClick(w); return; }
   if (view.tool === 'start') { snapshot(); route.start = { x_m: w[0], y_m: w[1], yaw_deg: route.start ? route.start.yaw_deg : 0 }; refresh(); return; }
@@ -289,14 +340,18 @@ function refresh() {
   if (!lastResult) showResult(null);
   view._linePreview = null;  // the route changed: a preview made for the old end pose is void
   $('ed-steps').innerHTML = route.steps.length ? route.steps.map((s, i) => `<div class="row three${bad.has(s.id) ? ' lv-error' : ''}"><span class="k">${esc(s.id)}</span>` +
-    (s.type === 'straight' ? `<span class="n">straight</span><span class="v" title="to ${num(+s.to.x_m, 3)}, ${num(+s.to.y_m, 3)} m">${mm(stepLength(i))}<i>mm</i></span>`
-     : s.type === 'reverse' ? `<span class="n">reverse <b title="backs up at half the trackless speed: ${num(SPEED_V / 2, 2)} m/s">◂${num(SPEED_V / 2, 2)}</b></span><span class="v">${mm(+s.distance_m)}<i>mm</i></span>`
+    (s.type === 'straight' ? `<span class="n">straight <input class="sv" data-i="${i}" type="number" step="0.05" min="${STEP_V_MIN}" max="${num(SPEED_V, 2)}" value="${s.v_mps != null ? num(+s.v_mps, 2) : ''}" placeholder="${num(SPEED_V, 2)}" title="m/s: empty = the route speed; lower = a slow zone" style="width:5.5em"></span><span class="v" title="to ${num(+s.to.x_m, 3)}, ${num(+s.to.y_m, 3)} m">${mm(stepLength(i))}<i>mm</i></span>`
+     : s.type === 'reverse' ? `<span class="n">reverse <b title="backs up at half the route speed, at most 0.30 m/s: ${num(REVERSE_V, 2)} m/s">◂${num(REVERSE_V, 2)}</b></span><span class="v">${mm(+s.distance_m)}<i>mm</i></span>`
      : s.type === 'wait' ? `<span class="n">wait</span><span class="v" title="stops until PB Continue or Start">${esc(s.name || '—')}${s.label_id ? ` <i>${esc(s.label_id)}</i>` : ''}</span>`
      : s.type === 'arc' ? `<span class="n">arc ${s.direction === 'ccw' ? 'L' : 'R'} <b title="capped so the yaw rate stays under the turn cap">≤${num(arcSpeed(+s.radius_m), 2)}</b></span><span class="v" title="${mm(stepLength(i))} mm of arc">${esc(s.angle_deg)}° R ${num(+s.radius_m, 2)}<i>m</i></span>`
      : s.type === 'home' ? homeRow(i)
                            : `<span class="n">rotate</span><span class="v">${esc(String(s.direction).toUpperCase())} ${esc(s.angle_deg)}<i>°</i></span>`) + '</div>').join('')
     : '<div class="none">no steps</div>';
   $('ed-repeat').value = route.repeat_count;
+  const pick = $('ed-split-step'), keep = pick.value;
+  pick.innerHTML = '<option value="">— straight —</option>' + route.steps.map((s, i) => s.type === 'straight'
+    ? `<option value="${esc(s.id)}">${esc(s.id)} · ${mm(stepLength(i))} mm${s.v_mps != null ? ` · ${num(+s.v_mps, 2)} m/s` : ''}</option>` : '').join('');
+  pick.value = route.steps.some(s => s.id === keep) ? keep : '';
   view.draw();
 }
 function homeRow(i) {
@@ -377,7 +432,12 @@ view.overlays.push((c, v) => {
   v.arrow(p.x, p.y, p.yaw, 1.0, INK.pose); if (footprint) v.footprint(p.x, p.y, p.yaw, footprint.polygon, alpha(INK.pose, 0.55));
   route.steps.forEach((s, i) => {
     const q = poseAfter(i + 1);
-    if (s.type === 'straight') { v.line(p.x, p.y, q.x, q.y, bad.has(s.id) ? INK.stop : INK.route, 3); v.text((p.x + q.x) / 2, (p.y + q.y) / 2, `${s.id} ${mm(Math.hypot(q.x - p.x, q.y - p.y))} mm`, INK.ink3); }
+    if (s.type === 'straight') {
+      const slow = s.v_mps != null && +s.v_mps < SPEED_V - 1e-9;
+      v.line(p.x, p.y, q.x, q.y, bad.has(s.id) ? INK.stop : slow ? INK.turn : INK.route, 3);
+      v.text((p.x + q.x) / 2, (p.y + q.y) / 2, `${s.id} ${mm(Math.hypot(q.x - p.x, q.y - p.y))} mm${slow ? ` ${num(+s.v_mps, 2)} m/s` : ''}`, slow ? INK.turn : INK.ink3);
+      if (i > 0 && route.steps[i - 1].type === 'straight') v.dot(p.x, p.y, INK.turn, 4);  // a speed waypoint
+    }
     else if (s.type === 'reverse') { v.dashed([[p.x, p.y], [q.x, q.y]], bad.has(s.id) ? INK.stop : INK.route); v.dot(q.x, q.y, INK.route, 4); v.text((p.x + q.x) / 2, (p.y + q.y) / 2, `${s.id} ◂ ${mm(Math.hypot(q.x - p.x, q.y - p.y))} mm`, INK.ink3); }
     else if (s.type === 'arc') { const pts = arcSamples(p, s, Math.max(8, Math.ceil(s.angle_deg / 3))); v.polyline(pts.map(t => [t.x, t.y]), bad.has(s.id) ? INK.stop : INK.route, 3); const m = pts[pts.length >> 1]; v.text(m.x, m.y, `${s.id} ⌒ R${num(+s.radius_m, 1)} ${s.angle_deg}°`, INK.ink3); v.arrow(q.x, q.y, q.yaw, 0.6, INK.turn); if (footprint) v.footprint(q.x, q.y, q.yaw, footprint.polygon, alpha(INK.turn, 0.4)); }
     else if (s.type === 'wait') { v.dot(q.x, q.y, bad.has(s.id) ? INK.stop : INK.pose, 7); v.text(q.x, q.y, `${s.id} WAIT ${s.name || ''}`, INK.pose); }

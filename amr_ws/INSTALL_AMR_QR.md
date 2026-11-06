@@ -372,7 +372,7 @@ are off since the lidar was replaced, so `~/.amr/robot_fixed.yaml` and
 
 After the restart, press **↻** at the top right of the web page once so the browser
 loads the new pages. Routes and missions saved before the update keep working: a
-mission is compiled when it is loaded, so it runs at the new speeds (0.50 m/s straight, 0.30 m/s curves) with the S-curve
+mission is compiled when it is loaded, so it runs at the new speeds (0.80 m/s straight, 0.30 m/s curves) with the S-curve
 without being saved again.
 
 `deploy/netplan/` is KYB's three-port network layout (DIO, nanoScan3 and GLS camera each on
