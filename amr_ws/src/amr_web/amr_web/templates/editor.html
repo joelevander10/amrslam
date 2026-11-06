@@ -40,6 +40,17 @@
     <label class="field" style="margin-top:1rem">Home <small>last step · forward to the start pose · ≤ 5 m behind it</small>
       <span class="inline"><button id="btn-home" class="tool" title="End the route at the start pose (HOME): a straight if the route already ends on HOME's line, otherwise an S-curve (radius ≥ 1 m, at most 20° off HOME's heading)">Go home</button></span>
     </label>
+    <div class="sep"></div>
+    <h3>Branch <small>a POS route: the main route + its own branch · same start and homepost</small></h3>
+    <label class="field">Main route <select id="ed-branch-main" title="the saved main route (a plain route, not a branch)"><option value="">— saved route —</option></select></label>
+    <label class="field">Leave after <small>the branch starts at the end of this main step</small>
+      <span class="inline"><select id="ed-branch-leave"></select><button id="btn-branch-start" class="tool" title="Start a new POS route: the main route up to this step, then draw the branch (stop point = a Wait)">Start branch</button></span>
+    </label>
+    <label class="field">Rejoin after <small>the branch must end exactly on this main step's end pose</small>
+      <span class="inline"><select id="ed-branch-rejoin"></select><button id="btn-branch-rejoin" class="tool" title="Close the branch: append the rest of the main route (to its homepost)">Rejoin main</button></span>
+    </label>
+    <div class="bar" style="margin-top:0"><button id="btn-branch-rebase" class="tool" title="Put this POS route's branch on the newest revision of its main route (after the main route was changed)">Rebase on newest main</button></div>
+    <p id="ed-branch-note" class="note"></p>
     <div class="bar">
       <button id="btn-undo" class="tool">Undo</button><button id="btn-redo" class="tool">Redo</button><button id="btn-clear" class="danger">Clear steps</button>
     </div>

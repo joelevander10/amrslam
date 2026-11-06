@@ -962,3 +962,30 @@ def test_destination_buttons_are_the_qr_pos_list(env, tmp_path, monkeypatch):
     assert r.status_code == 200 and stub.calls[-1] == ("go_destination", (3,))
     for bad in (7, 0, "3", True, None):
         assert qr.post("/api/mission/destination", json={"index": bad}).status_code == 404
+
+
+def test_a_pos_route_must_keep_its_main_part(env):
+    """2026-11-06: a branch (POS) route is checked against the main revision it names."""
+    client, *_ = env
+    main = [S("s1", 6.0, 0.0), R("s2", "ccw", 180), S("s3", 2.0, 0.0)]
+    r = client.post("/api/maps/sim_factory/1/routes/save", json=route_payload(main, route_id="main"))
+    assert r.status_code == 200
+    branch = [{"id": "b1", "type": "wait", "name": "POS 1"}]
+    meta = {"main_route_id": "main", "main_revision": 1, "leave_after": "s1", "rejoin_after": "s1"}
+    meta["steps"] = ["b1"]
+    pos = route_payload([main[0], *branch, *main[1:]], route_id="pos1")
+    pos["branch"] = meta
+    r = client.post("/api/maps/sim_factory/1/routes/save", json=pos)
+    assert r.status_code == 200, r.json
+    got = client.get("/api/maps/sim_factory/1/routes/pos1/1").json
+    assert got["ok"] and got["route"]["branch"] == meta
+    # the main part edited on the POS copy: refused, naming the step
+    bad = route_payload([main[0], *branch, S("s2", 9.0, 0.0)], route_id="pos1")
+    bad["branch"] = meta
+    r = client.post("/api/maps/sim_factory/1/routes/validate", json=bad)
+    assert r.status_code == 422
+    assert any(i["code"] == "branch" and "differs" in i["message"] for i in r.json["issues"])
+    bad["branch"] = dict(meta, main_revision=7)
+    r = client.post("/api/maps/sim_factory/1/routes/validate", json=bad)
+    assert r.status_code == 422
+    assert any(i["code"] == "branch" and "rev7" in i["message"] for i in r.json["issues"])

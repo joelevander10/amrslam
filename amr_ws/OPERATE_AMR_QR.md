@@ -244,6 +244,37 @@ ros2 run amr_mission map_edit --map block_c --rev 1 --despeckle-rect -50 -50 50 
    the step or the start pose away.
 7. **Save revision**, then **Create mission from saved revision**.
 
+## 4b. POS routes: one main route, six stop points (POS 1 .. POS 6)
+
+Every POS uses the **same main route and homepost**; only its **branch** differs: it leaves
+the main route at a junction, drives to its stop point, waits there, comes back and joins the
+main route again, which takes it home.
+
+1. **Draw the main route** once as a normal route (e.g. `main`) from the homepost, ending with
+   **Go home**. Mark each junction as a step end (split a straight with **Speed waypoint**
+   where a branch should leave). Save it.
+2. **For each POS**, on the Routes page, section **Branch**:
+   1. **Main route**: pick `main rev N`. **Leave after**: the main step whose end is the
+      junction. **Start branch** - the draft is now main up to there.
+   2. Type the **Route id** `pos1` (… `pos6`: the Go-to buttons use these names).
+   3. Draw the branch with the normal tools: turn, drive to the stop point, add a **Wait**
+      (name it, e.g. `POS 1`), then come back - turn round and drive back, or **Reverse**
+      (≤ 2 m) - to the junction **with the main route's heading** there.
+   4. **Rejoin after**: the main step whose end the branch is back on (the same junction, or
+      a later one), **Rejoin main**. The rest of the main route is added, to the homepost. It
+      is refused if the branch does not end on that step's end pose (1 cm, 0.5°) and says
+      by how much it is off.
+   5. **Validate**, **Save revision**, **Create mission from saved revision**.
+3. **Changed the main route?** Save it as a new revision, then load each POS route and press
+   **Rebase on newest main** (refused if the junction or the rejoin point moved: redraw that
+   branch), Save, Create mission. Until then validation reports the POS route as differing.
+
+**Go to POS n** (Run page, Mission tab): selector **AUTO**, AMR on the homepost, no run under
+way; one press loads the newest mission of route `posN` on the active map and starts it after
+the 2 s warning - exactly like pressing START with that mission loaded. A POS without a
+mission yet is greyed. At the stop point the run WAITS: **Continue** (Run page) or **START**
+sends it on, back along the main route to the homepost.
+
 ## 4a. Remove a map, a route or a mission (engineer)
 
 - **Map**: Maps page, **Remove** on a revision row, or **Remove map** beside the map's name

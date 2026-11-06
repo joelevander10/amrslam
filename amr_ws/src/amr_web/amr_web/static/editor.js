@@ -107,16 +107,16 @@ function setTool(t) {
 }
 
 // Heading after the last step, from the authored primitives (same rules as the compiler).
-function poseAfter(n) {
-  if (!route.start) return null;
-  let x = route.start.x_m, y = route.start.y_m, yaw = route.start.yaw_deg * Math.PI / 180;
+function poseAfter(n, r = route) {
+  if (!r.start) return null;
+  let x = r.start.x_m, y = r.start.y_m, yaw = r.start.yaw_deg * Math.PI / 180;
   for (let i = 0; i < n; i++) {
-    const s = route.steps[i];
+    const s = r.steps[i];
     if (s.type === 'straight') { x = s.to.x_m; y = s.to.y_m; }
     else if (s.type === 'reverse') { x -= Math.cos(yaw) * s.distance_m; y -= Math.sin(yaw) * s.distance_m; }
     else if (s.type === 'arc') { const e = arcSamples({ x, y, yaw }, s, 1)[1]; x = e.x; y = e.y; yaw = e.yaw; }
     else if (s.type === 'rotate') yaw += (s.direction === 'ccw' ? 1 : -1) * s.angle_deg * Math.PI / 180;
-    else if (s.type === 'home') { x = route.start.x_m; y = route.start.y_m; yaw = route.start.yaw_deg * Math.PI / 180; }
+    else if (s.type === 'home') { x = r.start.x_m; y = r.start.y_m; yaw = r.start.yaw_deg * Math.PI / 180; }
     // a wait keeps the pose
   }
   return { x, y, yaw };
@@ -126,7 +126,7 @@ function stepLength(i) {
   if (s.type === 'home') { const L = homeLegAt(i); return L.ok ? L.length : 0; }
   const a = poseAfter(i), b = poseAfter(i + 1); return Math.hypot(b.x - a.x, b.y - a.y);
 }
-function nextId() { let i = route.steps.length + 1; while (route.steps.some(s => s.id === 's' + i)) i++; return 's' + i; }
+function nextId() { const p = route.branch ? 'b' : 's'; let i = route.branch ? 1 : route.steps.length + 1; while (route.steps.some(s => s.id === p + i)) i++; return p + i; }
 
 view.onDrag = (a, b, done) => {
   if (view.tool !== 'start') return;
@@ -149,7 +149,7 @@ function addStraight(along) {
   if (v === false) return false;
   const step = { id, type: 'straight', to: { x_m: p.x + c * along, y_m: p.y + s * along } };
   if (v !== null) step.v_mps = v;
-  snapshot(); route.steps.push(step); refresh();
+  if (branchClosed()) return false; snapshot(); route.steps.push(step); refresh();
   log(`${id}: straight ${mm(along)} mm${v !== null ? ` at ${num(v, 2)} m/s` : ''}`);
   return true;
 }
@@ -225,7 +225,7 @@ $('btn-reverse-len').onclick = () => {
   const d = v / 1000;
   if (d < MIN_STRAIGHT_M || d > REVERSE_MAX_M) { log(`a reverse is ${mm(MIN_STRAIGHT_M)}–${mm(REVERSE_MAX_M)} mm`, 'bad'); return; }
   const id = nextId();
-  snapshot(); route.steps.push({ id, type: 'reverse', distance_m: d }); refresh();
+  if (branchClosed()) return false; snapshot(); route.steps.push({ id, type: 'reverse', distance_m: d }); refresh();
   log(`${id}: reverse ${mm(d)} mm (half speed, rear not scanned)`);
 };
 // Arc: forward along a circle, left or right. Bounds mirror the schema; the speed is capped
@@ -236,7 +236,7 @@ function addArc(direction) {
   if (!(r >= ARC_MIN_R)) { log(`arc radius is at least ${ARC_MIN_R} m (2 x track)`, 'bad'); return; }
   if (!(a >= ARC_MIN_DEG && a <= ARC_MAX_DEG)) { log(`arc angle is ${ARC_MIN_DEG}–${ARC_MAX_DEG}°`, 'bad'); return; }
   const id = nextId();
-  snapshot(); route.steps.push({ id, type: 'arc', direction, angle_deg: a, radius_m: r }); refresh();
+  if (branchClosed()) return false; snapshot(); route.steps.push({ id, type: 'arc', direction, angle_deg: a, radius_m: r }); refresh();
   log(`${id}: arc ${direction === 'ccw' ? 'L' : 'R'} ${a}° R ${num(r, 2)} m (${num(arcSpeed(r), 2)} m/s)`);
 }
 // Wait (gls-wait-coding-plan §A.5): stop here until PB Continue or Start - a trolley hitch or
@@ -249,7 +249,7 @@ $('btn-wait').onclick = () => {
   if (label && !/^x\d{4}y\d{4}$/.test(label)) { log('a floor label looks like x0100y0000', 'bad'); return; }
   const id = nextId(), step = { id, type: 'wait', name };
   if (label) step.label_id = label;
-  snapshot(); route.steps.push(step); refresh();
+  if (branchClosed()) return false; snapshot(); route.steps.push(step); refresh();
   log(`${id}: wait${name ? ' at ' + name : ''}${label ? ' (label ' + label + ')' : ''}: press Continue to go on`);
 };
 // Go home (2026-11-03): the route's last step, from where it ends now to the start pose (HOME): a
@@ -262,14 +262,14 @@ $('btn-home').onclick = () => {
   const L = homeLegAt(route.steps.length);
   if (!L.ok) { log(`home leg: ${L.why}`, 'bad'); return; }
   const id = nextId();
-  snapshot(); route.steps.push({ id, type: 'home' }); refresh();
+  if (branchClosed()) return false; snapshot(); route.steps.push({ id, type: 'home' }); refresh();
   log(`${id}: home leg, ${homeText(L)}`);
 };
 $('btn-arc-l').onclick = () => addArc('ccw');
 $('btn-arc-r').onclick = () => addArc('cw');
 document.querySelectorAll('button.turn').forEach(b => b.addEventListener('click', () => {
   if (!route.start) { log('set the start pose first', 'bad'); return; }
-  snapshot(); route.steps.push({ id: nextId(), type: 'rotate', direction: b.dataset.dir, angle_deg: +b.dataset.ang }); refresh();
+  if (branchClosed()) return false; snapshot(); route.steps.push({ id: nextId(), type: 'rotate', direction: b.dataset.dir, angle_deg: +b.dataset.ang }); refresh();
 }));
 $('tool-start').onclick = () => setTool(view.tool === 'start' ? null : 'start');
 // Most routes begin where the survey began: one press puts the route start on the map's
@@ -294,7 +294,7 @@ $('btn-start-here').onclick = () => {
 $('tool-line').onclick = () => setTool(view.tool === 'line' ? null : 'line');
 $('tool-measure').onclick = () => setTool(view.tool === 'measure' ? null : 'measure');
 $('btn-undo').onclick = undo; $('btn-redo').onclick = redo;
-$('btn-clear').onclick = () => { snapshot(); route.steps = []; refresh(); };
+$('btn-clear').onclick = () => { snapshot(); route.steps = []; route.branch = null; refresh(); };
 $('ed-repeat').onchange = e => { snapshot(); route.repeat_count = +e.target.value; refresh(); };
 // Steps an ERROR issue names are drawn red; `info` issues (a sweep crossing mapped cells in a
 // dynamic area: passable only if the live scan agrees) never fail validation.
@@ -303,15 +303,18 @@ const badSteps = () => new Set((lastResult && lastResult.issues || []).filter(i 
 function payload() {
   return { schema_version: 1, route_id: $('ed-route-id').value.trim(), revision: 0,
            map: { id: mapId, revision: mapRev, sha256: '' }, frame_id: 'map',
-           start: route.start || { x_m: 0, y_m: 0, yaw_deg: 0 }, limits: routeLimits(route.limits), steps: route.steps, repeat_count: route.repeat_count };
+           start: route.start || { x_m: 0, y_m: 0, yaw_deg: 0 }, limits: routeLimits(route.limits), steps: route.steps, repeat_count: route.repeat_count,
+           ...(route.branch ? { branch: route.branch } : {}) };
 }
 $('btn-validate').onclick = async () => {
+  if (branchOpen()) return;
   const c = ctx();
   const { status, data } = await api(`/api/maps/${mapId}/${mapRev}/routes/validate`, payload());
   if (!stillCurrent(c)) { log('validation result discarded: the draft or map changed meanwhile', 'warn'); return; }
   lastResult = data; showResult(data); log(status === 200 ? `valid: ${data.compiled.total_length_m.toFixed(2)} m, ${data.compiled.steps.length} steps` : `invalid: ${data.issues.length} issue(s)`, status === 200 ? '' : 'bad'); refresh();
 };
 $('btn-save').onclick = async () => {
+  if (branchOpen()) return;
   const c = ctx(), forMap = { map_id: mapId, map_revision: mapRev };
   const { status, data } = await api(`/api/maps/${mapId}/${mapRev}/routes/save`, payload());
   if (status === 200) {
@@ -350,7 +353,9 @@ function refresh() {
   const bad = badSteps();
   if (!lastResult) showResult(null);
   view._linePreview = null;  // the route changed: a preview made for the old end pose is void
-  $('ed-steps').innerHTML = route.steps.length ? route.steps.map((s, i) => `<div class="row three${bad.has(s.id) ? ' lv-error' : ''}"><span class="k">${esc(s.id)}</span>` +
+  branchNote();
+  const own = route.branch ? new Set(route.branch.rejoin_after ? route.branch.steps : route.steps.slice(route.steps.findIndex(s => s.id === route.branch.leave_after) + 1).map(s => s.id)) : null;
+  $('ed-steps').innerHTML = route.steps.length ? route.steps.map((s, i) => `<div class="row three${bad.has(s.id) ? ' lv-error' : ''}"><span class="k">${esc(s.id)}${own ? (own.has(s.id) ? ' <i>branch</i>' : ' <i>main</i>') : ''}</span>` +
     (s.type === 'straight' ? `<span class="n">straight <input class="sv" data-i="${i}" type="number" step="0.05" min="${STEP_V_MIN}" max="${num(SPEED_V, 2)}" value="${s.v_mps != null ? num(+s.v_mps, 2) : ''}" placeholder="${num(SPEED_V, 2)}" title="m/s: empty = the route speed; lower = a slow zone" style="width:5.5em"></span><span class="v" title="to ${num(+s.to.x_m, 3)}, ${num(+s.to.y_m, 3)} m">${mm(stepLength(i))}<i>mm</i></span>`
      : s.type === 'reverse' ? `<span class="n">reverse <b title="backs up at half the route speed, at most 0.30 m/s: ${num(REVERSE_V, 2)} m/s">◂${num(REVERSE_V, 2)}</b></span><span class="v">${mm(+s.distance_m)}<i>mm</i></span>`
      : s.type === 'wait' ? `<span class="n">wait</span><span class="v" title="stops until PB Continue or Start">${esc(s.name || '—')}${s.label_id ? ` <i>${esc(s.label_id)}</i>` : ''}</span>`
@@ -479,6 +484,10 @@ async function reloadRouteList(c) {
   if (!stillSameMap(c)) return;  // a list for a map no longer selected
   const sel = $('ed-load'); sel.innerHTML = '<option value="">— new —</option>';
   Object.entries(data.routes || {}).forEach(([rid, revs]) => revs.forEach(r => { const o = document.createElement('option'); o.value = `${rid}/${r}`; o.textContent = `${rid} rev${r}`; sel.appendChild(o); }));
+  savedRoutes = data.routes || {};
+  const bm = $('ed-branch-main'), keep = bm.value; bm.innerHTML = '<option value="">— saved route —</option>';
+  Object.entries(savedRoutes).forEach(([rid, revs]) => revs.forEach(r => { const o = document.createElement('option'); o.value = `${rid}/${r}`; o.textContent = `${rid} rev${r}`; bm.appendChild(o); }));
+  bm.value = keep;
   await reloadLabels(c);
 }
 // The wait's label dropdown (gls-wait-coding-plan §C.1): the newest label set of this map revision.
@@ -502,13 +511,114 @@ async function removeRoute(all) {
 }
 if ($('btn-route-remove-rev')) $('btn-route-remove-rev').onclick = () => removeRoute(false);
 if ($('btn-route-remove')) $('btn-route-remove').onclick = () => removeRoute(true);
+// ---- Branch (POS routes, 2026-11-06) -------------------------------------------------------
+// A POS route = the MAIN route's steps up to "leave after", its own branch (ids b1, b2, ...: the
+// stop point is a Wait), then the main route again after "rejoin after" - same start, same
+// homepost. The saved file holds every step plus route.branch; the server checks the main
+// part is exactly the main revision it names. Rebase moves a branch onto a newer main.
+let savedRoutes = {}, branchMain = null;  // { route_id, revision, start, steps, limits, repeat_count }
+const deep = o => JSON.parse(JSON.stringify(o));
+function branchClosed() {
+  if (route.branch && route.branch.rejoin_after) { log('the branch is closed (rejoined the main route): Undo the rejoin to change it', 'bad'); return true; }
+  return false;
+}
+function branchOpen() {
+  if (route.branch && !route.branch.rejoin_after) { log('the branch is not closed yet: Branch, Rejoin main', 'bad'); return true; }
+  return false;
+}
+async function fetchMain(rid, rrev) {
+  const { status, data } = await apiGet(`/api/maps/${mapId}/${mapRev}/routes/${encodeURIComponent(rid)}/${rrev}`);
+  if (status !== 200 || !data.route) { log(`main route ${rid} rev${rrev} could not be read`, 'bad'); return null; }
+  if (data.route.branch) { log(`${rid} is itself a POS route: branch from a plain main route`, 'bad'); return null; }
+  return { route_id: rid, revision: +rrev, start: data.route.start, steps: data.route.steps, limits: data.route.limits, repeat_count: data.route.repeat_count };
+}
+function fillBranchSteps() {
+  const ls = $('ed-branch-leave'), rs = $('ed-branch-rejoin');
+  const steps = branchMain ? branchMain.steps : [];
+  const opt = (s, i) => `<option value="${esc(s.id)}">${esc(s.id)} · ${esc(s.type)}${s.type === 'wait' && s.name ? ' ' + esc(s.name) : ''}</option>`;
+  ls.innerHTML = steps.map(opt).join('');
+  const li = steps.findIndex(s => s.id === (route.branch ? route.branch.leave_after : ls.value));
+  rs.innerHTML = steps.filter((_, i) => i >= Math.max(0, li)).map(opt).join('');
+  if (route.branch) { ls.value = route.branch.leave_after; rs.value = route.branch.rejoin_after || route.branch.leave_after; }
+}
+function branchNote() {
+  const b = route.branch, el = $('ed-branch-note');
+  el.textContent = !b ? '' : b.rejoin_after
+    ? `POS route on ${b.main_route_id} rev${b.main_revision}: leaves after ${b.leave_after}, branch ${b.steps.join(' ')}, rejoins after ${b.rejoin_after}.`
+      + (savedRoutes[b.main_route_id] && Math.max(...savedRoutes[b.main_route_id]) > b.main_revision ? ` A newer ${b.main_route_id} exists: Rebase on newest main.` : '')
+    : `Branching from ${b.main_route_id} rev${b.main_revision} after ${b.leave_after}: draw the branch (a Wait is the stop point), then come back to a main step's end pose and press Rejoin main.`;
+}
+$('ed-branch-main').onchange = async e => {
+  branchMain = null; fillBranchSteps();
+  if (!e.target.value) return;
+  const [rid, rrev] = e.target.value.split('/');
+  branchMain = await fetchMain(rid, rrev); fillBranchSteps();
+};
+$('ed-branch-leave').onchange = () => { if (!route.branch) fillBranchSteps(); };
+$('btn-branch-start').onclick = () => {
+  if (!branchMain) { log('pick the main route first', 'bad'); return; }
+  const li = branchMain.steps.findIndex(s => s.id === $('ed-branch-leave').value);
+  if (li < 0) { log('pick the main step the branch leaves after', 'bad'); return; }
+  snapshot();
+  route = { route_id: $('ed-route-id').value.trim(), start: deep(branchMain.start), steps: deep(branchMain.steps.slice(0, li + 1)),
+            repeat_count: 1, limits: routeLimits(branchMain.limits),
+            branch: { main_route_id: branchMain.route_id, main_revision: branchMain.revision, leave_after: branchMain.steps[li].id, rejoin_after: null, steps: [] } };
+  lastResult = null; savedRef = null; refresh(); fillBranchSteps();
+  log(`branch from ${branchMain.route_id} rev${branchMain.revision} after ${branchMain.steps[li].id}: draw the branch, then Rejoin main. Type the POS route id (e.g. pos1) before saving.`);
+};
+$('btn-branch-rejoin').onclick = () => {
+  const b = route.branch;
+  if (!b || b.rejoin_after) { log(b ? 'the branch is already closed' : 'start a branch first', 'bad'); return; }
+  if (!branchMain || branchMain.route_id !== b.main_route_id || branchMain.revision !== b.main_revision) { log(`pick ${b.main_route_id} rev${b.main_revision} as the main route`, 'bad'); return; }
+  const li = branchMain.steps.findIndex(s => s.id === b.leave_after), ri = branchMain.steps.findIndex(s => s.id === $('ed-branch-rejoin').value);
+  if (ri < li) { log('rejoin at or after the step the branch left from', 'bad'); return; }
+  const own = route.steps.slice(li + 1);
+  if (!own.length) { log('draw the branch first', 'bad'); return; }
+  const want = poseAfter(ri + 1, branchMain), got = poseAfter(route.steps.length);
+  const dx = got.x - want.x, dy = got.y - want.y, c = Math.cos(want.yaw), s = Math.sin(want.yaw);
+  const dyaw = Math.atan2(Math.sin(got.yaw - want.yaw), Math.cos(got.yaw - want.yaw)) * 180 / Math.PI;
+  if (Math.hypot(dx, dy) > 0.01 || Math.abs(dyaw) > 0.5) {
+    log(`the branch ends ${mm(dx * c + dy * s)} mm ahead, ${mm(-dx * s + dy * c)} mm left, ${num(dyaw, 1)}° off the end of ${branchMain.steps[ri].id}: it must end exactly there (1 cm, 0.5°)`, 'bad');
+    return;
+  }
+  snapshot();
+  route.steps = route.steps.concat(deep(branchMain.steps.slice(ri + 1)));
+  route.branch = Object.assign({}, b, { rejoin_after: branchMain.steps[ri].id, steps: own.map(x => x.id) });
+  lastResult = null; refresh();
+  log(`rejoined ${b.main_route_id} after ${branchMain.steps[ri].id}: ${branchMain.steps.length - ri - 1} main step(s) to the homepost. Validate, then Save revision and Create mission.`);
+};
+$('btn-branch-rebase').onclick = async () => {
+  const b = route.branch;
+  if (!b || !b.rejoin_after) { log('load a closed POS route first', 'bad'); return; }
+  const revs = savedRoutes[b.main_route_id] || [];
+  if (!revs.length) { log(`main route ${b.main_route_id} is not on this map any more`, 'bad'); return; }
+  const newest = Math.max(...revs);
+  const [oldMain, nm] = [await fetchMain(b.main_route_id, b.main_revision), await fetchMain(b.main_route_id, newest)];
+  if (!nm) return;
+  const li = nm.steps.findIndex(s => s.id === b.leave_after), ri = nm.steps.findIndex(s => s.id === b.rejoin_after);
+  if (li < 0 || ri < li) { log(`${b.main_route_id} rev${newest} has no ${li < 0 ? b.leave_after : b.rejoin_after} (or rejoins before it leaves): redraw the branch`, 'bad'); return; }
+  if (oldMain) {
+    const off = (p, q) => Math.hypot(p.x - q.x, p.y - q.y) > 0.001 || Math.abs(p.yaw - q.yaw) > 1e-4;
+    const oli = oldMain.steps.findIndex(s => s.id === b.leave_after), ori = oldMain.steps.findIndex(s => s.id === b.rejoin_after);
+    if (off(poseAfter(li + 1, nm), poseAfter(oli + 1, oldMain)) || off(poseAfter(ri + 1, nm), poseAfter(ori + 1, oldMain))) {
+      log(`on ${b.main_route_id} rev${newest} the branch point or the rejoin point moved: redraw the branch`, 'bad'); return;
+    }
+  }
+  const own = route.steps.filter(s => b.steps.includes(s.id));
+  snapshot();
+  route.start = deep(nm.start);
+  route.steps = deep(nm.steps.slice(0, li + 1)).concat(own, deep(nm.steps.slice(ri + 1)));
+  route.branch = Object.assign({}, b, { main_revision: newest });
+  branchMain = nm; lastResult = null; savedRef = null; refresh(); fillBranchSteps();
+  log(`rebased on ${b.main_route_id} rev${newest}: Validate, Save revision, then Create mission again`);
+};
 $('ed-load').onchange = async e => {
   if (!e.target.value) return;
   const [rid, rrev] = e.target.value.split('/');
   const c = ctx(), forMap = { map_id: mapId, map_revision: mapRev };
   const { data } = await apiGet(`/api/maps/${mapId}/${mapRev}/routes/${rid}/${rrev}`);
   if (!stillCurrent(c)) { log(`load of ${rid} rev${rrev} discarded: the draft or map changed meanwhile`, 'warn'); return; }
-  snapshot(); route = { route_id: data.route.route_id, start: data.route.start, steps: data.route.steps, repeat_count: data.route.repeat_count, limits: routeLimits(data.route.limits) };
+  snapshot(); route = { route_id: data.route.route_id, start: data.route.start, steps: data.route.steps, repeat_count: data.route.repeat_count, limits: routeLimits(data.route.limits), branch: data.route.branch || null };
   $('ed-route-id').value = data.route.route_id; savedRef = Object.assign({ route_id: rid, revision: +rrev }, forMap); lastResult = data; showResult(data); refresh();
   log(`loaded ${rid} rev${rrev}${data.ok ? '' : ' (INVALID on this map revision)'}`, data.ok ? '' : 'bad');
 };

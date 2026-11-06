@@ -27,8 +27,8 @@ from typing import Any, Protocol
 import numpy as np
 from agv_core import alarms as catalogue
 from amr_navigation.compiler import compile_route
-from amr_navigation.route import VEHICLE_V_MAX, Route, RouteError
-from amr_navigation.validate import load_dynamic, load_keepout, validate
+from amr_navigation.route import VEHICLE_V_MAX, Route, RouteError, branch_problem
+from amr_navigation.validate import Issue, load_dynamic, load_keepout, validate
 from flask import Flask, Response, jsonify, redirect, render_template, request, session
 
 from amr_maps import edit as mapedit
@@ -563,13 +563,29 @@ def create_app(
 
     # ---- routes --------------------------------------------------------------------
 
+    def _branch_check(map_id: str, route: Route, v):
+        """A POS route (route.branch) must be its main route + its branch, exactly: else an
+        error issue (2026-11-06). The main route is the saved revision it names."""
+        b = route.branch
+        if b is None:
+            return v
+        try:
+            main, _sha = store.load_route(app.config["MAPS_DIR"], map_id, b.main_route_id, b.main_revision)
+            why = branch_problem(route, main)
+        except (store.StoreError, RouteError) as e:
+            why = f"main route {b.main_route_id} rev{b.main_revision}: {e}"
+        if why:
+            v.issues.append(Issue("branch", why, b.steps[0] if b.steps else None))
+        return v
+
     def _validate_payload(map_id: str, rev: int, payload: dict):
         m, g = bundle(map_id, rev)
         route = Route.from_dict(payload)
         route.map.id, route.map.revision, route.map.sha256 = map_id, rev, m.sha256
         ex = extras(map_id, rev)
         lab = labels_for(map_id, rev)
-        return route, validate(route, m, g, fp, ex["keepout"], ex["dynamic"], lab[0] if lab else None)
+        v = validate(route, m, g, fp, ex["keepout"], ex["dynamic"], lab[0] if lab else None)
+        return route, _branch_check(map_id, route, v)
 
     def _compiled_dict(compiled) -> dict:
         return {
@@ -711,6 +727,7 @@ def create_app(
         ex = extras(map_id, rev)
         lab = labels_for(map_id, rev)
         v = validate(route, m, g, fp, ex["keepout"], ex["dynamic"], lab[0] if lab else None)
+        v = _branch_check(map_id, route, v)
         body = {
             "route": route.to_dict(),
             "sha256": sha,
@@ -756,6 +773,7 @@ def create_app(
             lab = None  # recorded on another bundle of this revision: not this map's labels
         ex = extras(map_id, rev)
         v = validate(route, m, g, fp, ex["keepout"], ex["dynamic"], lab[0] if lab else None)
+        v = _branch_check(map_id, route, v)
         if not v.ok:
             return jsonify({"ok": False, "issues": [i.to_dict() for i in v.issues]}), 422
         # route ids/revisions are per map; missions share one directory: the default id names the

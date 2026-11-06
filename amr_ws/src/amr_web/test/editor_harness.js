@@ -92,8 +92,8 @@ const flush = () => new Promise(r => setImmediate(r));
   out.reverse_refused = els['ed-steps'].innerHTML === before;
   els['ed-len'].value = '1200'; els['btn-reverse-len'].onclick();
   out.reverse_rows = els['ed-steps'].innerHTML;
-  let savedSteps = null, lastSavedStart = null;
-  scripted['/api/maps/m1/1/routes/save'] = body => { savedSteps = JSON.parse(JSON.stringify(body.steps)); lastSavedStart = body.start ? JSON.parse(JSON.stringify(body.start)) : null; return { status: 200, data: { route_id: 'r', revision: 3, sha256: 'abcdef123456' } }; };
+  let savedSteps = null, lastSavedStart = null, lastSavedBranch = null;
+  scripted['/api/maps/m1/1/routes/save'] = body => { savedSteps = JSON.parse(JSON.stringify(body.steps)); lastSavedStart = body.start ? JSON.parse(JSON.stringify(body.start)) : null; lastSavedBranch = body.branch ? JSON.parse(JSON.stringify(body.branch)) : null; return { status: 200, data: { route_id: 'r', revision: 3, sha256: 'abcdef123456' } }; };
   await els['btn-save'].onclick();
   for (let i = 0; i < 3; i++) await flush();
   out.reverse_saved_step = savedSteps[savedSteps.length - 1];
@@ -179,5 +179,22 @@ const flush = () => new Promise(r => setImmediate(r));
   els['btn-start-here'].onclick();
   await els['btn-save'].onclick(); for (let i = 0; i < 3; i++) await flush();
   out.here_start = lastSavedStart;
+  // --- Branch (POS routes, 2026-11-06): main s1 s2 s3(home); POS leaves after s1, stops, backs up, rejoins ---
+  scripted['/api/maps/m1/1/routes/main/1'] = () => ({ status: 200, data: { route: { route_id: 'main', start: { x_m: 0, y_m: 0, yaw_deg: 0 }, repeat_count: 1, limits: {},
+    steps: [{ id: 's1', type: 'straight', to: { x_m: 4, y_m: 0 } }, { id: 's2', type: 'straight', to: { x_m: 8, y_m: 0 } }, { id: 's3', type: 'home' }] } } });
+  ['ed-branch-main', 'ed-branch-leave', 'ed-branch-rejoin', 'ed-branch-note'].forEach(id => doc.getElementById(id));
+  els['ed-branch-main'].value = 'main/1'; await els['ed-branch-main'].onchange({ target: els['ed-branch-main'] });
+  els['ed-branch-leave'].value = 's1'; els['btn-branch-start'].onclick();
+  els['ed-len'].value = '1000'; els['btn-line-len'].onclick();          // b1: 1 m on to the POS
+  els['btn-wait'].onclick();                                            // b2: the stop point
+  els['btn-reverse-len'].onclick();                                     // b3: back 1 m to the end of s1
+  els['ed-branch-rejoin'].value = 's2'; els['btn-branch-rejoin'].onclick();   // wrong main step: refused
+  out.branch_open_rows = els['ed-steps'].innerHTML.includes('s2');
+  els['ed-branch-rejoin'].value = 's1'; els['btn-branch-rejoin'].onclick();
+  els['ed-len'].value = '500'; els['btn-line-len'].onclick();           // closed: no more steps
+  els['ed-route-id'].value = 'pos1';
+  await els['btn-save'].onclick(); for (let i = 0; i < 3; i++) await flush();
+  out.branch_saved = savedSteps.map(s => s.id);
+  out.branch_meta = lastSavedBranch;
   console.log(JSON.stringify(out));
 })().catch(e => { console.log(JSON.stringify({ error: String(e && e.stack || e) })); });

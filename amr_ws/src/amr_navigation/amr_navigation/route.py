@@ -342,6 +342,76 @@ class Step:
 
 
 @dataclass
+class Branch:
+    """A POS route (2026-11-06): the steps of a MAIN route up to `leave_after`, its own branch
+    steps (`steps`, ids), then the main route again after `rejoin_after` - same start, same
+    homepost. The file holds every step (it runs like any other route); this records which
+    are the branch so the editor can rebase it on a newer main revision, and validation can
+    check the main part is still exactly main rev `main_revision` (branch_problem)."""
+
+    main_route_id: str
+    main_revision: int
+    leave_after: str  # a main step id: the branch starts at its end
+    rejoin_after: str  # a main step id (at or after leave_after): the main route resumes after it
+    steps: list[str] = field(default_factory=list)  # the branch's own step ids, in order
+
+    @staticmethod
+    def from_dict(d) -> Branch:
+        if not isinstance(d, dict):
+            raise RouteError("branch must be an object")
+        ids = d.get("steps")
+        if not isinstance(ids, list) or not ids or not all(isinstance(i, str) and i for i in ids):
+            raise RouteError("branch.steps must be a non-empty list of step ids")
+        return Branch(
+            main_route_id=_str(_field(d, "main_route_id", "branch"), "branch.main_route_id"),
+            main_revision=_int(_field(d, "main_revision", "branch"), "branch.main_revision", 1, 2**31 - 1),
+            leave_after=_str(_field(d, "leave_after", "branch"), "branch.leave_after"),
+            rejoin_after=_str(_field(d, "rejoin_after", "branch"), "branch.rejoin_after"),
+            steps=list(ids),
+        )
+
+
+def branch_problem(route: Route, main: Route) -> str | None:
+    """Why `route` is not main + its branch (None if it is): the same start, main's steps up
+    to leave_after exactly, the branch steps, main's steps after rejoin_after exactly. Pure."""
+    b = route.branch
+    if b is None:
+        return None
+    if main.branch is not None:
+        return f"main route {b.main_route_id} is itself a branch route: branch from a plain route"
+    ids = [s.id for s in main.steps]
+    for key in ("leave_after", "rejoin_after"):
+        if getattr(b, key) not in ids:
+            return f"{b.main_route_id} rev{b.main_revision} has no step {getattr(b, key)!r} ({key})"
+    li, ri = ids.index(b.leave_after), ids.index(b.rejoin_after)
+    if ri < li:
+        return f"rejoin_after {b.rejoin_after} comes before leave_after {b.leave_after} on the main route"
+    clash = sorted(set(b.steps) & set(ids))
+    if clash:
+        return f"branch step id(s) {clash} are also main route step ids"
+    mine = {s.id: s for s in route.steps}
+    if any(i not in mine for i in b.steps):
+        return "branch.steps names a step that is not in the route"
+    want = main.steps[: li + 1] + [mine[i] for i in b.steps] + main.steps[ri + 1 :]
+    if (route.start.x_m, route.start.y_m, route.start.yaw_deg) != (
+        main.start.x_m,
+        main.start.y_m,
+        main.start.yaw_deg,
+    ):
+        return f"the start is not {b.main_route_id} rev{b.main_revision}'s start: rebase on the main route"
+    got = [s.to_dict() for s in route.steps]
+    exp = [s.to_dict() for s in want]
+    if got != exp:
+        k = next((i for i, (g, e) in enumerate(zip(got, exp)) if g != e), min(len(got), len(exp)))  # noqa: B905
+        where = got[k]["id"] if k < len(got) else "the end"
+        return (
+            f"the main part differs from {b.main_route_id} rev{b.main_revision} at {where}: "
+            "rebase on the main route (Routes page, Branch)"
+        )
+    return None
+
+
+@dataclass
 class Route:
     route_id: str
     map: MapRef
@@ -352,8 +422,15 @@ class Route:
     repeat_count: int = 1
     frame_id: str = "map"
     schema_version: int = SCHEMA_VERSION
+    branch: Branch | None = None  # a POS route: main route + its branch (see Branch)
 
     def to_dict(self) -> dict:
+        d = self._dict()
+        if self.branch is not None:
+            d["branch"] = asdict(self.branch)
+        return d
+
+    def _dict(self) -> dict:
         return {
             "schema_version": self.schema_version,
             "route_id": self.route_id,
@@ -420,6 +497,7 @@ class Route:
             limits=lim,
             steps=[Step.from_dict(s) for s in steps_in],
             repeat_count=_int(d.get("repeat_count", 1), "repeat_count", 0, MAX_REPEAT),
+            branch=None if d.get("branch") is None else Branch.from_dict(d["branch"]),
         )
 
     def dumps(self) -> str:

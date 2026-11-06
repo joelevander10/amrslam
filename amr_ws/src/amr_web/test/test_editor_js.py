@@ -149,3 +149,21 @@ def test_editor_start_at_the_amr_only_when_localised_on_this_map():
     assert "error" not in out, out
     assert out["here_refused_start"] == {"x_m": 0, "y_m": 0, "yaw_deg": 0}  # CHECKING: unchanged
     assert out["here_start"] == {"x_m": 3.25, "y_m": -1.5, "yaw_deg": 90}
+
+
+@pytest.mark.skipif(NODE is None, reason="node not installed")
+def test_editor_branch_route_is_main_plus_branch_and_rejoins_exactly():
+    harness = pathlib.Path(__file__).with_name("editor_harness.js")
+    r = subprocess.run([NODE, str(harness)], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    assert "error" not in out, out
+    assert out["branch_open_rows"] is False  # rejoin after s2 refused: the branch ends at s1's end
+    assert out["branch_saved"] == ["s1", "b1", "b2", "b3", "s2", "s3"]  # the 0.5 m after rejoin refused
+    assert out["branch_meta"] == {
+        "main_route_id": "main",
+        "main_revision": 1,
+        "leave_after": "s1",
+        "rejoin_after": "s1",
+        "steps": ["b1", "b2", "b3"],
+    }
