@@ -217,6 +217,56 @@ def checkpoint_mismatch(cp: dict, mission: dict, compiled, passes: int) -> str |
     return None
 
 
+# A FollowPath goal must not end where its own path has already been: Nav2's goal checker
+# (SimpleGoalChecker, stateful) latches "position reached" the first time the vehicle is
+# within xy_goal_tolerance of the goal - at the START of a loop that returns to its start -
+# and then reports SUCCEEDED as soon as the heading agrees, metres into the first step
+# (vehicle 2026-11-06: a route closed by a Go home step, every step chained, "endpoint
+# missed: 1.365 m / 1.5 deg" 5 s after the start). Such a chain is split before its last
+# step, so that leg is its own goal (one stop before it).
+CHAIN_LOOP_GUARD_M = 0.30
+
+
+def chainable(st: CompiledStep) -> bool:
+    """Consecutive forward steps (straight, arc, home) drive as ONE FollowPath."""
+    return st.type not in (ROTATE, WAIT) and not st.reverse
+
+
+def chain_returns(seq: list[CompiledStep], guard: float = CHAIN_LOOP_GUARD_M) -> bool:
+    """Does the path of `seq` pass within `guard` of its own goal (the last step's end)
+    earlier than its final 3 x guard? Pure."""
+    ex, ey = seq[-1].end[0], seq[-1].end[1]
+    pts: list[tuple[float, float, float]] = []
+    s, prev = 0.0, None
+    for st in seq:
+        for x, y, *_ in st.samples or [st.start, st.end]:
+            if prev is not None:
+                s += math.hypot(x - prev[0], y - prev[1])
+            pts.append((x, y, s))
+            prev = (x, y)
+    return any(s - si > 3.0 * guard and math.hypot(x - ex, y - ey) < guard for x, y, si in pts)
+
+
+def chain_breaks(steps: list[CompiledStep], guard: float = CHAIN_LOOP_GUARD_M) -> set[int]:
+    """Indices of chainable steps that must START a new FollowPath although the step before
+    them is chainable too (see CHAIN_LOOP_GUARD_M). Pure."""
+    breaks: set[int] = set()
+    i, n = 0, len(steps)
+    while i < n:
+        if not chainable(steps[i]):
+            i += 1
+            continue
+        j = i
+        while j + 1 < n and chainable(steps[j + 1]):
+            j += 1
+        nxt, b = j + 1, j
+        while b > i and chain_returns(steps[i : b + 1], guard):
+            breaks.add(b)  # the last step becomes its own goal; re-check what is left
+            b -= 1
+        i = nxt
+    return breaks
+
+
 def _path_heading(st: CompiledStep, along: float) -> float:
     """The heading the vehicle should have `along` metres into a straight / arc / home leg."""
     if st.type == ARC and st.radius_m > 0:
@@ -321,6 +371,8 @@ class RouteExecutor(Node):
     checkpoint: dict | None = None
     checkpoint_path = ""
     _saved_stop_seq = 0
+    _chain_cache = None  # (compiled route, chain_breaks) - see _chain_breaks
+    chain_loop_guard_m = CHAIN_LOOP_GUARD_M
     rejoin_heading = math.radians(20.0)
 
     def __init__(self) -> None:
@@ -1493,19 +1545,36 @@ class RouteExecutor(Node):
 
     @staticmethod
     def _chainable(st: CompiledStep) -> bool:
-        return st.type not in (ROTATE, WAIT) and not st.reverse
+        return chainable(st)
 
     def _chain(self, index: int) -> list[CompiledStep]:
-        """The steps driven together from `index`: it and every chainable step after it."""
+        """The steps driven together from `index`: it and every chainable step after it, up to
+        a loop break (chain_breaks)."""
         steps = self.compiled.steps
         if not self._chainable(steps[index]):
             return [steps[index]]
-        out = []
-        for st in steps[index:]:
-            if not self._chainable(st):
+        breaks = self._chain_breaks()
+        out = [steps[index]]
+        for k in range(index + 1, len(steps)):
+            if not self._chainable(steps[k]) or k in breaks:
                 break
-            out.append(st)
+            out.append(steps[k])
         return out
+
+    def _chain_breaks(self) -> set[int]:
+        """chain_breaks() of the loaded route, computed once per compiled route."""
+        cache = self._chain_cache
+        if cache is None or cache[0] is not self.compiled:
+            breaks = chain_breaks(self.compiled.steps, self.chain_loop_guard_m)
+            cache = (self.compiled, breaks)
+            self._chain_cache = cache
+            if breaks:
+                ids = ", ".join(self.compiled.steps[k].id for k in sorted(breaks))
+                self.get_logger().info(
+                    f"the route comes back over its own path: {ids} driven as a separate goal "
+                    "(a stop before it), or Nav2 would finish the chain at its start"
+                )
+        return cache[1]
 
     def _step_w_max(self, st: CompiledStep) -> float:
         """The permit's turn cap: the route's spin cap, or the arc ceiling for the WHOLE of a

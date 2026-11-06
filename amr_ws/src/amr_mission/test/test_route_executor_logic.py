@@ -656,3 +656,49 @@ def test_home_leg_progress_chain_overshoot_and_turn_cap():
     assert (last.x, last.y) == (pytest.approx(0.045), pytest.approx(0.0, abs=1e-9))
     # a curved home leg in the chain lifts the turn cap to the arc ceiling, as an arc does
     assert n._step_w_max(s1) == pytest.approx(max(0.24, ren.VEHICLE_ARC_W_MAX))
+
+
+def _line(sid, p0, p1, typ=STRAIGHT):
+    n = max(1, int(math.hypot(p1[0] - p0[0], p1[1] - p0[1]) / 0.05))
+    yaw = math.atan2(p1[1] - p0[1], p1[0] - p0[0])
+    pts = [(p0[0] + (p1[0] - p0[0]) * k / n, p0[1] + (p1[1] - p0[1]) * k / n, yaw) for k in range(n + 1)]
+    return CompiledStep(
+        sid, typ, (p0[0], p0[1], yaw), (p1[0], p1[1], yaw),
+        length_m=math.hypot(p1[0] - p0[0], p1[1] - p0[1]), samples=pts, v_mps=0.5,
+    )
+
+
+def test_a_route_that_closes_on_its_start_is_not_one_followpath_goal():
+    """2026-11-06: every step chained and the last one (Go home) ending on the route start -
+    Nav2's stateful goal checker latched the goal at the start and finished the chain 1.4 m
+    into step 0: "endpoint missed: 1.365 m / 1.5 deg". The closing step is its own goal."""
+    corners = [(0.0, 0.0), (4.0, 0.0), (4.0, 3.0), (0.0, 3.0), (0.0, 0.0)]
+    steps = [_line(f"s{k}", corners[k], corners[k + 1]) for k in range(4)]
+    steps[-1].type = "home"
+    assert ren.chain_breaks(steps) == {3}
+    n = make_node(steps)
+    assert [s.id for s in n._chain(0)] == ["s0", "s1", "s2"]
+    assert [s.id for s in n._chain(1)] == ["s1", "s2"]  # mid-chain bookkeeping agrees
+    assert [s.id for s in n._chain(3)] == ["s3"]
+    # the goal of the first chain ends at step 2: nothing chained after it
+    n.fsm.start(True, True)
+    for _ in range(2):
+        n.fsm.step_done()
+    assert n._next_in_chain() is None
+
+
+def test_an_open_route_and_a_short_approach_stay_one_chain():
+    out = [
+        _line("a", (0.0, 0.0), (3.0, 0.0)),
+        _line("b", (3.0, 0.0), (3.0, 3.0)),
+        _line("c", (3.0, 3.0), (6.0, 3.0)),
+    ]
+    assert ren.chain_breaks(out) == set()
+    # coming back to within the guard only over its own last 0.9 m is a normal approach
+    hook = [_line("a", (0.0, 0.0), (2.0, 0.0)), _line("b", (2.0, 0.0), (2.0, 0.2))]
+    assert ren.chain_breaks(hook) == set()
+    # a rotate already ends a chain, so a loop broken by one needs nothing more
+    turn = CompiledStep("r", ROTATE, (4.0, 0.0, 0.0), (4.0, 0.0, math.pi / 2), signed_angle_rad=math.pi / 2)
+    loop = [_line("a", (0.0, 0.0), (4.0, 0.0)), turn, _line("b", (4.0, 0.0), (4.0, 3.0)),
+            _line("c", (4.0, 3.0), (0.0, 3.0)), _line("d", (0.0, 3.0), (0.0, 0.0))]
+    assert ren.chain_breaks(loop) == set()  # b..d never returns near d's end (0, 0)
