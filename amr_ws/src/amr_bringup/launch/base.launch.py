@@ -32,6 +32,7 @@ from launch_ros.actions import Node
 
 from amr_bringup import domains, scanner_fields
 from amr_bringup.launch_helpers import default_world, include, required
+from amr_navigation import route
 
 
 def _qr_base(cfg, context, gate) -> list:
@@ -212,6 +213,17 @@ def _compose(context):
                     "pendant_w_rad_s": 0.39,
                     "pendant_turn_ratio": 0.66,  # manual corner: inner wheel 66 % of the outer
                     "survey_w_max_rad_s": 0.27,  # manual spin cap while surveying (pendant + jog)
+                    # the AMR QR's automatic speed changes are quicker again (owner 2026-11-06,
+                    # amr_navigation.route.QR_AUTO_*): 0.80 m/s straights, less time tapering
+                    **(
+                        {
+                            "a_max": route.QR_AUTO_A_MAX,
+                            "d_max": route.QR_AUTO_D_MAX,
+                            "auto_jerk": route.QR_AUTO_JERK,
+                        }
+                        if qr
+                        else {}
+                    ),
                 }
             ],
         ),

@@ -51,6 +51,7 @@ def executor_overrides() -> dict:
         by default), so a wider gate would only fault a moment after START.
       * web_continue true: its panel has only START and STOP, so the Run page's Continue
         releases a route wait step (START does too).
+      * taper_decel / taper_jerk / end_decel: amr_navigation.route.QR_AUTO_* (2026-11-06).
     The protective field is used again (use_protective_field false 2026-09-24..11-02, while
     the QR ran on a broken nanoScan3)."""
     from agv_core import config  # noqa: PLC0415 - the vehicle profile (AGV_PROFILE)
@@ -61,11 +62,18 @@ def executor_overrides() -> dict:
         # the executor reads the protective field from /output_paths too: the QR's is path 1
         # (scanner_fields.amr-qr-01.yaml), not gvievo-01's 0
         protective = scanner_fields.load()["fields"]["protective"]["path"]
+        from amr_navigation import route  # noqa: PLC0415 - launch-time import
+
         return {
             "start_gate_m": 0.20,
             "start_gate_deg": 10.0,
             "web_continue": True,
             "field_output_index": protective,
+            # speed changes (2026-11-06): the taper matches the mux's AUTO braking, and the
+            # executor brakes for the end of a move itself (RPP's ramp is cut to 0.3 m)
+            "taper_decel": route.QR_AUTO_D_MAX,
+            "taper_jerk": route.QR_AUTO_JERK,
+            "end_decel": route.QR_END_DECEL,
         }
     return {}
 

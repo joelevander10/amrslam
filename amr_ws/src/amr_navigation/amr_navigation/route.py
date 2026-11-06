@@ -120,25 +120,42 @@ def top_speed_cap(v: float) -> float:
 
 _top_speed_cap = top_speed_cap  # the old private name
 VEHICLE_V_MAX = top_speed_cap(ROUTE_V_MPS)
-# The mux's AUTO braking (amr_bringup base.launch, cmd_mux_kinematics d_max, 2026-11-03) and
-# nav2_params.yaml's FollowPath approach ramp, which is written for ROUTE_V_MPS_DEFAULT.
-MUX_AUTO_D_MAX = 0.125
-APPROACH_DIST_MIN_M = 3.0
+# Automatic speed changes on the AMR QR (owner 2026-11-06: "the slow down from straight to curve
+# is too long"): the mux's AUTO a_max / d_max / auto_jerk (amr_bringup base.launch) and the route
+# executor's taper and end approach (navigation_layer executor_overrides) use these. They are
+# the values from before the 2026-11-03 softening: 0 -> 0.80 m/s in 4.5 s / 1.8 m, 0.80 ->
+# 0.30 before an arc in 2.6 s / 1.7 m (was 5.3 s / 3.1 m), a stop from 0.80 in about 1.6 m.
+QR_AUTO_A_MAX, QR_AUTO_D_MAX, QR_AUTO_JERK = 0.2, 0.25, 0.4
+QR_END_DECEL = 0.2  # the executor's stop profile, under QR_AUTO_D_MAX so the mux can follow it
+# RPP's approach ramp (approach_velocity_scaling_dist) only works INSIDE the local costmap: RPP
+# prunes its path to the costmap's half width (nav2_params.yaml 5 x 5 m -> 2.5 m), so a ramp
+# longer than that is ALWAYS active and caps every move at (half width / D) of its speed -
+# 2026-11-06: D 5.2 m held 0.80 m/s straights at 0.38 and 0.30 m/s arcs at about 0.15. On the
+# QR the executor brakes for the end of a move itself (QR_END_DECEL) and RPP only rounds off
+# the last RPP_APPROACH_M.
+LOCAL_COSTMAP_HALF_M = 2.5
+RPP_APPROACH_M = 0.3
 
 
-def rpp_overrides(v: float | None = None) -> dict:
-    """controller_server parameters for a route speed above nav2_params.yaml's 0.60 ({} at or
-    below it): desired_linear_vel = the speed, and an approach ramp long enough that RPP never
-    asks to brake harder than the mux will - the ramp is linear in distance, so its demand
-    peaks at v^2 / D on entry; above MUX_AUTO_D_MAX the mux lags and the vehicle lands past
-    the endpoint. 0.80 m/s (AMR QR, 2026-11-06) -> D 5.2 m. Pure."""
+def _is_qr() -> bool:
+    try:
+        from agv_core import config  # noqa: PLC0415 - optional, as in top_speed_cap
+
+        return config.PLATFORM == config.PLATFORM_QR
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def rpp_overrides(v: float | None = None, qr: bool | None = None) -> dict:
+    """controller_server parameters for the AMR QR ({} elsewhere: nav2_params.yaml as is):
+    desired_linear_vel = the route speed, and the short RPP approach ramp (see
+    RPP_APPROACH_M; the executor's end profile does the braking). Pure but for the profile."""
     v = VEHICLE_V_MAX if v is None else float(v)
-    if v <= ROUTE_V_MPS_DEFAULT + 1e-9:
+    if not (_is_qr() if qr is None else qr):
         return {}
-    approach = max(APPROACH_DIST_MIN_M, math.ceil(round(10.0 * v * v / MUX_AUTO_D_MAX, 6)) / 10.0)
     return {
         "FollowPath.desired_linear_vel": v,
-        "FollowPath.approach_velocity_scaling_dist": approach,
+        "FollowPath.approach_velocity_scaling_dist": RPP_APPROACH_M,
     }
 
 

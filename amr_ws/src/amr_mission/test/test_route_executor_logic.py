@@ -730,3 +730,36 @@ def test_a_slow_zone_slows_before_it_and_speeds_up_after_it_without_a_stop():
     assert n._step_speed(s2, (7.0, 0.0, 0.0)) == 0.3  # in it
     n.fsm.step_done()
     assert n._step_speed(s3, (8.1, 0.0, 0.0)) == 0.5  # back up as soon as it is left
+
+
+def test_the_end_of_a_move_is_a_constant_deceleration_stop_when_end_decel_is_set():
+    """AMR QR 2026-11-06: the executor brakes for the end of a chain itself (RPP's ramp only
+    works inside the local costmap)."""
+    s1, s2 = _line("s1", (0.0, 0.0), (6.0, 0.0)), _line("s2", (6.0, 0.0), (8.0, 0.0))
+    s1.v_mps = s2.v_mps = 0.8
+    n = make_node([s1, s2])
+    n.fsm.start(True, True)
+    assert n._step_speed(s1, (5.9, 0.0, 0.0)) == 0.8  # off by default: RPP's ramp does it
+    n.end_decel, n.end_min_v = 0.2, 0.05
+    assert n._step_speed(s1, (1.0, 0.0, 0.0)) == 0.8  # 7 m to go
+    assert n._step_speed(s1, (5.9, 0.0, 0.0)) == 0.8  # 2.1 m to go: sqrt(2 x 0.2 x 2.1) > 0.8
+    n.fsm.step_done()
+    # 1.0 m before the end of s2 (the chain's end): sqrt(2 x 0.2 x 1.0)
+    assert n._step_speed(s2, (7.0, 0.0, 0.0)) == pytest.approx(math.sqrt(0.4))
+    assert n._step_speed(s2, (8.0, 0.0, 0.0)) == 0.05  # never below the crawl
+
+
+def test_a_slow_zone_two_steps_ahead_is_tapered_for_in_time():
+    s1, s2, s3 = (
+        _line("s1", (0.0, 0.0), (6.0, 0.0)),
+        _line("s2", (6.0, 0.0), (6.2, 0.0)),
+        _line("s3", (6.2, 0.0), (9.0, 0.0)),
+    )
+    s1.v_mps, s2.v_mps, s3.v_mps = 0.5, 0.5, 0.2
+    n = make_node([s1, s2, s3])
+    n.fsm.start(True, True)
+    # 0.2 m of normal straight is shorter than the 0.5 -> 0.2 taper (0.55 m): it starts on s1,
+    # 0.4 m before the slow zone - looking only at the next step it would never start
+    assert n._taper_dist(0.5, 0.2) == pytest.approx(0.5525)
+    assert n._step_speed(s1, (5.0, 0.0, 0.0)) == 0.5
+    assert n._step_speed(s1, (5.8, 0.0, 0.0)) == 0.2

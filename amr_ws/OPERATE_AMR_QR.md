@@ -219,19 +219,21 @@ ros2 run amr_mission map_edit --map block_c --rev 1 --despeckle-rect -50 -50 50 
 5. **Speed.** On the AMR QR every straight runs at **0.80 m/s** (`qr_base.route_v_mps`,
    2026-11-06), every arc and the Go home curve at **0.30 m/s**, a reverse at 0.30 m/s (never faster: the rear is not scanned), spins
    at 0.37 rad/s (`motor_max_rpm` 2700 = 0.85 m/s top; routes run at most at 95 % of it).
-   Every speed change is a smooth **S-curve** (start ≈ 0.1 m/s², braking ≈ 0.125 m/s², jerk
-   0.1 m/s³): from standstill it reaches 0.80 m/s in about 9 s and 3.6 m, and the stop at the
-   end of a move starts 5.2 m before it. A straight shorter than about 9 m never reaches
-   0.80. **At 0.80 m/s the red protective field must be about 1 m long** (§5b).
+   Every speed change is a smooth **S-curve** (start 0.2 m/s², braking 0.25 m/s², jerk
+   0.4 m/s³; 2026-11-06): from standstill it reaches 0.80 m/s in about 4.5 s and 1.8 m,
+   slows 0.80 → 0.30 before an arc over about 1.7 m, and stops from 0.80 in about 1.6 m
+   (the executor brakes for the end of a move at 0.2 m/s²). A straight of about 3.5 m
+   between two stops reaches 0.80. **At 0.80 m/s the red protective field must be about
+   1 m long** (§5b).
 
    **Slow zones (speed waypoints).** A straight can have its own, lower speed: type it in the
    straight's box in the **Steps** list (empty = the route speed), or in **Straight speed**
    before adding straights. To slow down in the middle of a long straight, use **Speed
    waypoint**: pick the straight, type where the waypoint goes (mm from its start), **Split**;
    do it twice for a zone, then give the middle part e.g. 0.30. The parts drive as one move
-   with **no stop**: the AMR slows *before* the slow part (about 3 m before it from 0.80 to
+   with **no stop**: the AMR slows *before* the slow part (about 1.7 m before it from 0.80 to
    0.30) so it enters it already slow, and speeds up again as soon as it leaves it (about
-   3.3 m to get back to 0.80). Slow parts are drawn orange on the map; a dot marks each
+   1.7 m to get back to 0.80). Slow parts are drawn orange on the map; a dot marks each
    waypoint. Use them for doors, crossings, narrow aisles and wherever people walk. Consecutive straights and arcs are driven as one continuous move with
    no stop between them; a turn in place, a reverse or a wait ends such a chain. Field
    stops and the E-stop are **not** softened.

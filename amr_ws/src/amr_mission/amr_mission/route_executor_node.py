@@ -373,6 +373,8 @@ class RouteExecutor(Node):
     _saved_stop_seq = 0
     _chain_cache = None  # (compiled route, chain_breaks) - see _chain_breaks
     chain_loop_guard_m = CHAIN_LOOP_GUARD_M
+    end_decel = 0.0  # 0 = RPP's approach ramp brakes for the end of a move (see _step_speed)
+    end_min_v = 0.05
     rejoin_heading = math.radians(20.0)
 
     def __init__(self) -> None:
@@ -454,6 +456,12 @@ class RouteExecutor(Node):
         self.declare_parameter("taper_decel", 0.125)
         self.declare_parameter("taper_lead_s", 0.3)
         self.declare_parameter("taper_jerk", 0.1)
+        # The end of a move (2026-11-06): > 0 = the speed limit follows sqrt(2 a d) to the
+        # chain's end at this deceleration (never below end_min_v), instead of RPP's ramp,
+        # which is linear in distance and only works inside the local costmap. The AMR QR
+        # sets it (navigation_layer executor_overrides) and cuts RPP's ramp to 0.3 m.
+        self.declare_parameter("end_decel", 0.0)
+        self.declare_parameter("end_min_v", 0.05)
         # auto-resume after a stop whose cause clears by itself (see the module docstring)
         self.declare_parameter("auto_resume_enabled", True)
         self.declare_parameter("auto_resume_clear_s", 2.0)
@@ -523,6 +531,8 @@ class RouteExecutor(Node):
         self.taper_decel = max(0.05, float(p("taper_decel").value))
         self.taper_lead_s = float(p("taper_lead_s").value)
         self.taper_jerk = max(0.05, float(p("taper_jerk").value))
+        self.end_decel = max(0.0, float(p("end_decel").value))
+        self.end_min_v = max(0.01, float(p("end_min_v").value))
         self.auto_resume_enabled = bool(p("auto_resume_enabled").value)
         self.auto_clear_s = float(p("auto_resume_clear_s").value)
         self.auto_resume_estop = bool(p("auto_resume_estop").value)
@@ -1605,15 +1615,24 @@ class RouteExecutor(Node):
         v = float(st.v_mps)
         if pose is None:
             return v
-        nxt = self._next_in_chain()
-        base = float(self.route.limits.linear_mps)
-        v_next = float(nxt.v_mps) if nxt is not None else min(v, base)
-        if v_next >= v:
-            return v
         along, _ = self._along_cross(st, pose)
-        if st.length_m - along < self._taper_dist(v, v_next):
-            return v_next
-        return v
+        ahead = max(0.0, st.length_m - along)  # to the start of the next chained step
+        cap = v
+        # every slower step further down the chain, not just the next one: a short normal
+        # straight between two slow zones must not let the vehicle speed up and miss the second
+        for nxt in self._chain(self.fsm.step_index)[1:]:
+            vn = float(nxt.v_mps)
+            if vn < cap and ahead < self._taper_dist(v, vn):
+                cap = vn
+            ahead += float(nxt.length_m)
+        # a step faster than the route speed (the old long-straight boost) ends the move at it
+        base = float(self.route.limits.linear_mps)
+        if base < cap and ahead < self._taper_dist(v, base):
+            cap = base
+        if self.end_decel > 0.0:
+            # `ahead` is now the distance to the end of the move: a constant-deceleration stop
+            cap = min(cap, max(self.end_min_v, math.sqrt(2.0 * self.end_decel * ahead)))
+        return cap
 
     def _publish_speed(self, v: float) -> None:
         """A speed for the controller (absolute limit). Sent before every FollowPath and

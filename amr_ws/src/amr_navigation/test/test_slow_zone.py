@@ -45,12 +45,22 @@ def test_a_bad_step_speed_is_refused_naming_the_step(v):
     assert e.value.step_id == "s1"
 
 
-def test_rpp_follows_a_faster_route_speed_and_brakes_no_harder_than_the_mux():
-    assert rt.rpp_overrides(0.60) == {}  # nav2_params.yaml as written (gvievo-01)
-    o = rt.rpp_overrides(0.80)
+def test_rpp_runs_at_the_route_speed_and_its_ramp_fits_in_the_local_costmap():
+    """2026-11-06: a 5.2 m ramp in a 5 x 5 m costmap held 0.80 m/s straights at 0.38 m/s."""
+    import pathlib
+
+    import yaml
+
+    assert rt.rpp_overrides(0.60, qr=False) == {}  # nav2_params.yaml as written (gvievo-01)
+    o = rt.rpp_overrides(0.80, qr=True)
     assert o["FollowPath.desired_linear_vel"] == 0.80
-    d = o["FollowPath.approach_velocity_scaling_dist"]
-    assert d == 5.2 and 0.80**2 / d <= rt.MUX_AUTO_D_MAX
+    cfg = pathlib.Path(__file__).resolve().parents[1] / "config" / "nav2_params.yaml"
+    lc = yaml.safe_load(cfg.read_text())["local_costmap"]["local_costmap"]["ros__parameters"]
+    half = max(lc["width"], lc["height"]) / 2.0
+    assert half == rt.LOCAL_COSTMAP_HALF_M
+    assert o["FollowPath.approach_velocity_scaling_dist"] < half
+    # the executor's stop profile and taper stay within what the mux brakes
+    assert rt.QR_END_DECEL < rt.QR_AUTO_D_MAX
 
 
 def test_gvievo_keeps_060():
