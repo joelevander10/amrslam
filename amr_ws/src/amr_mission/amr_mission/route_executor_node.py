@@ -227,6 +227,17 @@ def checkpoint_mismatch(cp: dict, mission: dict, compiled, passes: int) -> str |
 CHAIN_LOOP_GUARD_M = 0.30
 
 
+def offset_text(pose, ref) -> str:
+    """Where `pose` is relative to the expected pose `ref` (x, y, yaw), in mm along and to the
+    left of ref's heading, and the heading error: "62 mm (ahead +50, left -37), +1.4 deg". Pure."""
+    dx, dy = pose[0] - ref[0], pose[1] - ref[1]
+    c, s = math.cos(ref[2]), math.sin(ref[2])
+    return (
+        f"{math.hypot(dx, dy) * 1000:.0f} mm (ahead {(dx * c + dy * s) * 1000:+.0f}, "
+        f"left {(-dx * s + dy * c) * 1000:+.0f}), {math.degrees(wrap(pose[2] - ref[2])):+.1f} deg"
+    )
+
+
 def chainable(st: CompiledStep) -> bool:
     """Consecutive forward steps (straight, arc, home) drive as ONE FollowPath."""
     return st.type not in (ROTATE, WAIT) and not st.reverse
@@ -374,6 +385,8 @@ class RouteExecutor(Node):
     _chain_cache = None  # (compiled route, chain_breaks) - see _chain_breaks
     chain_loop_guard_m = CHAIN_LOOP_GUARD_M
     end_decel = 0.0  # 0 = RPP's approach ramp brakes for the end of a move (see _step_speed)
+    _start_off = ""  # where the run started, against the route start (run summary)
+    _end_off = ""  # where the last finished step stopped, against its end pose
     end_min_v = 0.05
     rejoin_heading = math.radians(20.0)
 
@@ -1205,6 +1218,10 @@ class RouteExecutor(Node):
                 self._mark_resume()
             else:
                 self._clear_checkpoint("a new run started from the route start")
+                pose, s = self._pose(), self.route.start
+                if pose is not None:
+                    self._start_off = offset_text(pose, (s.x_m, s.y_m, s.yaw_rad))
+                    self.get_logger().info(f"run starts {self._start_off} from the route start")
             self._begin_premove()
         if prefix:
             self.fsm.reason = f"{prefix}: {self.fsm.reason}"
@@ -2016,9 +2033,12 @@ class RouteExecutor(Node):
                         "EXEC_TURN_FAILED",
                     )
                     return
+            if st.type != ROTATE:
+                self._end_off = f"{st.id} {st.type} " + offset_text(pose, st.end)
             self.get_logger().info(
                 f"step {st.id} ({st.type}) done ({self.fsm.progress()}): "
                 f"{d:.3f} m / {math.degrees(a):.2f} deg from expected"
+                + (f"; {offset_text(pose, st.end)}" if st.type != ROTATE else "")
             )
             self.fsm.step_done()
             self._reset_step_state()
@@ -2129,7 +2149,10 @@ class RouteExecutor(Node):
             f"{self.fsm.mission_id or 'run'} {fsm.NAMES[state]} after "
             f"{self._now() - self._run_started:.0f} s; peak cross-track "
             f"{self._run_peak_cross:.2f} m; holds: {holds}"
+            + (f"; started {self._start_off} from the route start" if self._start_off else "")
+            + (f"; last stop {self._end_off} from its end" if self._end_off else "")
         )
+        self._start_off = self._end_off = ""
         self._event_seq += 1
         m.seq = self._event_seq
         self._event_pub.publish(m)

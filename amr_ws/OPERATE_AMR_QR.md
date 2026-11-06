@@ -292,6 +292,22 @@ Keep the vehicle in **MANUAL** until step 6.
 Mode changes (new survey, another map) are refused while a run is READY, EXECUTING,
 PAUSED or BLOCKED. Abort it first.
 
+### Where the AMR stops at the end of a loop
+
+The route's **home is the start pose drawn on the map**, not the spot where the AMR was
+put down. START accepts the AMR up to 0.20 m / 10° away from it, so an AMR placed 0.10 m
+off ends its first loop 0.10 m from where it began, then at the same place on every loop
+after. The run summary (Alarms page, `RUN_SUMMARY`) says both numbers: `started … from the
+route start` and `last stop … from its end`, in mm ahead / left of the AMR's heading.
+- **started** large, **last stop** small: the floor mark is not under the drawn start.
+  Re-mark the floor where the AMR stops after a loop, or redraw the route from the mark.
+- **last stop** large and mostly *left/right*: the AMR finished beside home after the Go
+  home S-curve. End the route with a straight of at least 1.5 m on HOME's line, so the
+  home leg is straight.
+- both small but the AMR is visibly off: localisation at the homepost (few walls in view,
+  or a dynamic area there). Map it again with the area empty, or keep fixed structure in
+  the scanner's view.
+
 ## 5a. Continue a route after Abort or FAULT
 
 When a run is aborted (web **Abort**, or **STOP** in AUTO) or faults part-way, the Run page

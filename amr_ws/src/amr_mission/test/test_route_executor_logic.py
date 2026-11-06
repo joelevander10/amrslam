@@ -763,3 +763,10 @@ def test_a_slow_zone_two_steps_ahead_is_tapered_for_in_time():
     assert n._taper_dist(0.5, 0.2) == pytest.approx(0.5525)
     assert n._step_speed(s1, (5.0, 0.0, 0.0)) == 0.5
     assert n._step_speed(s1, (5.8, 0.0, 0.0)) == 0.2
+
+
+def test_offsets_read_along_and_left_of_the_expected_heading():
+    # expected pose facing +y: 50 mm further along y is "ahead", 30 mm towards -x is "left"
+    assert ren.offset_text((-0.03, 0.05, math.pi / 2 + math.radians(1.5)), (0.0, 0.0, math.pi / 2)) == (
+        "58 mm (ahead +50, left +30), +1.5 deg"
+    )
