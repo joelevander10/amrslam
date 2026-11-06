@@ -143,6 +143,10 @@ panel.destinations
     emergency. An empty route_id is a button with no route yet: a press is
     refused with that reason. Route IDs, not mission IDs, so a new route or
     map revision is picked up once it is saved as a mission.
+    "di": null is a destination with no pushbutton (AMR QR, 2026-11-06: POS 1
+    .. POS 6): the Run page's destination buttons start it, with the same
+    rules (AUTO, no run under way, start gate, pre-move warning). Only on
+    platform qr_analog: panel_node reads a DI for every destination.
 
 gls.xy_scale_m_per_count
     What one XMCL/YMCL count is, in metres. 0 means NOT MEASURED, and it is
@@ -881,7 +885,7 @@ def _read_destinations(raw, where):
         name = _coerce(d["name"], str, f"{at}.name").strip()
         if not name:
             raise ConfigError(f"{at}.name: must not be empty")
-        di = _coerce(d["di"], int, f"{at}.di")
+        di = None if d["di"] is None else _coerce(d["di"], int, f"{at}.di")  # None: no button
         route_id = _coerce(d["route_id"], str, f"{at}.route_id").strip()
         # the map store's own rule for a file name (amr_navigation/store._plain)
         if route_id and (re.search(r"[/\\\0]", route_id) or route_id.startswith(".")):
@@ -1163,6 +1167,10 @@ def _validate(ns):
     # otherwise present as phantom presses - a Reset edge every time Start is
     # pushed - which is a miserable thing to debug from the vehicle.
     for name, ch, _route in g("PANEL_DESTINATIONS"):
+        if ch is None:  # a web-only destination (no pushbutton): qr_analog only, checked there
+            check(g("PLATFORM") == PLATFORM_QR,
+                  f"panel.destinations {name}: di null (no pushbutton) is for platform qr_analog only")
+            continue
         key = f"destination {name}"
         check(0 <= ch < g("DIO_NUM_DI"),
               f"panel.destinations {name} di ({ch}) must be a channel in 0..{g('DIO_NUM_DI') - 1}")
@@ -1181,7 +1189,7 @@ def _validate(ns):
               f"panel.di_continue ({g('PANEL_DI_CONTINUE')}) is a pendant channel: "
               "every jog press would also release a waiting run")
         for name, ch, _route in g("PANEL_DESTINATIONS"):
-            check(ch not in jog,
+            check(ch is None or ch not in jog,
                   f"panel.destinations {name} di ({ch}) is a pendant channel: "
                   "every jog press would also start a run")
     check(0.5 <= g("PANEL_ESTOP_RESET_TIMEOUT_S") <= 30.0,
@@ -1754,7 +1762,7 @@ def describe():
         if section == "panel":
             dests = g["PANEL_DESTINATIONS"]
             rows.append(_row(section, "destinations", "PANEL_DESTINATIONS", dests, notes,
-                             text=" · ".join(f"DI{ch:02d} {n} → {r or '(no route)'}"
+                             text=" · ".join(f"{'web' if ch is None else f'DI{ch:02d}'} {n} → {r or '(no route)'}"
                                                   for n, ch, r in dests) or "none",
                              unit=""))
         if section == "lidar":

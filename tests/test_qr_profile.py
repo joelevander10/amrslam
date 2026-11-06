@@ -51,8 +51,9 @@ def test_qr_profile():
     config.load(config.profile_path("amr-qr-01"))
     try:
         check("amr-qr-01 is platform qr_analog", config.PLATFORM == config.PLATFORM_QR)
-        check("no GLS camera, no destination buttons on the QR",
-              not config.GLS_ENABLED and config.PANEL_DESTINATIONS == ())
+        check("no GLS camera; POS 1..6 are web destinations (no pushbuttons) on routes pos1..pos6",
+              not config.GLS_ENABLED and config.PANEL_DESTINATIONS
+              == tuple((f"POS {i}", None, f"pos{i}") for i in range(1, 7)))
         # effective track from the 2026-11-05 spin test (wheels 0.37652 m apart, see config notes)
         check("track and wheel are the QR's", (config.TRACK_M, config.WHEEL_DIA_M) == (0.4263, 0.18))
         check("the right motor is mirrored (QR wiring)", config.INVERT_RIGHT and not config.INVERT_LEFT)
@@ -72,6 +73,8 @@ def test_qr_profile():
             "missing top-level key(s): ['platform']", "agv-01")
     refuses("an unknown platform is refused", agv, lambda d: d.update(platform="kinco"),
             "platform: expected one of", "agv-01")
+    refuses("a destination without a pushbutton is refused on blvr_canopen", agv,
+            lambda d: d["panel"]["destinations"][0].update(di=None), "qr_analog only", "agv-01")
     refuses("qr_base in a blvr_canopen profile is refused", agv,
             lambda d: d.update(qr_base=copy.deepcopy(qr["qr_base"])), "qr_base belongs only", "agv-01")
     qr_refuses("a qr_analog profile without qr_base is refused", lambda d: d.pop("qr_base"),

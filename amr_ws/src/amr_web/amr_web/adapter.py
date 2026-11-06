@@ -48,6 +48,7 @@ from amr_interfaces.msg import (
     WheelStates,
 )
 from amr_interfaces.srv import (
+    Destination,
     GetOperation,
     PlanCommissioning,
     RecordLabel,
@@ -317,6 +318,7 @@ class RosAdapter(Node):
             "brakes_release": self.create_client(Trigger, "/drives/disarm", callback_group=g),
             "brakes_engage": self.create_client(Trigger, "/drives/arm", callback_group=g),
             "record_label": self.create_client(RecordLabel, "/amr/labels/record", callback_group=g),
+            "destination": self.create_client(Destination, "/amr/destination", callback_group=g),
             # supervisor (unified plan §4.2)
             "mode": self.create_client(RequestMode, "/amr/mode/request", callback_group=g),
             "survey": self.create_client(RequestSurvey, "/amr/supervisor/survey", callback_group=g),
@@ -933,6 +935,14 @@ class RosAdapter(Node):
             if r is None
             else (bool(r.ok), r.message)
         )
+
+    def go_destination(self, index: int) -> tuple[bool, str]:
+        """A destination button on the Run page: the executor starts that destination's mission
+        exactly as its pushbutton would (AUTO, no run under way, start gate, pre-move warning)."""
+        r = self._call("destination", Destination.Request(index=int(index)))
+        if r is None:
+            return False, "executor unavailable (navigation not running?)"
+        return bool(r.ok), r.message
 
     def brakes_release(self) -> tuple[bool, str]:
         return self._trigger("brakes_release")

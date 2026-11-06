@@ -68,6 +68,8 @@ def executor_overrides() -> dict:
             "start_gate_m": 0.20,
             "start_gate_deg": 10.0,
             "web_continue": True,
+            # POS 1..6 (panel.destinations without a DI): the Run page's buttons start them
+            "web_destinations": True,
             "field_output_index": protective,
             # speed changes (2026-11-06): the taper matches the mux's AUTO braking, and the
             # executor brakes for the end of a move itself (RPP's ramp is cut to 0.3 m)

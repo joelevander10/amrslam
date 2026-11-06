@@ -147,7 +147,7 @@ MODULES = [
 # + 31 (AMR QR port, 2026-11-04): test_qr_profile - the platform key and the AMR QR
 #   profile (qr_base section, platform refusals, each qr_base bound).
 # + 1 (2026-11-05): test_qr_profile, qr_base.wheel_scale_* bounds (the straight-line trim).
-EXPECTED_CHECKS = 763
+EXPECTED_CHECKS = 764
 
 
 # An exception on a helper thread only prints a traceback by default - the

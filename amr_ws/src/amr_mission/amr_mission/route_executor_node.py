@@ -115,7 +115,7 @@ from amr_interfaces.msg import (
     RunState,
     WheelStates,
 )
-from amr_interfaces.srv import RecordLabel, RunMission
+from amr_interfaces.srv import Destination, RecordLabel, RunMission
 
 try:  # the nanoScan3 driver's output paths (OSSD state); absent in sim and on the laptop
     from sick_safetyscanners2_interfaces.msg import OutputPaths
@@ -388,6 +388,8 @@ class RouteExecutor(Node):
     _start_off = ""  # where the run started, against the route start (run summary)
     _end_off = ""  # where the last finished step stopped, against its end pose
     end_min_v = 0.05
+    web_destinations = False
+    _last_dest_why = ""
     rejoin_heading = math.radians(20.0)
 
     def __init__(self) -> None:
@@ -492,6 +494,8 @@ class RouteExecutor(Node):
         # motion starts only from the panel; on for the AMR QR, whose panel has no Continue
         # button (navigation_layer.executor_overrides).
         self.declare_parameter("web_continue", False)
+        # the Run page's destination buttons (AMR QR: POS 1..6, panel.destinations without a DI)
+        self.declare_parameter("web_destinations", False)
         # A controller abort (path blocked) is retried until the path clears, with no limit
         # (owner 2026-11-03, replaced 3 retries then FAULT). Travelling this far since a
         # blockage began ends it, for the "blocked N s" the operator reads.
@@ -553,6 +557,7 @@ class RouteExecutor(Node):
         self.drives_age = float(p("drives_age_limit_s").value)
         self.premove_s = max(0.0, float(p("premove_s").value))
         self.web_continue = bool(p("web_continue").value)
+        self.web_destinations = bool(p("web_destinations").value)
         self.premove_timeout_s = max(self.premove_s, float(p("premove_timeout_s").value))
         self._premove_since: float | None = None
         self.field_index = int(p("field_output_index").value)
@@ -664,6 +669,7 @@ class RouteExecutor(Node):
         self.create_service(Trigger, "/amr/ack_fault", self._srv_ack, callback_group=srv)
         self.create_service(Trigger, "/amr/continue", self._srv_continue, callback_group=srv)
         self.create_service(Trigger, "/amr/rejoin", self._srv_rejoin, callback_group=srv)
+        self.create_service(Destination, "/amr/destination", self._srv_destination, callback_group=srv)
         self.create_service(RecordLabel, "/amr/labels/record", self._srv_record_label, callback_group=srv)
         self.create_timer(0.1, self._tick, callback_group=srv)
         self.create_timer(0.5, self._publish_state, callback_group=io)
@@ -945,6 +951,25 @@ class RouteExecutor(Node):
             self._start_edge("web Continue")
             res.success = self.fsm.state != fsm.WAITING
             res.message = self.fsm.reason
+            return res
+
+    def _srv_destination(self, req, res):
+        """A destination button on the Run page (web_destinations, AMR QR POS 1..6): exactly
+        what that destination's pushbutton does (_dest_edge) - AUTO, no run under way, the
+        start gate, the prerequisites, the pre-move warning."""
+        with self._lock:
+            if not self.web_destinations:
+                res.ok, res.message = False, "web destination buttons are off on this vehicle"
+                return res
+            k = int(req.index)
+            dests = vehicle_config.PANEL_DESTINATIONS
+            if not 1 <= k <= len(dests):
+                res.ok, res.message = False, f"no destination {k} (panel.destinations has {len(dests)})"
+                return res
+            before, self._last_dest_why = self.fsm.state, ""
+            self._dest_edge(k)
+            res.ok = self.fsm.state == fsm.EXECUTING and before != fsm.EXECUTING
+            res.message = self.fsm.reason if res.ok else (self._last_dest_why or self.fsm.reason)
             return res
 
     def _srv_rejoin(self, _req, res: Trigger.Response):
@@ -1297,6 +1322,7 @@ class RouteExecutor(Node):
         """A destination press that started nothing. Shown as the run reason only when no run
         is under way; always logged and reported as an operator event."""
         self.get_logger().warn(why)
+        self._last_dest_why = why
         if touch_fsm:
             self.fsm.reason = why
             self._log_state()

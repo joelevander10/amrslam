@@ -236,13 +236,31 @@ def create_app(
 
     gls = _gls_enabled()
 
+    def _web_destinations() -> list[dict]:
+        """The destinations the Run page has buttons for (AMR QR: POS 1..6, panel.destinations
+        with no pushbutton), 1-based as the executor counts them."""
+        if not qr:
+            return []
+        try:
+            from agv_core import config  # noqa: PLC0415
+
+            return [
+                {"index": i, "name": n, "route_id": r}
+                for i, (n, ch, r) in enumerate(config.PANEL_DESTINATIONS, start=1)
+                if ch is None
+            ]
+        except Exception:  # noqa: BLE001
+            return []
+
+    destinations = _web_destinations()
+
     @app.context_processor
     def _inject_role():
         """Every template knows the role, so base.html can show the operator's three
         tabs or the engineer's ten without a second request - and whether this is an AMR QR
         (push mode on the Manual page)."""
         return {"role": _role(), "OPERATOR": rolemod.OPERATOR, "ENGINEER": rolemod.ENGINEER, "qr": qr,
-                "gls": gls}
+                "gls": gls, "destinations": destinations}
 
     def _banner() -> dict | None:
         try:
@@ -1270,6 +1288,22 @@ def create_app(
         if why:
             return _result(False, why, 409)
         return _call(adapter.continue_wait)
+
+    @app.post("/api/mission/destination")
+    def api_mission_destination():
+        """A destination button (AMR QR POS 1..6): the executor loads the newest mission of
+        that destination's route and starts it as its pushbutton would - AUTO only, no run
+        under way, the start gate, the prerequisites and the 2 s pre-move warning."""
+        d, err = _body()
+        if err:
+            return err
+        k = d.get("index")
+        if isinstance(k, bool) or not isinstance(k, int) or k not in [x["index"] for x in destinations]:
+            return _result(False, f"no destination button {k!r} on this vehicle", 404)
+        why = _emergency_refusal()
+        if why:
+            return _result(False, why, 409)
+        return _call(adapter.go_destination, k)
 
     # push mode (AMR QR): release / re-apply the brakes (drives disarmed / armed). No velocity.
     def _push_refusal() -> str:

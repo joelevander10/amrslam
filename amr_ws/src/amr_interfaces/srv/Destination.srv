@@ -1,0 +1,6 @@
+# A destination by its 1-based index in panel.destinations: the Run page's destination
+# buttons (AMR QR POS 1..6, 2026-11-06). The executor treats it as that destination's button.
+uint8 index
+---
+bool ok
+string message

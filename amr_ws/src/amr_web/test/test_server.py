@@ -937,3 +937,28 @@ def test_route_geometry_for_the_measure_tool_is_compiled_only(env):
     assert steps["s3"]["signed_angle_deg"] == pytest.approx(45.0)
     assert len(stub.previews) == previews  # nothing published to ROS
     assert client.get("/api/maps/nope/1/routes/geometry").status_code == 404
+
+
+def test_destination_buttons_are_the_qr_pos_list(env, tmp_path, monkeypatch):
+    """AMR QR POS 1..6 (panel.destinations without a pushbutton): one button each on the Run
+    page; a press asks the executor to start that destination. Not on gvievo-01."""
+    client, stub, maps, *_ = env
+    assert client.post("/api/mission/destination", json={"index": 1}).status_code == 404
+    page = client.get("/run").get_data(as_text=True)
+    assert '<div id="dest-box" hidden>' in page and "data-dest=" not in page
+    from agv_core import config  # noqa: PLC0415
+
+    monkeypatch.setattr(config, "PLATFORM", config.PLATFORM_QR)
+    monkeypatch.setattr(config, "GLS_ENABLED", False)
+    dests = tuple((f"POS {i}", None, f"pos{i}") for i in range(1, 7)) + (("DOCK", 10, "dock"),)
+    monkeypatch.setattr(config, "PANEL_DESTINATIONS", dests)
+    app = create_app(stub, maps, str(tmp_path / "footprint.yaml"), state_dir=str(tmp_path / "state"))
+    app.config["TESTING"] = True
+    qr = app.test_client()
+    page = qr.get("/run").get_data(as_text=True)
+    assert all(f'data-dest="{i}" data-route="pos{i}"' in page for i in range(1, 7))
+    assert 'data-route="dock"' not in page  # a pushbutton destination has no web button
+    r = qr.post("/api/mission/destination", json={"index": 3})
+    assert r.status_code == 200 and stub.calls[-1] == ("go_destination", (3,))
+    for bad in (7, 0, "3", True, None):
+        assert qr.post("/api/mission/destination", json={"index": bad}).status_code == 404

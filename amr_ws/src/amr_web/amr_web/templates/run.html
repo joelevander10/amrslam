@@ -62,6 +62,15 @@
     </div>
     <div class="tabpane" data-tab="mission" hidden>
       <h2>Mission <small>route executor</small></h2>
+      {# AMR QR POS 1..6 (panel.destinations without a pushbutton): one press loads the newest
+         mission of that POS's route and starts it - selector AUTO, no run under way, the AMR on
+         the route start; 2 s warning before it moves. #}
+      <div id="dest-box"{% if not destinations %} hidden{% endif %}>
+      <h3>Go to <small>selector AUTO · AMR on the homepost · moves after a 2 s warning</small></h3>
+      <div class="bar dest-bar" id="dest-bar" style="margin-top:0">{% for d in destinations %}<button class="big run" data-dest="{{ d.index }}" data-route="{{ d.route_id }}" title="Start the newest mission of route {{ d.route_id }}">{{ d.name }}</button>{% endfor %}</div>
+      <p id="dest-note" class="note"></p>
+      <div class="sep"></div>
+      </div>
       <label class="field">Mission <select id="run-mission"></select></label>
       <div class="bar"><button id="btn-run-load" class="big run">Load (READY)</button>{% if role == ENGINEER %}<button id="btn-mission-remove" class="tool danger" title="Remove the selected mission (moved to the maps trash; its map and route stay)">Remove mission</button>{% endif %}</div>
       {# After an Abort or a FAULT (acknowledged): load the same mission at the step where it
@@ -73,7 +82,7 @@
       <p id="run-emg" class="note bad" hidden></p>
       <div id="run-state" class="tel-grid" style="margin-top:1rem"></div>
       <p id="run-reason" class="note"></p>
-      <div class="warn-box" style="margin-top:1rem"><b>Motion starts only from the physical panel</b>: selector AUTO, then Start. Pause / abort / prepare-resume below; Start confirms a prepared resume.</div>
+      <div class="warn-box" style="margin-top:1rem"><b>Motion starts only from the physical panel</b>{% if destinations %} or a <b>Go to</b> button{% endif %}: selector AUTO, then Start. Pause / abort / prepare-resume below; Start confirms a prepared resume.</div>
       <div class="bar"><button id="btn-run-resume" class="big">Prepare resume</button></div>
     </div>
     <div class="tools-foot">

@@ -100,7 +100,14 @@
     "di_estop_ok": 0,
     "di_continue": 9,
     "estop_reset_timeout_s": 3.0,
-    "destinations": []
+    "destinations": [
+      {"name": "POS 1", "di": null, "route_id": "pos1"},
+      {"name": "POS 2", "di": null, "route_id": "pos2"},
+      {"name": "POS 3", "di": null, "route_id": "pos3"},
+      {"name": "POS 4", "di": null, "route_id": "pos4"},
+      {"name": "POS 5", "di": null, "route_id": "pos5"},
+      {"name": "POS 6", "di": null, "route_id": "pos6"}
+    ]
   },
   "horn": {
     "enabled": false,

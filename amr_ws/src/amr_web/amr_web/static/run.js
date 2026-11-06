@@ -83,6 +83,23 @@ if ($('btn-mission-remove')) $('btn-mission-remove').onclick = async () => {
   const id = $('run-mission').value; if (!id) { log('pick a mission first', 'bad'); return; }
   if (await removeConfirmed(`/api/missions/${encodeURIComponent(id)}/delete`, {})) loadMissions();
 };
+// Go to POS n (AMR QR destinations): the executor loads the newest mission of that route and
+// starts it as a destination pushbutton would; it refuses (and says why) outside AUTO, during
+// a run or off the route start. A POS with no saved mission on the active map is greyed.
+if ($('dest-bar')) $('dest-bar').addEventListener('click', e => {
+  const b = e.target.closest ? e.target.closest('[data-dest]') : null; if (!b || b.disabled) return;
+  api('/api/mission/destination', { index: +b.dataset.dest }).then(r => log(`${b.textContent}: ${r.data.message}`, r.status === 200 ? '' : 'bad'));
+});
+function destAvailability(usable) {
+  const bar = $('dest-bar'); if (!bar || !bar.querySelectorAll) return;
+  const routes = new Set(usable.map(m => m.route.id)), missing = [];
+  bar.querySelectorAll('[data-dest]').forEach(b => {
+    const ok = routes.has(b.dataset.route); b.disabled = !ok;
+    b.title = ok ? `Start the newest mission of route ${b.dataset.route}` : `no mission for route ${b.dataset.route} on the active map yet`;
+    if (!ok) missing.push(b.textContent);
+  });
+  $('dest-note').textContent = missing.length ? `${missing.join(', ')}: no mission yet (draw route pos<n> on this map and Create mission)` : '';
+}
 $('btn-run-pause').onclick = () => api('/api/mission/pause').then(r => log(r.data.message));
 $('btn-run-resume').onclick = () => api('/api/mission/resume').then(r => log(r.data.message));
 $('btn-run-abort').onclick = () => api('/api/mission/abort').then(r => log(r.data.message));
@@ -230,6 +247,7 @@ async function loadMissions(prefer) {
   // only missions for the ACTIVE map can load; the executor refuses the rest anyway (P4)
   const usable = activeMap ? data.filter(m => m.map.id === activeMap.id && +m.map.revision === +activeMap.rev) : [];
   usable.forEach(m => { const o = document.createElement('option'); o.value = m.mission_id; o.textContent = `${m.mission_id}  (${m.map.id} rev${m.map.revision} · ${m.route.id} rev${m.route.revision})`; sel.appendChild(o); });
+  destAvailability(usable);
   if (!usable.length) { const o = document.createElement('option'); o.value = ''; o.textContent = activeMap ? `no missions for ${activeMap.id} rev${activeMap.rev}` : 'activate a map first'; sel.appendChild(o); }
   if (keep && usable.some(m => m.mission_id === keep)) sel.value = keep;
   await sel.onchange({ target: sel });

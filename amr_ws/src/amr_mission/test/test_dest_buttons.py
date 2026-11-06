@@ -163,3 +163,28 @@ def test_a_second_press_starts_the_ready_mission_without_reloading(monkeypatch, 
     n.fsm.state = fsm.DONE
     press(n, 2)
     assert n.loaded == [mid, newer], "a newer mission, or a finished run, loads again"
+
+
+def test_the_web_destination_button_is_the_pushbutton(monkeypatch, tmp_path):
+    """AMR QR POS 1..6 (2026-11-06): /amr/destination with web_destinations on does exactly
+    what the destination's pushbutton does; off (gvievo-01) it refuses."""
+    from amr_interfaces.srv import Destination
+
+    n = node(monkeypatch, tmp_path)
+    newest = save(tmp_path, "route-itg-02", 2)
+    req, res = Destination.Request(), Destination.Response()
+    req.index = 2
+    out = n._srv_destination(req, res)
+    assert not out.ok and "off on this vehicle" in out.message and n.loaded == []
+    n.web_destinations = True
+    n._panel = PanelState()
+    n._panel.valid, n._panel.mode_auto, n._panel.estop_ok = True, False, True
+    n._panel_t = n.clock[0]
+    out = n._srv_destination(req, Destination.Response())
+    assert not out.ok and "not AUTO" in out.message  # MANUAL: refused with the reason
+    n._panel.mode_auto = True
+    out = n._srv_destination(req, Destination.Response())
+    assert out.ok and n.loaded == [newest] and n.fsm.state == fsm.EXECUTING
+    req.index = 9
+    out = n._srv_destination(req, Destination.Response())
+    assert not out.ok and "no destination 9" in out.message
