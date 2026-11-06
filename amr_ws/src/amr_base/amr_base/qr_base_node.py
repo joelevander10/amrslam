@@ -74,6 +74,7 @@ from std_srvs.srv import Trigger
 from amr_base import arm_policy, canopen, gating, qr_motor
 from amr_base.qr_analog import AnalogOut
 from amr_base.qr_encoders import EncoderPair
+from amr_base.qr_keypad import KeypadReader, KeypadState
 from amr_base.qr_panel import VirtualSelector
 from amr_base.wit_imu import NO_DATA, WitParser, YawRateSource
 from amr_interfaces.msg import (
@@ -124,6 +125,8 @@ def int32(x: int) -> int:
 
 
 class QrBaseNode(Node):
+    keypad = None  # KeypadState when qr_base.keypad_enabled (class default: tests build with __new__)
+
     def __init__(self) -> None:
         super().__init__("qr_base_node")
         if config.PLATFORM != config.PLATFORM_QR:
@@ -251,6 +254,20 @@ class QrBaseNode(Node):
         self._threads = [threading.Thread(target=self._can_run, name="can", daemon=True)]
         if self.imu_enabled:
             self._threads.append(threading.Thread(target=self._imu_run, name="imu", daemon=True))
+        # USB keypad (qr_keypad.py): a second pendant + the panel buttons. Its own thread; a
+        # dead or missing reader only means "nothing held" (heartbeat), never a stuck key.
+        if config.QR_KEYPAD_ENABLED:
+            self.keypad = KeypadState(config.QR_KEYPAD_PANEL_KEYS)
+            reader = KeypadReader(
+                self.keypad,
+                config.QR_KEYPAD_NAME_CONTAINS,
+                config.QR_KEYPAD_EXCLUDE_CONTAINS,
+                config.QR_KEYPAD_GRAB,
+                self._keypad_log,
+            )
+            self._threads.append(
+                threading.Thread(target=self._keypad_run, args=(reader,), name="keypad", daemon=True)
+            )
         self._control = threading.Thread(target=self._control_run, name="control", daemon=True)
         self._threads.append(self._control)
         for t in self._threads:
@@ -263,6 +280,22 @@ class QrBaseNode(Node):
             f"IMU {config.QR_IMU_PORT if self.imu_enabled else 'disabled'}; "
             f"E-stop DI{config.QR_DI_ESTOP}, START DI{config.PANEL_DI_START}, STOP DI{config.PANEL_DI_RESET}"
         )
+
+    def _keypad_log(self, level: str, msg: str) -> None:
+        # one severity per call site (rclpy)
+        if level == "warn":
+            self.get_logger().warning(msg)
+        else:
+            self.get_logger().info(msg)
+
+    def _keypad_run(self, reader: KeypadReader) -> None:
+        while not self._stop.is_set():
+            try:
+                reader.run(self._stop)
+                return  # stop set, or no python3-evdev (logged)
+            except Exception as e:  # noqa: BLE001 - the keypad must never take the base down
+                self.get_logger().error(f"USB keypad reader: {e!r}; restarting in 2 s")
+                self._stop.wait(2.0)
 
     def _check_threads(self) -> None:
         if not self._control.is_alive() and not self._stop.is_set():
@@ -436,7 +469,10 @@ class QrBaseNode(Node):
                 now = time.monotonic()
                 self._serve_requests()
                 snap = self.dio.snapshot()
-                frame = self.selector.tick(snap, now)
+                if self.keypad is not None:
+                    frame = self.selector.tick(snap, now, self.keypad.image(now))
+                else:
+                    frame = self.selector.tick(snap, now)
                 if frame.changed:
                     self.get_logger().info(frame.changed)
                     lvl = (
@@ -775,6 +811,21 @@ class QrBaseNode(Node):
             KeyValue(key="gyro_sign", value=str(self.gyro_sign)),
         ]
         arr.status.append(imu_st)
+        if self.keypad is not None:
+            kp = self.keypad.image(now)
+            kp_st = DiagnosticStatus(name="qr/keypad", hardware_id=config.QR_KEYPAD_NAME_CONTAINS or "any")
+            kp_st.level = (
+                DiagnosticStatus.WARN if (kp.estop or not self.keypad.devices) else DiagnosticStatus.OK
+            )
+            kp_st.message = "keypad E-STOP latched (ENTER releases)" if kp.estop else self.keypad.detail
+            held = [n for n in ("fwd", "rvs", "left", "right", "start", "stop") if getattr(kp, n)]
+            kp_st.values = [
+                KeyValue(key="devices", value=", ".join(self.keypad.devices)),
+                KeyValue(key="held", value=" ".join(held)),
+                KeyValue(key="estop", value=str(kp.estop)),
+                KeyValue(key="panel_keys", value=str(self.keypad.panel_keys)),
+            ]
+            arr.status.append(kp_st)
         self._safe_publish(self._pub_diag, arr)
 
     def stop(self) -> None:

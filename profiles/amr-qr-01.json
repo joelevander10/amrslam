@@ -227,6 +227,11 @@
     "zero_rad_s": 0.05,
     "runaway_rad_s": 1.0,
     "runaway_s": 0.3,
-    "stall_s": 2.0
+    "stall_s": 2.0,
+    "keypad_enabled": true,
+    "keypad_name_contains": "XING WEI",
+    "keypad_exclude_contains": "AT Translated Set 2",
+    "keypad_grab": true,
+    "keypad_panel_keys": true
   }
 }

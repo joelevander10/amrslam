@@ -22,6 +22,8 @@ WatchdogSec=30
 TimeoutStartSec=180
 User=amrslam
 Group=amrslam
+# /dev/input/event* is root:input 0660: the AMR QR's USB keypad (amr_base qr_keypad).
+SupplementaryGroups=input
 WorkingDirectory=/home/amrslam/agv_can/amr_ws
 Environment=HOME=/home/amrslam
 EnvironmentFile=/home/amrslam/agv_can/amr_ws/deploy/amr.env

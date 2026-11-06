@@ -31,6 +31,13 @@ Trust rules, same as core/panel.PanelScan:
 E-stop does not move the selector (a physical switch would not move either); it takes the
 drives out of operation in qr_base_node, which is what the executor already treats as
 "no torque" (BLOCKED, resume on Start once released).
+
+USB keypad (qr_keypad.py, optional `keypad` argument of tick): its G / ENTER levels are ORed
+into START / STOP after the debounce, so they follow every rule above (baseline included);
+a Q press toggles the selector as STOP-in-AUTO / START-in-MANUAL would, but never queues -
+a press while the image is untrusted or STOP is held is dropped; its E latch is ORed into
+the E-stop; its direction keys are ORed into the pendant levels. All only with a trusted
+DIO image: the keypad never makes an untrusted panel usable.
 """
 
 from __future__ import annotations
@@ -38,6 +45,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from agv_core import panel as panel_core
+
+from amr_base.qr_keypad import IDLE as KEYPAD_IDLE
+from amr_base.qr_keypad import KeypadImage
 
 MANUAL, AUTO = "manual", "auto"
 
@@ -80,8 +90,9 @@ class VirtualSelector:
         self._last_valid: bool | None = None
         self._last_comms: bool | None = None
         self._last_estop: bool | None = None
+        self._kp_toggles: int | None = None  # Q counter already acted on
 
-    def tick(self, snapshot: dict, now: float) -> QrPanelFrame:
+    def tick(self, snapshot: dict, now: float, keypad: KeypadImage = KEYPAD_IDLE) -> QrPanelFrame:
         comms = bool(snapshot.get("comms_ok"))
         lv = self.levels.scan(snapshot.get("di"), comms)
         self.seq += 1
@@ -104,7 +115,9 @@ class VirtualSelector:
                 notes.append("selector MANUAL (no trusted panel image)")
         else:
             start, stop, estop_raw = lv
+            start, stop = start or keypad.start, stop or keypad.stop
             estop = (not estop_raw) if self.estop_active_low else bool(estop_raw)
+            estop = estop or keypad.estop
             if self._prev is None:
                 self._prev = (start, stop)  # baseline: held buttons are not presses
                 self._start_consumed = start
@@ -149,8 +162,20 @@ class VirtualSelector:
                         self._start_down_t, self._start_consumed = None, False
                 if not start and self.mode == AUTO:
                     self._start_consumed = False
+            if self._kp_toggles is not None and keypad.toggles != self._kp_toggles and not stop:
+                self._start_down_t = None
+                self._start_consumed = start
+                if self.mode == AUTO:
+                    self.mode = MANUAL
+                    notes.append("selector MANUAL (keypad Q)")
+                else:
+                    self.mode = AUTO
+                    notes.append("selector AUTO (keypad Q)")
+        self._kp_toggles = keypad.toggles
         if valid and estop != self._last_estop:
             notes.append("E-STOP " + ("ACTIVE" if estop else "released"))
+            if estop and keypad.estop:
+                notes[-1] += " (keypad E)"
             self._last_estop = estop
         if not valid:
             self._last_estop = None
@@ -160,6 +185,13 @@ class VirtualSelector:
             levels = self.pendant.scan(snapshot.get("di"), comms)
             if levels is not None:
                 pend = panel_core.pendant_intent(*levels)
+        if valid and (keypad.fwd or keypad.rvs or keypad.left or keypad.right):
+            pend = panel_core.pendant_intent(
+                pend.fwd or keypad.fwd,
+                pend.rvs or keypad.rvs,
+                pend.left or keypad.left,
+                pend.right or keypad.right,
+            )
         return QrPanelFrame(
             valid=valid,
             mode_auto=self.mode == AUTO,

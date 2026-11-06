@@ -306,6 +306,17 @@ sudo systemctl enable --now amr.service
 journalctl -u amr.service -f
 ```
 The sudoers line lets the web page's **Restart** button restart `amr.service`.
+
+**20a. USB keypad (optional, KIM2A keypad)**
+```bash
+sudo apt install -y python3-evdev
+sudo usermod -aG input amrslam      # for running by hand; the service already has SupplementaryGroups=input
+# plug the dongle in, then (log out/in once after usermod):
+ros2 run amr_base qr_keypad --list  # the keypad must show USED
+```
+If it shows `kbd` but not `USED`, put part of its name in `qr_base.keypad_name_contains`
+(profile `amr-qr-01.json`, now `"XING WEI"`); `""` uses every USB keyboard. Key map:
+[OPERATE_AMR_QR.md §2a](OPERATE_AMR_QR.md).
 Open `http://<robot-ip>:5001/` and press **↻** once. **Home** should show Mode `IDLE`, and
 the left rail Selector `MANUAL` and Drives `ARMED`. Next: [OPERATE_AMR_QR.md](OPERATE_AMR_QR.md).
 

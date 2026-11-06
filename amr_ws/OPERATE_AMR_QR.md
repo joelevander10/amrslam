@@ -21,6 +21,8 @@ reset of KYB are switched off: the AMR QR has none of that hardware.
 | **STOP** | **Reset**: acknowledge a route FAULT | back to **MANUAL** (a running route is aborted) |
 | **E-stop** | motors 0 V + brake | same; the route is held (BLOCKED), continue with START after release |
 
+The USB keypad has the same buttons: **G** = START, **ENTER** = STOP, **E** = E-stop (§2a).
+
 - **After power-up the vehicle is always in MANUAL.**
 - To run a route: START once to switch to AUTO, then START again to start it.
 - A button already held at power-up, or when the I/O link comes back, does nothing until
@@ -95,6 +97,38 @@ On the **Manual**, **Maps** or **Run** page (selector must be MANUAL):
 - The speed menu offers 0.10–0.40 m/s; the AMR QR's top speed is 0.53 m/s
   (`vehicle.motor_max_rpm` 1680).
 - While surveying, spins are capped at 0.27 rad/s.
+
+### 2a. USB keypad (same keypad and keys as the KIM2A)
+
+Plug the keypad's USB dongle into the AMR PC. It is found by itself within 2 s (also when
+plugged in or replugged while running); the journal says `USB keypad connected: '…'`.
+
+| Key | Does |
+|---|---|
+| **W** / ↑ | forward (hold) |
+| **S** / ↓ | reverse (hold) |
+| **A** / ← · **D** / → | spin left / right (hold) |
+| **W+A**, **W+D**, **S+A**, **S+D** | curve |
+| **G** | the **START** button: MANUAL → AUTO, then in AUTO starts / resumes the route |
+| **ENTER** | the **STOP** button: AUTO → MANUAL (aborts a running route); in MANUAL = Reset |
+| **Q** | switch MANUAL ↔ AUTO |
+| **E** | **keypad E-stop** (latched). **ENTER** releases it; that press does nothing else |
+
+- Driving keys work in **MANUAL only**, like the panel pendant: 0.50 m/s straight,
+  0.39 rad/s spin, soft S-curve start and stop. Releasing every key stops the vehicle.
+- A held key outranks the web jog. After any E-stop, let go of every key once before it
+  drives again.
+- The other KIM2A keys (1–5 speed, K/L, T/Y, R, F1–F12, the trolley keys) do nothing here.
+- The keypad E is a **software** stop. The red E-stop button and the scanner are the real
+  safety stops.
+- The scanner fields do not slow a manual drive; the lidar's own safety output still stops
+  the motors. If that cuts in while you keep holding a key, the wheels latch
+  `wheel stalled` after 2 s: let go, clear the obstacle, then
+  `ros2 service call /drives/ack_fault std_srvs/srv/Trigger`.
+- Not reacting? `ros2 topic echo /diagnostics | grep -A12 qr/keypad` shows the device and
+  the keys it sees held. `ros2 run amr_base qr_keypad --list` (service stopped) shows every
+  input device and which one the profile uses (`qr_base.keypad_name_contains`, now
+  `XING WEI`).
 
 ## 3. Make a map (Maps page)
 

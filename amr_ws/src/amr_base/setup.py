@@ -27,6 +27,7 @@ setup(
             "commissioning_node = amr_base.commissioning_node:main",
             "qr_base_node = amr_base.qr_base_node:main",
             "qr_calibrate = amr_base.qr_calibrate:main",
+            "qr_keypad = amr_base.qr_keypad:main",
             "wasd_teleop = amr_base.wasd_teleop:main",
         ],
     },

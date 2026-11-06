@@ -469,6 +469,19 @@ qr_base.*
     estop_active_low) takes the drives out of operation; it does not move the
     selector.
 
+    USB keypad (keypad_*, amr_base qr_keypad): the KIM2A / Kayaba wireless
+    keypad on the QR PC. W/A/S/D and the arrows are a second pendant (hold to
+    drive, MANUAL only, pendant speeds and S-curve; W+A etc. curve); G is the
+    START button, ENTER the STOP button, Q switches MANUAL/AUTO, E latches a
+    keypad E-stop that ENTER releases (software, not safety rated).
+    keypad_name_contains picks the device by part of its name ("" = every USB
+    keyboard - then an engineer's keyboard plugged into the PC drives the
+    vehicle too); keypad_exclude_contains is a comma-separated list of names
+    never used. keypad_grab keeps the keys away from the desktop and terminals.
+    keypad_panel_keys false leaves only the direction keys. Needs python3-evdev
+    and the service user in group input (amr.service SupplementaryGroups=input).
+    `ros2 run amr_base qr_keypad --list` shows which devices would be used.
+
 """
 import json
 import math
@@ -725,6 +738,12 @@ _QR_SCHEMA = {
         "runaway_rad_s":         ("QR_RUNAWAY_RAD_S", float),
         "runaway_s":             ("QR_RUNAWAY_S", float),
         "stall_s":               ("QR_STALL_S", float),
+        # USB keypad on the QR PC (amr_base qr_keypad)
+        "keypad_enabled":          ("QR_KEYPAD_ENABLED", bool),
+        "keypad_name_contains":    ("QR_KEYPAD_NAME_CONTAINS", str),
+        "keypad_exclude_contains": ("QR_KEYPAD_EXCLUDE_CONTAINS", str),
+        "keypad_grab":             ("QR_KEYPAD_GRAB", bool),
+        "keypad_panel_keys":       ("QR_KEYPAD_PANEL_KEYS", bool),
     },
 }
 QR_ENC_MODES = ("auto", "tpdo", "sdo")

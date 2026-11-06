@@ -47,6 +47,7 @@ Instalasi langkah demi langkah (dan update dari kode lama, Part U):
 | `amr_base/qr_base_node.py` | Node ROS: interface sama dengan drive_node + panel_node (termasuk `link_state`, `power_wanted`, `manual_arm`, topik `_ui`) |
 | `amr_base/qr_motor.py` | Wheel loop: interlock arah, FF + PI, coast, rem, latch runaway/stall, standby/armed/push |
 | `amr_base/qr_encoders.py`, `wit_imu.py`, `qr_panel.py`, `qr_analog.py` | Encoder, IMU, selector virtual, output analog |
+| `amr_base/qr_keypad.py` | Keypad USB (evdev, hot-plug, grab): pendant kedua + tombol START/STOP/Q/E; `qr_keypad --list/--watch` |
 | `amr_base/qr_calibrate.py`, `wasd_teleop.py` | Tool bench (`io`, `enc`, `imu`, `imu-setup`, `breakaway`, `ff`, `brake-off`) dan teleop WASD |
 | `amr_localization/speckle.py`, `scan_mask*.py`, `robot_fixed.py` | Filter scan di `scan_gate_node` (mati; untuk lidar rusak) |
 | `amr_description/vehicle.py`, `config/*.amr-qr-01.yaml` | Geometri per kendaraan (URDF, footprint) |
@@ -92,6 +93,12 @@ Route yang meminta lebih cepat tetap jalan, tapi di-clamp oleh mux.
   sebagai tekan (anti-tie-down).
 - Kalau DIO hilang, panel dianggap invalid, mode jatuh ke MANUAL, dan motor berhenti
   dengan rem.
+- **Keypad USB** (`amr_base/qr_keypad.py`, map tombol sama dengan KIM2A): W/A/S/D dan panah
+  = pendant kedua (tahan untuk jalan, hanya MANUAL), **G** = START, **ENTER** = STOP,
+  **Q** = ganti MANUAL/AUTO, **E** = E-stop keypad (latched, dilepas dengan ENTER; software,
+  bukan safety). Masuk ke image panel di `qr_base_node`, jadi mux/executor tidak berubah.
+  Setting `qr_base.keypad_*`; butuh `python3-evdev` dan grup `input`
+  (`SupplementaryGroups=input` di `amr.service`).
 - `qr_base.auto_hold_s > 0` (misal 1.5): START harus **ditahan** untuk masuk AUTO,
   sedangkan tekan singkat di MANUAL menjadi Start edge. Mode ini diperlukan untuk
   blind-run di halaman **Commission**. Dengan nilai default 0, blind-run tidak bisa
