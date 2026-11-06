@@ -8,6 +8,7 @@
     <label class="field">Map <select id="ed-map"></select></label>
     <label class="field">Route id <input id="ed-route-id" placeholder="route_a"></label>
     <label class="field">Load saved <select id="ed-load"><option value="">— new —</option></select></label>
+    {% if role == ENGINEER %}<div class="bar" style="margin-top:0"><button id="btn-route-remove-rev" class="tool danger" title="Remove the selected saved revision and the missions using it (moved to the maps trash)">Remove revision</button><button id="btn-route-remove" class="tool danger" title="Remove every revision of the selected route and the missions using them (moved to the maps trash)">Remove route</button></div>{% endif %}
     <div class="sep"></div>
     <h3>Draw</h3>
     <div class="bar" style="margin-top:0">

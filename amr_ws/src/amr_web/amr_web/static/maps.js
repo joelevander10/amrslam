@@ -91,7 +91,7 @@ async function loadMaps() {
   const { data } = await apiGet('/api/maps');
   if (!data.length) { $('maps-list').innerHTML = '<div class="none">no saved maps yet</div>'; return; }
   const head = '<div class="row head"><span>rev · created · size</span><span>closure review · routes · bundle</span></div>';
-  $('maps-list').innerHTML = data.map(m => `<h3>${esc(m.map_id)}</h3><div class="list">${head}` +
+  $('maps-list').innerHTML = data.map(m => `<h3>${esc(m.map_id)} <button class="tool danger" data-remove-map="${esc(m.map_id)}" title="Remove the whole map: every revision, its routes and the missions on it (moved to the maps trash)">Remove map</button></h3><div class="list">${head}` +
     m.revisions.map(r => r.error
       ? `<div class="al-row standing lv-error"><span class="al-lv">rev${esc(r.revision)}</span><span class="al-msg">${esc(r.error)}</span></div>`
       : `<div class="row"><span><span class="k">rev${esc(r.revision)}</span> <span class="n">${esc(r.created)}</span><br>` +
@@ -100,8 +100,15 @@ async function loadMaps() {
         `<span class="n">${Object.entries(r.routes || {}).map(([k, v]) => `${esc(k)} rev${esc(v.join(','))}`).join('; ') || 'no routes'}</span> ` +
         `<code>${esc(String(r.sha256).slice(0, 12))}</code><br>` +
         `<span class="n">${derived(r)}</span> ` +
-        `<a class="tool" href="/review?map=${encodeURIComponent(m.map_id)}&rev=${encodeURIComponent(r.revision)}" title="Mark dynamic areas (trolleys, parked forklifts) or clean up this map: saves a new revision">Edit areas</a></span></div>`).join('') + '</div>').join('');
+        `<a class="tool" href="/review?map=${encodeURIComponent(m.map_id)}&rev=${encodeURIComponent(r.revision)}" title="Mark dynamic areas (trolleys, parked forklifts) or clean up this map: saves a new revision">Edit areas</a> ` +
+        `<button class="tool danger" data-remove-map="${esc(m.map_id)}" data-rev="${esc(r.revision)}" title="Remove this revision, the route revisions drawn on it and the missions using them (moved to the maps trash)">Remove</button></span></div>`).join('') + '</div>').join('');
 }
+// Remove a map or one revision (engineer; the server lists what goes and refuses the active map)
+$('maps-list').addEventListener('click', async e => {
+  const b = e.target.closest ? e.target.closest('[data-remove-map]') : null; if (!b) return;
+  const rev = b.dataset.rev ? +b.dataset.rev : null;
+  if (await removeConfirmed(`/api/maps/${encodeURIComponent(b.dataset.removeMap)}/delete`, { revision: rev })) loadMaps();
+});
 // "dynamic 4.2 m² · from rev1 (3 edits: dynamic 2, unknown 1)": how a revision came to be
 function derived(r) {
   const parts = [];

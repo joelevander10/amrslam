@@ -63,7 +63,7 @@
     <div class="tabpane" data-tab="mission" hidden>
       <h2>Mission <small>route executor</small></h2>
       <label class="field">Mission <select id="run-mission"></select></label>
-      <div class="bar"><button id="btn-run-load" class="big run">Load (READY)</button></div>
+      <div class="bar"><button id="btn-run-load" class="big run">Load (READY)</button>{% if role == ENGINEER %}<button id="btn-mission-remove" class="tool danger" title="Remove the selected mission (moved to the maps trash; its map and route stay)">Remove mission</button>{% endif %}</div>
       {# After an Abort or a FAULT (acknowledged): load the same mission at the step where it
          stopped. Start then checks the vehicle is on that step, not on the route start. #}
       <div id="rejoin-box" class="warn-box" style="margin-top:.6rem" hidden>

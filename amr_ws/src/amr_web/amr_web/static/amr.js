@@ -20,6 +20,18 @@ async function request(path, method, body) {
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const api = (path, body) => request(path, 'POST', body || {});
 const apiGet = (path) => request(path, 'GET');
+// Remove a map / route / mission (engineer, 2026-11-06): the first call answers needs_confirm
+// with everything that would go (missions using it included); the operator says yes, the
+// second call removes. Nothing is erased: it moves to the maps trash (.trash).
+async function removeConfirmed(path, body) {
+  let r = await api(path, body);
+  if (r.status === 409 && r.data && r.data.needs_confirm) {
+    if (!window.confirm(`${r.data.question}\n\nIt is moved to the maps trash (.trash), not erased.`)) { log('nothing removed'); return false; }
+    r = await api(path, Object.assign({}, body, { confirm: true }));
+  }
+  if (r.status === 200) log(r.data.message);
+  return r.status === 200;
+}
 function log(msg, cls) {
   const el = document.getElementById('log');
   const t = new Date().toLocaleTimeString();

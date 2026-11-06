@@ -39,8 +39,8 @@ from amr_navigation import footprint as fpmod
 from amr_navigation import store
 from amr_web import alarms as alarmview
 from amr_web import commissioning_log as clog
+from amr_web import deletion, jog, netcheck, reports, wifi
 from amr_web import demo as demomod
-from amr_web import jog, netcheck, reports, wifi
 from amr_web import role as rolemod
 from amr_web.png import encode_gray
 
@@ -755,6 +755,88 @@ def create_app(
         except store.StoreError as e:
             return _result(False, str(e), 400)
         return jsonify({"ok": True, "mission_id": mission_id, "path": path, "labels": bound})
+
+    # ---- removing maps, routes and missions (2026-11-06) -----------------------------
+    # Engineer only. Moved to <maps>/.trash, never erased (amr_web/deletion.py). Two calls:
+    # without "confirm": true the answer (409, needs_confirm) says everything that would go,
+    # missions included; the page asks, then sends it again confirmed.
+    LIVE_RUN = ("READY", "EXECUTING", "PAUSED", "BLOCKED", "WAITING")
+
+    def _delete(make_plan, in_use):
+        if _role() != rolemod.ENGINEER:
+            return _result(False, "removing needs the engineer view (Op + PIN)", 403)
+        d, err = _body()
+        if err:
+            return err
+        rev = d.get("revision")
+        if rev is not None and (isinstance(rev, bool) or not isinstance(rev, int) or rev < 1):
+            return _result(False, "revision must be a positive integer or null (all)", 400)
+        try:
+            plan = make_plan(rev)
+        except (deletion.DeleteError, store.StoreError, mb.BundleError) as e:
+            return _result(False, str(e), 404)
+        st = adapter.state()
+        st = st if isinstance(st, dict) else {}
+        why = in_use(rev, st)
+        run = st.get("run") or {}
+        if not why and run.get("mission_id") in plan.missions and run.get("state_name") in LIVE_RUN:
+            why = (
+                f"mission {run['mission_id']} is loaded ({run['state_name']}): abort it or load another first"
+            )
+        if why:
+            return _result(False, f"not removed: {why}", 409)
+        if d.get("confirm") is not True:
+            body = {
+                "ok": False,
+                "needs_confirm": True,
+                "message": f"confirm to remove {plan.summary()}",
+                "question": f"Remove {plan.summary()}?",
+                "missions": plan.missions,
+                "routes": plan.routes,
+            }
+            return jsonify(body), 409
+        dest = deletion.execute(app.config["MAPS_DIR"], plan)
+        for key in plan.map_revisions:  # a later map of the same id and revision must not hit the cache
+            _grids.pop(key, None)
+            _extras.pop(key, None)
+        return jsonify(
+            {
+                "ok": True,
+                "message": f"removed {plan.summary()} (kept in {dest})",
+                "trash": dest,
+                "missions": plan.missions,
+                "routes": plan.routes,
+            }
+        )
+
+    def _map_in_use(map_id: str):
+        def why(rev, st) -> str:
+            mode = st.get("mode") or {}
+            name = mode.get("mode_name")
+            if name == "MAPPING":
+                return "a survey is running: finish or cancel it first"
+            if name in ("NAVIGATION", "TRANSITIONING") and mode.get("active_map_id") == map_id:
+                arev = mode.get("active_map_revision")
+                if rev is None or arev == rev or arev is None:
+                    return f"{map_id} rev{arev} is the vehicle's active map: Return to idle (Home) first"
+            return ""
+
+        return why
+
+    @app.post("/api/maps/<map_id>/delete")
+    def api_map_delete(map_id: str):
+        maps = app.config["MAPS_DIR"]
+        return _delete(lambda rev: deletion.plan_map(maps, map_id, rev), _map_in_use(map_id))
+
+    @app.post("/api/maps/<map_id>/routes/<route_id>/delete")
+    def api_route_delete(map_id: str, route_id: str):
+        maps = app.config["MAPS_DIR"]
+        return _delete(lambda rev: deletion.plan_route(maps, map_id, route_id, rev), lambda rev, st: "")
+
+    @app.post("/api/missions/<mission_id>/delete")
+    def api_mission_delete(mission_id: str):
+        maps = app.config["MAPS_DIR"]
+        return _delete(lambda rev: deletion.plan_mission(maps, mission_id), lambda rev, st: "")
 
     # ---- floor labels (gls-wait-coding-plan §C) ------------------------------------
 

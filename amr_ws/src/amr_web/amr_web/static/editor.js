@@ -490,6 +490,18 @@ async function reloadLabels(c) {
   sel.innerHTML = `<option value="">${labels.length ? '— no label —' : '— no labels recorded on this map —'}</option>`;
   labels.filter(l => l.role === 'dest').forEach(l => { const o = document.createElement('option'); o.value = l.label_id; o.textContent = `${l.name} (${l.label_id})`; sel.appendChild(o); });
 }
+// Remove a saved route (engineer): one revision or all of them, with the missions using them.
+async function removeRoute(all) {
+  const v = $('ed-load').value;
+  if (!v) { log('pick a saved route under Load saved first', 'bad'); return; }
+  const [rid, rrev] = v.split('/');
+  const ok = await removeConfirmed(`/api/maps/${encodeURIComponent(mapId)}/routes/${encodeURIComponent(rid)}/delete`, { revision: all ? null : +rrev });
+  if (!ok) return;
+  if (savedRef && savedRef.route_id === rid && (all || savedRef.revision === +rrev)) savedRef = null;  // the draft stays, unsaved
+  await reloadRouteList();
+}
+if ($('btn-route-remove-rev')) $('btn-route-remove-rev').onclick = () => removeRoute(false);
+if ($('btn-route-remove')) $('btn-route-remove').onclick = () => removeRoute(true);
 $('ed-load').onchange = async e => {
   if (!e.target.value) return;
   const [rid, rrev] = e.target.value.split('/');

@@ -79,6 +79,10 @@ function glsTiles(g) {
   tiles('gls-state', rows);
 }
 $('btn-run-load').onclick = () => api('/api/mission/run', { mission_id: $('run-mission').value }).then(r => log(r.data.message, r.status === 200 ? '' : 'bad'));
+if ($('btn-mission-remove')) $('btn-mission-remove').onclick = async () => {
+  const id = $('run-mission').value; if (!id) { log('pick a mission first', 'bad'); return; }
+  if (await removeConfirmed(`/api/missions/${encodeURIComponent(id)}/delete`, {})) loadMissions();
+};
 $('btn-run-pause').onclick = () => api('/api/mission/pause').then(r => log(r.data.message));
 $('btn-run-resume').onclick = () => api('/api/mission/resume').then(r => log(r.data.message));
 $('btn-run-abort').onclick = () => api('/api/mission/abort').then(r => log(r.data.message));

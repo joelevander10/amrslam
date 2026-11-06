@@ -244,6 +244,22 @@ ros2 run amr_mission map_edit --map block_c --rev 1 --despeckle-rect -50 -50 50 
    the step or the start pose away.
 7. **Save revision**, then **Create mission from saved revision**.
 
+## 4a. Remove a map, a route or a mission (engineer)
+
+- **Map**: Maps page, **Remove** on a revision row, or **Remove map** beside the map's name
+  (every revision). A revision takes the route revisions drawn on it with it; the last
+  revision is the whole map, routes and floor labels included.
+- **Route**: Routes page, pick it under **Load saved**, then **Remove revision** (the one
+  picked) or **Remove route** (all its revisions).
+- **Mission**: Run page, pick it, **Remove mission** (its map and route stay).
+
+The page first asks, listing everything that goes - **missions that use it are removed with
+it**, so nothing is left pointing at something gone. Refused: the map the vehicle is using
+(Return to idle first), anything while a survey runs, and the mission that is loaded
+(abort or load another first). Nothing is erased: it moves to `.trash` in the maps folder
+(`~/amr_maps/.trash/<date>-<what>/`, same layout as the maps folder) - move it back to undo,
+or `rm -rf ~/amr_maps/.trash` to free the space.
+
 ## 5. Run the route (Run page)
 
 Keep the vehicle in **MANUAL** until step 6.
