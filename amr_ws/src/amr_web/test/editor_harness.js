@@ -196,5 +196,26 @@ const flush = () => new Promise(r => setImmediate(r));
   await els['btn-save'].onclick(); for (let i = 0; i < 3; i++) await flush();
   out.branch_saved = savedSteps.map(s => s.id);
   out.branch_meta = lastSavedBranch;
+  // --- Stop point on map: one click makes the whole POS route (junction inside s1) ---
+  els['btn-undo'].onclick(); els['btn-undo'].onclick();   // whatever the draft was: replaced anyway
+  els['ed-branch-main'].value = 'main/1'; await els['ed-branch-main'].onchange({ target: els['ed-branch-main'] });
+  els['tool-branchpoint'].onclick();
+  out.auto_tool = theView.tool;
+  theView.onClick([2.0, 0.1]);                                      // 100 mm off the route: refused
+  out.auto_too_close = theView.tool === 'branchpoint';
+  els['ed-branch-return'] = els['ed-branch-return'] || doc.getElementById('ed-branch-return');
+  els['ed-branch-return'].value = 'turn';
+  els['ed-wait-name'] = els['ed-wait-name'] || doc.getElementById('ed-wait-name'); els['ed-wait-name'].value = 'POS 2';
+  els['ed-route-id'].value = 'pos2';
+  theView.onClick([2.0, 1.5]);                                      // 1.5 m left of s1, 2 m along it
+  await els['btn-save'].onclick(); for (let i = 0; i < 3; i++) await flush();
+  out.auto_steps = savedSteps;
+  out.auto_branch = lastSavedBranch;
+  // reverse back, right side, at the end of s1 (snaps to the junction s1 / s2)
+  els['tool-branchpoint'].onclick(); els['ed-branch-return'].value = 'reverse';
+  theView.onClick([4.02, -1.2]);
+  await els['btn-save'].onclick(); for (let i = 0; i < 3; i++) await flush();
+  out.auto_rev_steps = savedSteps;
+  out.auto_rev_branch = lastSavedBranch;
   console.log(JSON.stringify(out));
 })().catch(e => { console.log(JSON.stringify({ error: String(e && e.stack || e) })); });

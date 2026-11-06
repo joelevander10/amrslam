@@ -354,6 +354,15 @@ class Branch:
     leave_after: str  # a main step id: the branch starts at its end
     rejoin_after: str  # a main step id (at or after leave_after): the main route resumes after it
     steps: list[str] = field(default_factory=list)  # the branch's own step ids, in order
+    # A junction INSIDE a main straight (the editor's "stop point on the map", 2026-11-06):
+    # that straight is cut at leave_at {x_m, y_m}; its first part keeps its id, the branch goes
+    # out and back to leave_at, and the rest of the straight runs as step `split_id`. Then
+    # leave_after is that straight and rejoin_after must be the same step.
+    leave_at: dict | None = None
+    split_id: str | None = None
+
+    def to_dict(self) -> dict:
+        return {k: v for k, v in asdict(self).items() if v is not None or k not in ("leave_at", "split_id")}
 
     @staticmethod
     def from_dict(d) -> Branch:
@@ -368,7 +377,24 @@ class Branch:
             leave_after=_str(_field(d, "leave_after", "branch"), "branch.leave_after"),
             rejoin_after=_str(_field(d, "rejoin_after", "branch"), "branch.rejoin_after"),
             steps=list(ids),
+            leave_at=_leave_at(d.get("leave_at")),
+            split_id=None if d.get("split_id") is None else _str(d["split_id"], "branch.split_id"),
         )
+
+
+def _leave_at(v) -> dict | None:
+    if v is None:
+        return None
+    if not isinstance(v, dict):
+        raise RouteError("branch.leave_at must be {x_m, y_m}")
+    return {k: _float(_field(v, k, "branch.leave_at"), f"branch.leave_at.{k}") for k in ("x_m", "y_m")}
+
+
+def split_straight(st: Step, at: dict, split_id: str) -> tuple[Step, Step]:
+    """A main straight cut at `at` (on its line): the part to `at` keeps the id, the rest is
+    `split_id`; both keep the straight's own speed. Pure."""
+    first = Step(st.id, STRAIGHT, to=(float(at["x_m"]), float(at["y_m"])), v_mps=st.v_mps)
+    return first, Step(split_id, STRAIGHT, to=st.to, v_mps=st.v_mps)
 
 
 def branch_problem(route: Route, main: Route) -> str | None:
@@ -392,7 +418,17 @@ def branch_problem(route: Route, main: Route) -> str | None:
     mine = {s.id: s for s in route.steps}
     if any(i not in mine for i in b.steps):
         return "branch.steps names a step that is not in the route"
-    want = main.steps[: li + 1] + [mine[i] for i in b.steps] + main.steps[ri + 1 :]
+    own = [mine[i] for i in b.steps]
+    if b.leave_at is not None:
+        st = main.steps[li]
+        if st.type != STRAIGHT or b.rejoin_after != b.leave_after:
+            return "a junction inside a step needs a straight, left and rejoined at the same point"
+        if not b.split_id or b.split_id in ids or b.split_id in b.steps:
+            return f"split_id {b.split_id!r} must be a new step id"
+        first, rest = split_straight(st, b.leave_at, b.split_id)
+        want = main.steps[:li] + [first] + own + [rest] + main.steps[li + 1 :]
+    else:
+        want = main.steps[: li + 1] + own + main.steps[ri + 1 :]
     if (route.start.x_m, route.start.y_m, route.start.yaw_deg) != (
         main.start.x_m,
         main.start.y_m,
@@ -427,7 +463,7 @@ class Route:
     def to_dict(self) -> dict:
         d = self._dict()
         if self.branch is not None:
-            d["branch"] = asdict(self.branch)
+            d["branch"] = self.branch.to_dict()
         return d
 
     def _dict(self) -> dict:

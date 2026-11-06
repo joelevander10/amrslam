@@ -253,7 +253,19 @@ main route again, which takes it home.
 1. **Draw the main route** once as a normal route (e.g. `main`) from the homepost, ending with
    **Go home**. Mark each junction as a step end (split a straight with **Speed waypoint**
    where a branch should leave). Save it.
-2. **For each POS**, on the Routes page, section **Branch**:
+2. **For each POS, the quick way** (Routes page, section **Branch**): pick **Main route**
+   `main rev N`, type the **Route id** (`pos1` … `pos6`) and the **Wait** name (e.g. `POS 1`),
+   choose how it comes back (**turn round, forward** or **reverse** ≤ 2 m), press **Stop point
+   on map** and **click where the AMR must stop** (its centre). The map shows the main route,
+   the junction and the stop point as you move the mouse. The branch is made for you: it leaves
+   the nearest main straight at a right angle (the junction may be in the middle of a straight:
+   that straight is cut there, the main route itself is not changed), turns 90°, drives to the
+   point, waits, comes back to the junction, turns back onto the main heading and finishes the
+   main route to the homepost. **Straight speed**, if filled in, is used for the branch's
+   straights. The stop point must be square to a main straight and at least 300 mm from it.
+   Then **Validate** (a turn that hits a rack shows red: pick another point or draw it by
+   hand), **Save revision**, **Create mission**.
+   **Or draw it by hand**, on the Routes page, section **Branch**:
    1. **Main route**: pick `main rev N`. **Leave after**: the main step whose end is the
       junction. **Start branch** - the draft is now main up to there.
    2. Type the **Route id** `pos1` (… `pos6`: the Go-to buttons use these names).

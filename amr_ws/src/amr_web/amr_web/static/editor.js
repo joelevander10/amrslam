@@ -96,9 +96,10 @@ const homeLegAt = i => homeLeg(poseAfter(i), poseAfter(0));
 function setTool(t) {
   const was = view.tool;
   view.tool = t; view._linePreview = null;
-  ['tool-start', 'tool-line', 'tool-measure'].forEach(id => $(id).classList.toggle('on', id === 'tool-' + t));
+  ['tool-start', 'tool-line', 'tool-measure', 'tool-branchpoint'].forEach(id => $(id).classList.toggle('on', id === 'tool-' + t));
   $('ed-hint').textContent = t === 'start' ? 'Click the start position, drag towards the heading, release.'
     : t === 'line' ? 'Click a point, or type a length in mm and press Add: the straight goes along the current heading.'
+    : t === 'branchpoint' ? 'Click where the AMR must stop for this POS (its centre). The branch leaves the nearest main straight at a right angle, waits there and comes back.'
     : t === 'measure' ? 'Measure: click A, then B. Snaps to waits, arc centres, step ends and route lines (this draft and the saved routes, drawn faint). Shift or untick Snap = exactly where you click. Esc clears. Drag = pan.'
     : 'Wheel = zoom, drag = pan.';
   if (was === 'measure' && t !== 'measure') clearMeasure();
@@ -201,12 +202,14 @@ $('ed-steps').addEventListener('change', e => {
 });
 view.onClick = w => {
   if (view.tool === 'measure') { measureClick(w); return; }
+  if (view.tool === 'branchpoint') { autoBranch(w); return; }
   if (view.tool === 'start') { snapshot(); route.start = { x_m: w[0], y_m: w[1], yaw_deg: route.start ? route.start.yaw_deg : 0 }; refresh(); return; }
   if (view.tool === 'line') { const along = alongTo(w); if (along === null) { log('set the start pose first', 'bad'); return; } addStraight(along); }
 };
 // Preview of the straight a click (or the typed length) would add: metres along the heading, or null.
 view.onHover = w => {
   view._linePreview = (view.tool === 'line' && w) ? alongTo(w) : null;
+  if (view.tool === 'branchpoint') { view._branchPreview = w && branchMain ? branchJunction(branchMain, w) : null; view.draw(); }
   if (view.tool === 'measure') { measure.hover = w ? snapAt(w) : null; if (measure.a && !measure.b) showMeasure(); }
 };
 $('ed-len').oninput = e => { const v = e.target.valueAsNumber; view._linePreview = Number.isFinite(v) ? v / 1000 : null; view.draw(); };
@@ -478,6 +481,20 @@ view.overlays.push((c, v) => {
   const onActive = md && v.meta && md.active_map_id === v.meta.map_id && +md.active_map_revision === +v.meta.revision;  // R12
   if (onActive && st && st.state_name !== 'UNLOCALIZED' && lastState.run && lastState.run.pose_x !== undefined) v.arrow(lastState.run.pose_x, lastState.run.pose_y, lastState.run.pose_yaw, 0.8, INK.accent);
 });
+view.overlays.push((c, v) => {
+  // Stop point on map: the main route faint, the junction and the stop point a click would make
+  if (v.tool === 'branchpoint' && branchMain) branchMain.steps.forEach((s, i) => {
+    if (s.type !== 'straight') return;
+    const a = poseAfter(i, branchMain), q = poseAfter(i + 1, branchMain);
+    v.line(a.x, a.y, q.x, q.y, alpha(INK.route, 0.5), 2);
+  });
+  if (v.tool === 'branchpoint' && v._branchPreview) {
+    const j = v._branchPreview, side = Math.abs(j.lat), n = j.lat > 0 ? 1 : -1;
+    const q = { x: j.J.x - Math.sin(j.yaw) * n * side, y: j.J.y + Math.cos(j.yaw) * n * side };
+    v.dashed([[j.J.x, j.J.y], [q.x, q.y]], side >= BRANCH_MIN_SIDE_M ? INK.preview : INK.stop); v.dot(j.J.x, j.J.y, INK.turn, 5); v.dot(q.x, q.y, INK.preview, 6);
+    v.text(q.x, q.y, `stop ${mm(side)} mm off the route`, INK.preview);
+  }
+});
 async function reloadRouteList(c) {
   c = c || ctx();
   const { data } = await apiGet(`/api/maps/${mapId}/${mapRev}`);
@@ -604,13 +621,85 @@ $('btn-branch-rebase').onclick = async () => {
       log(`on ${b.main_route_id} rev${newest} the branch point or the rejoin point moved: redraw the branch`, 'bad'); return;
     }
   }
+  if (b.leave_at && JSON.stringify(nm.steps[li]) !== JSON.stringify(oldMain ? oldMain.steps[oldMain.steps.findIndex(s => s.id === b.leave_after)] : null)) {
+    log(`on ${b.main_route_id} rev${newest} the straight ${b.leave_after} the branch leaves from changed: redraw the branch`, 'bad'); return;
+  }
   const own = route.steps.filter(s => b.steps.includes(s.id));
   snapshot();
   route.start = deep(nm.start);
-  route.steps = deep(nm.steps.slice(0, li + 1)).concat(own, deep(nm.steps.slice(ri + 1)));
+  route.steps = composeBranch(nm, b, own);
   route.branch = Object.assign({}, b, { main_revision: newest });
   branchMain = nm; lastResult = null; savedRef = null; refresh(); fillBranchSteps();
   log(`rebased on ${b.main_route_id} rev${newest}: Validate, Save revision, then Create mission again`);
+};
+// main + branch, as amr_navigation.route.branch_problem expects it (a junction inside a
+// straight cuts it at leave_at: the first part keeps its id, the rest is split_id)
+function composeBranch(main, b, own) {
+  const li = main.steps.findIndex(s => s.id === b.leave_after), ri = main.steps.findIndex(s => s.id === b.rejoin_after);
+  if (!b.leave_at) return deep(main.steps.slice(0, li + 1)).concat(deep(own), deep(main.steps.slice(ri + 1)));
+  const st = main.steps[li], first = deep(st), rest = deep(st);
+  first.to = { x_m: b.leave_at.x_m, y_m: b.leave_at.y_m }; rest.id = b.split_id;
+  return deep(main.steps.slice(0, li)).concat([first], deep(own), [rest], deep(main.steps.slice(li + 1)));
+}
+// Where a branch to stop point P leaves the main route: the nearest point on a main straight
+// with P square to it (the foot of the perpendicular), at least 50 mm inside the straight or
+// on one of its ends. { i (straight index), along, lat (+ left), J {x, y}, yaw } or null.
+const BRANCH_END_SNAP_M = 0.05, BRANCH_MIN_SIDE_M = 0.30;
+function branchJunction(main, P) {
+  let best = null;
+  main.steps.forEach((s, i) => {
+    if (s.type !== 'straight') return;
+    const a = poseAfter(i, main), b = poseAfter(i + 1, main), L = Math.hypot(b.x - a.x, b.y - a.y);
+    const c = Math.cos(a.yaw), sn = Math.sin(a.yaw), dx = P[0] - a.x, dy = P[1] - a.y;
+    let along = dx * c + dy * sn; const lat = -dx * sn + dy * c;
+    if (along < -BRANCH_END_SNAP_M || along > L + BRANCH_END_SNAP_M) return;
+    along = along > L - BRANCH_END_SNAP_M ? L : along < BRANCH_END_SNAP_M ? (i > 0 ? 0 : BRANCH_END_SNAP_M) : along;
+    if (!best || Math.abs(lat) < Math.abs(best.lat)) best = { i, along, L, lat, yaw: a.yaw, J: { x: a.x + c * along, y: a.y + sn * along } };
+  });
+  return best;
+}
+// "Stop point on map": the whole POS route from one click - main to the junction, a 90° turn
+// towards the point, straight to it, a Wait, back to the junction (turning round, or in
+// reverse up to 2 m), the turn back onto the main heading, then the rest of the main route.
+function autoBranch(P) {
+  if (!branchMain) { log('pick the main route under Branch first', 'bad'); return; }
+  const j = branchJunction(branchMain, P);
+  if (!j) { log('no main straight runs beside that point: the stop point must be square to a straight of the main route', 'bad'); return; }
+  const side = Math.abs(j.lat);
+  if (side < BRANCH_MIN_SIDE_M) { log(`that point is ${mm(side)} mm from the main route: a stop point needs at least ${mm(BRANCH_MIN_SIDE_M)} mm (or it is on the route: use a Wait in the main route)`, 'bad'); return; }
+  const back = $('ed-branch-return').value;
+  if (back === 'reverse' && side > REVERSE_MAX_M) { log(`reversing is at most ${mm(REVERSE_MAX_M)} mm and the stop point is ${mm(side)} mm off the route: come back turning round`, 'bad'); return; }
+  const main = branchMain, ids = new Set(main.steps.map(s => s.id));
+  const atEnd = j.along >= j.L - 1e-9, atStart = j.along <= 1e-9 && j.i > 0;
+  const leave = atEnd ? main.steps[j.i] : atStart ? main.steps[j.i - 1] : main.steps[j.i];
+  const dir = j.lat > 0 ? 'ccw' : 'cw', undir = dir === 'ccw' ? 'cw' : 'ccw';
+  const n = j.lat > 0 ? 1 : -1, stop = { x_m: j.J.x - Math.sin(j.yaw) * n * side, y_m: j.J.y + Math.cos(j.yaw) * n * side };
+  const v = straightV($('ed-straight-v').value); if (v === false) return;
+  const sp = o => (v !== null ? Object.assign(o, { v_mps: v }) : o);
+  const name = $('ed-wait-name').value.trim() || ($('ed-route-id').value.trim() || 'POS').toUpperCase();
+  const own = [
+    { id: 'b1', type: 'rotate', direction: dir, angle_deg: 90 },
+    sp({ id: 'b2', type: 'straight', to: stop }),
+    { id: 'b3', type: 'wait', name: name.slice(0, 40) },
+  ].concat(back === 'reverse'
+    ? [{ id: 'b4', type: 'reverse', distance_m: side }, { id: 'b5', type: 'rotate', direction: undir, angle_deg: 90 }]
+    : [{ id: 'b4', type: 'rotate', direction: dir, angle_deg: 180 }, sp({ id: 'b5', type: 'straight', to: { x_m: j.J.x, y_m: j.J.y } }),
+       { id: 'b6', type: 'rotate', direction: dir, angle_deg: 90 }]);
+  const b = { main_route_id: main.route_id, main_revision: main.revision, leave_after: leave.id, rejoin_after: leave.id, steps: own.map(s => s.id) };
+  if (!atEnd && !atStart) {
+    let k = 2; while (ids.has(`${leave.id}_${k}`)) k++;
+    b.leave_at = { x_m: j.J.x, y_m: j.J.y }; b.split_id = `${leave.id}_${k}`;
+  }
+  snapshot();
+  route = { route_id: $('ed-route-id').value.trim(), start: deep(main.start), steps: [], repeat_count: 1, limits: routeLimits(main.limits), branch: b };
+  route.steps = composeBranch(main, b, own);
+  lastResult = null; savedRef = null; view._branchPreview = null; setTool(null); refresh(); fillBranchSteps();
+  log(`POS branch made: leaves ${main.route_id} ${b.leave_at ? `inside ${leave.id}, ${mm(j.along)} mm along it` : `after ${leave.id}`}, turns ${dir.toUpperCase()} 90°, ${mm(side)} mm to the stop point (Wait "${name}"), back ${back === 'reverse' ? 'in reverse' : 'turning round'}, then the rest of ${main.route_id}. ` +
+      `Type the route id (pos1 … pos6) if empty, Validate, Save revision, Create mission.`);
+}
+$('tool-branchpoint').onclick = () => {
+  if (!branchMain) { log('pick the main route under Branch first', 'bad'); return; }
+  setTool(view.tool === 'branchpoint' ? null : 'branchpoint');
 };
 $('ed-load').onchange = async e => {
   if (!e.target.value) return;

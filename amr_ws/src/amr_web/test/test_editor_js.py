@@ -167,3 +167,59 @@ def test_editor_branch_route_is_main_plus_branch_and_rejoins_exactly():
         "rejoin_after": "s1",
         "steps": ["b1", "b2", "b3"],
     }
+
+
+@pytest.mark.skipif(NODE is None, reason="node not installed")
+def test_editor_stop_point_on_the_map_makes_a_pos_route_the_server_accepts():
+    """One click beside the main route: the editor's whole POS route (junction inside a main
+    straight, or at a step end) is exactly main + branch for amr_navigation and compiles."""
+    from amr_navigation import route as rt  # noqa: PLC0415
+    from amr_navigation.compiler import compile_route  # noqa: PLC0415
+
+    harness = pathlib.Path(__file__).with_name("editor_harness.js")
+    r = subprocess.run([NODE, str(harness)], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    assert "error" not in out, out
+    assert out["auto_tool"] == "branchpoint" and out["auto_too_close"] is True  # 100 mm off: refused
+
+    def doc(steps, branch, rid):
+        return {
+            "schema_version": rt.SCHEMA_VERSION,
+            "route_id": rid,
+            "map": {"id": "m1", "revision": 1, "sha256": ""},
+            "start": {"x_m": 0, "y_m": 0, "yaw_deg": 0},
+            "steps": steps,
+            **({"branch": branch} if branch else {}),
+        }
+
+    main = rt.Route.from_dict(
+        doc(
+            [
+                {"id": "s1", "type": "straight", "to": {"x_m": 4, "y_m": 0}},
+                {"id": "s2", "type": "straight", "to": {"x_m": 8, "y_m": 0}},
+                {"id": "s3", "type": "home"},
+            ],
+            None,
+            "main",
+        )
+    )
+    turn = rt.Route.from_dict(doc(out["auto_steps"], out["auto_branch"], "pos2"))
+    assert [s.id for s in turn.steps] == ["s1", "b1", "b2", "b3", "b4", "b5", "b6", "s1_2", "s2", "s3"]
+    assert turn.branch.leave_at == {"x_m": 2.0, "y_m": 0.0} and turn.branch.split_id == "s1_2"
+    assert rt.branch_problem(turn, main) is None
+    turn.steps = turn.steps[:-1]  # the harness's main "home" is not a drivable home leg; the rest is
+    c = compile_route(turn)
+    stop = next(s for s in c.steps if s.id == "b3")
+    assert stop.end[:2] == pytest.approx((2.0, 1.5))
+    rev = rt.Route.from_dict(doc(out["auto_rev_steps"], out["auto_rev_branch"], "pos2"))
+    assert rev.branch.leave_at is None and rev.branch.leave_after == "s1"  # snapped to the end of s1
+    assert rt.branch_problem(rev, main) is None
+    rev.steps = rev.steps[:-1]
+    assert [s.type for s in compile_route(rev).steps][1:6] == [
+        "rotate",
+        "straight",
+        "wait",
+        "reverse",
+        "rotate",
+    ]

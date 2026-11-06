@@ -49,6 +49,9 @@
     <label class="field">Rejoin after <small>the branch must end exactly on this main step's end pose</small>
       <span class="inline"><select id="ed-branch-rejoin"></select><button id="btn-branch-rejoin" class="tool" title="Close the branch: append the rest of the main route (to its homepost)">Rejoin main</button></span>
     </label>
+    <label class="field">Or click the stop point <small>the branch is made for you: a 90° turn off the main route, straight to the point, a Wait, back the same way</small>
+      <span class="inline"><button id="tool-branchpoint" class="tool" title="Pick the main route above, then click where the AMR must stop (its centre). The junction is the nearest point on a main straight, at a right angle">Stop point on map</button><select id="ed-branch-return" title="how it comes back to the main route"><option value="turn">back: turn round, forward</option><option value="reverse">back: reverse (≤ 2 m, rear not scanned)</option></select></span>
+    </label>
     <div class="bar" style="margin-top:0"><button id="btn-branch-rebase" class="tool" title="Put this POS route's branch on the newest revision of its main route (after the main route was changed)">Rebase on newest main</button></div>
     <p id="ed-branch-note" class="note"></p>
     <div class="bar">

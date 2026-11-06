@@ -61,3 +61,35 @@ def test_a_changed_main_part_or_start_is_reported():
 
 def test_a_plain_route_has_no_branch():
     assert MAIN.branch is None and "branch" not in MAIN.to_dict() and rt.branch_problem(MAIN, MAIN) is None
+
+
+def test_a_junction_inside_a_main_straight_cuts_it_in_two():
+    """The editor's stop point on the map: s1 is cut at (2, 0); its rest runs as s1_2."""
+    first = dict(S1, to={"x_m": 2.0, "y_m": 0.0})
+    rest = dict(S1, id="s1_2")
+    out = [
+        {"id": "b1", "type": "rotate", "direction": "cw", "angle_deg": 90},
+        {"id": "b2", "type": "straight", "to": {"x_m": 2.0, "y_m": -1.5}},
+        {"id": "b3", "type": "wait", "name": "POS 3"},
+        {"id": "b4", "type": "reverse", "distance_m": 1.5},
+        {"id": "b5", "type": "rotate", "direction": "ccw", "angle_deg": 90},
+    ]
+    meta = dict(
+        META,
+        rejoin_after="s1",
+        steps=[s["id"] for s in out],
+        leave_at={"x_m": 2.0, "y_m": 0.0},
+        split_id="s1_2",
+    )
+    pos = _route([first, *out, rest, S2], meta)
+    assert rt.branch_problem(pos, MAIN) is None
+    assert rt.Route.from_dict(pos.to_dict()).branch == pos.branch
+    assert [s.id for s in compile_route(pos).steps][-2:] == ["s1_2", "s2"]
+    assert "same point" in rt.branch_problem(
+        _route([first, *out, rest, S2], dict(meta, rejoin_after="s2")), MAIN
+    )
+    assert "new step id" in rt.branch_problem(
+        _route([first, *out, dict(rest, id="s2"), S2], dict(meta, split_id="s2")), MAIN
+    )
+    moved = dict(meta, leave_at={"x_m": 2.5, "y_m": 0.0})
+    assert "differs" in rt.branch_problem(_route([first, *out, rest, S2], moved), MAIN)
