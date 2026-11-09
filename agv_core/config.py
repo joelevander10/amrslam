@@ -419,7 +419,9 @@ qr_base.*
     same ground - a vehicle that drifts to one side with both encoders reading
     the same distance drives straight. Measure them with a 5 m straight run:
     the gyro's heading change against the encoders' (2026-11-05: left 1.0073,
-    right 0.9927, the vehicle drifted 11 deg right over 5 m). Mechanical causes
+    right 0.9927, the vehicle drifted 11 deg right over 5 m; 2026-11-09 with those,
+    tools/straight_run.py: 20.5 deg LEFT over 12.1 m -> left 1.0011, right 0.9988).
+    Use 8 m or more and repeat: one short run is not enough. Mechanical causes
     (tyre size, pressure, a dragging brake) are better fixed first.
 
     Wheel loop: volts = ff_offset_v + |w_motor_rpm| / ff_motor_rpm_per_volt
