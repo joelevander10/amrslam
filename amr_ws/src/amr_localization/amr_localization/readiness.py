@@ -70,6 +70,12 @@ class Jump:
     dist_m: float
     angle_rad: float
     t: float
+    # the correction in the map frame and the robot's heading then (the loss report splits it
+    # into ahead / left of the robot); 0 when it was measured without an odom pose
+    dx_m: float = 0.0
+    dy_m: float = 0.0
+    robot_yaw: float = 0.0
+    signed_angle_rad: float = 0.0
 
 
 @dataclass
@@ -173,18 +179,19 @@ class Readiness:
         if prev is None:
             return
         if odom_base is None:
-            d = math.hypot(x - prev[0], y - prev[1])
-            a = abs(_wrap(yaw - prev[2]))
+            dx, dy, ryaw = x - prev[0], y - prev[1], yaw
         else:
             px, py, _ = _apply(prev, odom_base)
-            nx, ny, _ = _apply((x, y, yaw), odom_base)
-            d = math.hypot(nx - px, ny - py)
-            a = abs(_wrap(yaw - prev[2]))
+            nx, ny, ryaw = _apply((x, y, yaw), odom_base)
+            dx, dy = nx - px, ny - py
+        d = math.hypot(dx, dy)
+        sa = _wrap(yaw - prev[2])
+        a = abs(sa)
         if d <= self.limits.jump_dist_m and a <= self.limits.jump_angle_rad:
             return
         if self._initial_t is not None and t - self._initial_t < self.limits.initial_grace_s:
             return  # snapping to the initial pose
-        self.last_jump = Jump(d, a, t)
+        self.last_jump = Jump(d, a, t, dx, dy, ryaw, sa)
         self._stable_since = None
         why = f"localisation corrected by {d:.2f} m / {math.degrees(a):.1f} deg"
         if self.state == READY:

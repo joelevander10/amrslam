@@ -9,6 +9,10 @@
   <h2>What happened <small>newest first · survives a restart</small></h2>
   <div id="events" class="al-log"><div class="none">no events yet</div></div>
 </section>
+<section class="al-losses">
+  <h2>Localisation losses <small>why the position was lost · newest first</small></h2>
+  <div id="losses" class="al-log"><div class="none">none recorded</div></div>
+</section>
 <section class="al-reports">
   <div class="bar">
     <button id="btn-report" class="big">Save report</button>
@@ -57,6 +61,30 @@ async function events() {
   setTimeout(events, 1000);
 }
 events();
+
+// Localisation losses (localization_monitor loss reports): what triggered it, the numbers and
+// the likely causes; "Show on map" draws the scan of that moment on the Run page.
+const pct = v => v == null ? '–' : `${Math.round(v * 100)} %`;
+async function losses() {
+  try {
+    const { status, data } = await apiGet('/api/loc_losses');
+    if (status === 200) {
+      document.getElementById('losses').innerHTML = (data || []).length ? data.map(r => {
+        const j = r.jump, sc = r.scan || {};
+        const nums = [j ? `corrected ${j.dist_m.toFixed(2)} m (ahead ${j.ahead_m >= 0 ? '+' : ''}${j.ahead_m.toFixed(2)}, left ${j.left_m >= 0 ? '+' : ''}${j.left_m.toFixed(2)}), turn ${j.turn_deg.toFixed(1)}°` : '',
+          `at ${(r.speed_mps || 0).toFixed(2)} m/s`,
+          `scan ${pct(sc.on_map)} on the map · ${pct(sc.unmapped)} on unmapped things · ${pct(sc.through)} through walls`,
+          r.pose ? `at x ${r.pose[0].toFixed(2)} y ${r.pose[1].toFixed(2)}` : ''].filter(Boolean).join(' · ');
+        return `<div class="al-row lv-error"><span class="al-time">${esc(r.time)}</span><span class="al-lv">${esc(r.code)}</span>` +
+          `<span class="al-msg"><span class="al-what">${esc(r.reason)}</span>${esc(nums)}` +
+          `<ul class="al-hints">${(r.hints || []).map(h => `<li>${esc(h)}</li>`).join('')}</ul>` +
+          `<i class="al-detail">report ${esc(r.name)} · <a href="/run?loss=${encodeURIComponent(r.name)}">Show on map</a></i></span></div>`;
+      }).join('') : '<div class="none">none recorded</div>';
+    }
+  } catch (e) { /* the rail reports the disconnection */ }
+  setTimeout(losses, 5000);
+}
+losses();
 
 async function reports() {
   const { status, data } = await apiGet('/api/reports');

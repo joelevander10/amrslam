@@ -97,6 +97,13 @@ def build(
                 z.write(src, os.path.join("logs", os.path.basename(src)))
             except OSError as e:
                 z.writestr(f"logs/{os.path.basename(src)}.missing", str(e))
+        loss_dir = os.path.join(os.path.expanduser(state_dir), "loc_losses")  # why localisation was lost
+        if os.path.isdir(loss_dir):
+            for n in sorted(f for f in os.listdir(loss_dir) if f.endswith(".json"))[-10:]:
+                try:
+                    z.write(os.path.join(loss_dir, n), os.path.join("loc_losses", n))
+                except OSError:
+                    pass
         for src in (
             os.path.join(os.path.expanduser(state_dir), "operations.jsonl"),
             os.path.join(os.path.expanduser("~/agv_can"), "profiles", "agv-01.json"),

@@ -19,6 +19,10 @@ from amr_maps.grid import Grid
 from amr_maps.raycast import ScanGeometry, cast
 
 OCCUPIED = 65
+# per-beam classes (compare(..., detail={})): no return / on a mapped obstacle / ended in mapped
+# free floor (something that is not on the map) / through a mapped wall into free floor / in a
+# dynamic area / unknown or off the map
+NONE, ON_MAP, UNMAPPED, THROUGH, DYNAMIC, OTHER = 0, 1, 2, 3, 4, 5
 
 
 def occupied_near(grid: Grid, tol_m: float) -> np.ndarray:
@@ -44,12 +48,15 @@ def compare(
     geom: ScanGeometry,
     tol_m: float,
     dynamic: np.ndarray | None = None,
+    detail: dict | None = None,
 ) -> tuple[float, float]:
     """(match_frac, long_frac) for a scan taken at laser pose (lx, ly, yaw) in the map frame.
 
     `dynamic` (bool, the map's shape): beams ending in a dynamic area, or whose expected wall
     lies in one, are left out of both fractions: a trolley that is there, gone or new proves
-    nothing about the pose (dynamic-mapping plan §1.2)."""
+    nothing about the pose (dynamic-mapping plan §1.2).
+    `detail` (a dict to fill, optional): x, y (every beam's endpoint in the map frame), cls (the
+    classes above) and unmapped_frac (returned beams ending on mapped free floor)."""
     ranges = np.asarray(ranges, dtype=np.float64)
     n = len(ranges)
     expected = cast(grid, lx, ly, yaw, geom)  # inf where the map has nothing within range
@@ -85,4 +92,19 @@ def compare(
     long = wall_expected & (measured > expected + tol_m) & in_free
     long_frac = float(long.sum()) / max(1, int(wall_expected.sum()))
     match_frac = float(near_obstacle[valid].mean()) if valid.sum() >= 20 else 0.0
+    if detail is not None:
+        # for the loss report (2026-11-09): every beam's endpoint and what it says
+        short = valid & ~near_obstacle & in_free & ~long  # ends in mapped free floor: an object not on the map
+        cls = np.full(n, NONE, dtype=np.int8)
+        cls[valid] = OTHER
+        cls[short] = UNMAPPED
+        cls[long] = THROUGH
+        cls[valid & near_obstacle] = ON_MAP
+        if dynamic is not None:
+            cls[drop & np.isfinite(ranges)] = DYNAMIC
+        d = np.where(np.isfinite(ranges), ranges, 0.0)
+        detail.update(
+            x=lx + d * np.cos(a), y=ly + d * np.sin(a), cls=cls,
+            unmapped_frac=float(short.sum()) / max(1, int(valid.sum())),
+        )
     return match_frac, long_frac

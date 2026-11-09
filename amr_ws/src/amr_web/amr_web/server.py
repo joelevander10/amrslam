@@ -34,6 +34,7 @@ from flask import Flask, Response, jsonify, redirect, render_template, request, 
 from amr_maps import edit as mapedit
 from amr_maps import grid as gridio
 from amr_maps import rotate as maprot
+from amr_localization import loss_report
 from amr_mission import map_bundle as mb
 from amr_navigation import footprint as fpmod
 from amr_navigation import store
@@ -1398,6 +1399,16 @@ def create_app(
         return jsonify({"ok": True, "message": "restarting; this page will reconnect"})
 
     # ---- reports: verbose on disk, short on screen ----
+
+    # why localisation was lost (2026-11-09): the localization monitor's reports
+    @app.get("/api/loc_losses")
+    def api_loc_losses():
+        return jsonify(loss_report.list_reports(app.config["STATE_DIR"])[:20])
+
+    @app.get("/api/loc_losses/<name>")
+    def api_loc_loss(name: str):
+        rep = loss_report.load(app.config["STATE_DIR"], name)
+        return jsonify(rep) if rep is not None else _result(False, f"no loss report {name}", 404)
 
     @app.get("/api/reports")
     def api_reports():

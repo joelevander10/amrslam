@@ -333,6 +333,9 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline:2px 
 .al-fill { display:flex; flex-direction:column; min-height:0; }
 .al-fill > .al-log { flex:1 1 auto; min-height:8rem; max-height:none; }
 .al-standing > .al-log { max-height:30vh; }
+.al-losses > .al-log { max-height:40vh; }
+.al-hints { margin:.3rem 0 .2rem 1.1rem; padding:0; }
+.al-hints li { margin:.1rem 0; }
 
 /* ---- status hero ---- */
 .hero { border:2px solid var(--rule); background:var(--surface); padding:1rem 1.6rem; overflow-wrap:anywhere; }

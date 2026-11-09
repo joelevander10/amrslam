@@ -81,3 +81,22 @@ def test_beams_into_dynamic_areas_move_neither_fraction():
     assert long == 0.0 and match > 0.95
     # the same scan with no mask argument is the old behaviour exactly
     assert sc.compare(g, near, 0.0, 0.0, 0.0, ranges, GEOM, TOL, None) == (match_plain, long_plain)
+
+
+def test_detail_classes_every_beam_for_the_loss_report():
+    """2026-11-09: a pallet that is not on the map, in front of a mapped wall."""
+    g = cage()
+    g.data[:, int((3.0 + 6.0) / RES)] = 0  # no mesh: a plain wall 5 m ahead
+    near = sc.occupied_near(g, TOL)
+    now = g.data.copy()
+    rows = slice(int((-0.5 + 6.0) / RES), int((0.5 + 6.0) / RES))
+    now[rows, int((2.0 + 6.0) / RES)] = 100  # the pallet, 2 m ahead, 1 m wide
+    ranges = cast(Grid(now, g.meta), 0.0, 0.0, 0.0, GEOM)
+    detail: dict = {}
+    sc.compare(g, near, 0.0, 0.0, 0.0, ranges, GEOM, TOL, None, detail)
+    cls = detail["cls"]
+    ahead = np.argmin(np.abs(GEOM.angles))
+    assert cls[ahead] == sc.UNMAPPED and abs(detail["x"][ahead] - 2.0) < 0.1
+    assert cls[np.argmin(np.abs(GEOM.angles + math.radians(30)))] == sc.ON_MAP  # -30 deg: the wall
+    assert 0.05 < detail["unmapped_frac"] < 0.4
+    assert len(detail["x"]) == len(ranges) == len(cls)

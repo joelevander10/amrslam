@@ -1017,3 +1017,19 @@ def test_continue_mapping_needs_a_revision_with_its_pose_graph(env, tmp_path):
     assert r.status_code == 202 and stub.calls[-1][0] == "survey_request"
     op, map_id, desc, _rid, rev = stub.calls[-1][1]
     assert (op, map_id, desc, rev) == (0, "sim_factory", "", 2)
+
+
+def test_localisation_loss_reports_are_served_and_listed(env, tmp_path):
+    """2026-11-09: the localization monitor's loss reports on the Alarms page and the Run map."""
+    from amr_localization import loss_report  # noqa: PLC0415
+
+    client, *_ = env
+    assert client.get("/api/loc_losses").json == []
+    rep = loss_report.build(loss_report.Recorder(), 0.0, "LOC_JUMP", "localisation corrected by 0.50 m / 1.4 deg")
+    name = loss_report.write(str(tmp_path / "state"), rep)
+    listed = client.get("/api/loc_losses").json
+    assert listed[0]["name"] == name and listed[0]["hints"]
+    assert client.get(f"/api/loc_losses/{name}").json["code"] == "LOC_JUMP"
+    assert client.get("/api/loc_losses/nope").status_code == 404
+    page = client.get("/alarms").get_data(as_text=True)
+    assert 'id="losses"' in page and "/api/loc_losses" in page

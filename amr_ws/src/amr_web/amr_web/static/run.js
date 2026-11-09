@@ -218,6 +218,36 @@ onState(st => {
 });
 $('btn-activate').onclick = () => { if (!mapId) return; operation('/api/mode', { target: 'navigation', map_id: mapId, map_revision: mapRev }); };
 $('btn-idle').onclick = () => operation('/api/mode', { target: 'idle' });
+// A localisation loss report (Alarms page, Show on map: /run?loss=<name>, 2026-11-09): the scan
+// of that moment by class, where the AMR was and where the correction put it.
+let loss = null;
+(async () => {
+  if (typeof URLSearchParams !== 'function' || typeof location === 'undefined') return;
+  const name = new URLSearchParams(location.search || '').get('loss');
+  if (!name) return;
+  const { status, data } = await apiGet(`/api/loc_losses/${encodeURIComponent(name)}`);
+  if (status !== 200) return;
+  loss = data;
+  log(`loss report ${name}: ${data.reason}. ` + (data.hints || []).join(' | '), 'bad');
+  log('on the map: green = scan on mapped walls, red = on things not on the map, orange = through mapped walls; blue arrow = where it was, dashed = the correction');
+  view.draw();
+})();
+view.overlays.push((c, v) => {
+  if (!loss) return;
+  const sp = loss.scan_points || {};
+  [['map', INK.pose], ['unmapped', INK.stop], ['through', INK.turn], ['dynamic', INK.ink3]].forEach(([k, col]) =>
+    (sp[k] || []).forEach(p => v.dot(p[0], p[1], col, 2.5)));
+  if (loss.pose) {
+    const [x, y, yaw] = loss.pose;
+    v.arrow(x, y, yaw, 0.8, INK.accent);
+    const j = loss.jump;
+    if (j) {  // the correction, drawn from where it was (ahead / left of its heading)
+      const c2 = Math.cos(yaw), s2 = Math.sin(yaw), qx = x + c2 * j.ahead_m - s2 * j.left_m, qy = y + s2 * j.ahead_m + c2 * j.left_m;
+      v.dashed([[x, y], [qx, qy]], INK.stop); v.dot(qx, qy, INK.stop, 5);
+    }
+    v.text(x, y, `lost ${loss.time.slice(11)}`, INK.stop);
+  }
+});
 view.overlays.push((c, v) => {
   if (v._preview) v.arrow(v._preview.x, v._preview.y, v._preview.yaw, 1.0, INK.preview);
   if (!viewIsActive()) return;  // executor pose and route preview are in the ACTIVE map's coordinates

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import os
 
 import numpy as np
 import rclpy
@@ -34,6 +35,7 @@ from std_srvs.srv import Empty, Trigger
 from tf2_ros import Buffer, TransformListener
 
 from amr_interfaces.msg import DriveStatus, Event, LocalizationState, WheelStates
+from amr_localization import loss_report as lr
 from amr_localization import readiness as rd
 from amr_localization import scan_consistency as consistency
 from amr_maps import grid as gridio
@@ -81,6 +83,8 @@ class LocalizationMonitor(Node):
         # older than this says both drives have their torque off
         self.declare_parameter("drives_age_limit_s", 0.5)
         self.declare_parameter("nomotion_period_s", 0.5)  # 0 = never ask AMCL for an in-place update
+        # loss reports (2026-11-09): <state_dir>/loc_losses/<time>.json, why READY dropped
+        self.declare_parameter("state_dir", os.environ.get("AMR_STATE_DIR", os.path.expanduser("~/.amr")))
         p = self.get_parameter
         self._drives_age = float(p("drives_age_limit_s").value)
         self._torque_off_t: float | None = None  # when /drives/status last said torque off
@@ -106,6 +110,9 @@ class LocalizationMonitor(Node):
             )
         )
         self._last: dict[str, float] = {}
+        self._rec = lr.Recorder()
+        self._unmapped: float | None = None
+        self._state_dir = os.path.expanduser(str(p("state_dir").value))
         self._last_state: int | None = None
         self._last_reason = ""
         self._match_tol_cells = 0
@@ -213,9 +220,13 @@ class LocalizationMonitor(Node):
         geom = ScanGeometry(
             msg.angle_min, msg.angle_min + (n - 1) * msg.angle_increment, n, msg.range_min, max_r
         )
+        detail: dict = {}
         match_frac, long_frac = consistency.compare(
-            self._grid, self._occ_near, lx, ly, yaw, ranges, geom, self._match_tol, self._dynamic
+            self._grid, self._occ_near, lx, ly, yaw, ranges, geom, self._match_tol, self._dynamic, detail
         )
+        if detail:
+            self._unmapped = detail["unmapped_frac"]
+            self._rec.scan = {"t": t, "laser": (lx, ly, yaw), "x": detail["x"], "y": detail["y"], "cls": detail["cls"]}
         stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
         self.rd.on_scan_match(t, match_frac, long_frac, stamp)
 
@@ -243,6 +254,7 @@ class LocalizationMonitor(Node):
 
     def _tick(self) -> None:
         t = self._now()
+        pose = None
         try:
             tr = self.tf_buffer.lookup_transform("map", "odom", rclpy.time.Time())
             q = tr.transform.rotation
@@ -262,20 +274,36 @@ class LocalizationMonitor(Node):
             except Exception:  # noqa: BLE001
                 pass
             self.rd.on_map_odom(t, tr.transform.translation.x, tr.transform.translation.y, yaw, odom_base)
+            if odom_base is not None:
+                pose = rd._apply((tr.transform.translation.x, tr.transform.translation.y, yaw), odom_base)
         except Exception:  # noqa: BLE001 - no transform yet is a normal state
             pass
         ages = {k: (t - self._last[k]) if k in self._last else None for k in ("scan", "wheels", "imu", "tf")}
+        self._rec.add(lr.Sample(t, pose, ages, self.rd.cov, self.rd.scan_match, self.rd.scan_long, self._unmapped))
         held = self._torque_off_t is not None and t - self._torque_off_t <= self._drives_age
         self.rd.evaluate(t, ages, frozenset({"wheels"}) if held else frozenset())
         self._request_nomotion(t)
         if self.rd.state != self._last_state or self.rd.reason != self._last_reason:
             if self.rd.state != self._last_state:
                 self.get_logger().info(f"{rd.NAMES[self.rd.state]}: {self.rd.reason}")
-                self._event()
+                self._event(self._loss_report(t) if self.rd.state == rd.LOST else "")
             self._last_state, self._last_reason = self.rd.state, self.rd.reason
             self._publish()
 
-    def _event(self) -> None:
+    def _loss_report(self, t: float) -> str:
+        """Why READY dropped (loss_report): written to <state_dir>/loc_losses, summarised in the
+        event. Never lets a reporting problem touch localisation itself."""
+        try:
+            jump = self.rd.last_jump if self.rd.code == "LOC_JUMP" else None
+            rep = lr.build(self._rec, t, self.rd.code, self.rd.reason, jump, self.rd.limits)
+            name = lr.write(self._state_dir, rep)
+            self.get_logger().warning(f"loss report {name}: " + " | ".join(rep["hints"]))
+            return lr.summary(rep, name)
+        except Exception as e:  # noqa: BLE001
+            self.get_logger().error(f"loss report failed: {e!r}")
+            return ""
+
+    def _event(self, text: str = "") -> None:
         code = self.rd.code or "MODE_CHANGE"
         row = alarms.get(code)
         m = Event()
@@ -283,7 +311,7 @@ class LocalizationMonitor(Node):
         m.source = "localization_monitor"
         m.level = {alarms.ERROR: Event.ERROR, alarms.WARN: Event.WARN}.get(row.severity, Event.INFO)
         m.code = code
-        m.text = f"localisation {rd.NAMES[self.rd.state]}: {self.rd.reason}"
+        m.text = f"localisation {rd.NAMES[self.rd.state]}: " + (text or self.rd.reason)
         self._event_seq += 1
         m.seq = self._event_seq
         self._pub_event.publish(m)
