@@ -39,6 +39,9 @@ class Sample:
     scan_match: float | None
     scan_long: float | None
     unmapped: float | None
+    # odom frame (wheels + IMU only): the speed and turn rate come from it, so a localisation
+    # correction inside the window does not show up as speed (2026-11-09: "0.96 m/s")
+    odom: tuple[float, float, float] | None = None
 
 
 class Recorder:
@@ -53,8 +56,11 @@ class Recorder:
             self.samples.popleft()
 
     def motion(self, t: float, span: float = 1.0) -> tuple[float, float, float]:
-        """(speed m/s, turn rate rad/s, distance over the window) from the pose history."""
-        poses = [(s.t, s.pose) for s in self.samples if s.pose is not None]
+        """(speed m/s, turn rate rad/s, distance over the window) from the odom pose history
+        (the map pose where no odom pose was recorded)."""
+        use_odom = any(s.odom is not None for s in self.samples)
+        poses = [(s.t, s.odom if use_odom else s.pose) for s in self.samples]
+        poses = [p for p in poses if p[1] is not None]
         dist = sum(math.hypot(b[1][0] - a[1][0], b[1][1] - a[1][1]) for a, b in zip(poses, poses[1:]))  # noqa: B905
         recent = [p for p in poses if t - p[0] <= span]
         if len(recent) < 2 or recent[-1][0] - recent[0][0] < 0.2:

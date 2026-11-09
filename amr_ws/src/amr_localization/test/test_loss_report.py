@@ -80,3 +80,15 @@ def test_a_confirmed_correction_says_the_amr_kept_going():
     rep = lr.build(rec, 10.0, "LOC_CORRECTED", "localisation corrected by 0.16 m / 1.2 deg, scan fits", jump)
     assert "kept going" in rep["hints"][0] and "wheel" in rep["hints"][0]
     assert any("along the path" in h for h in rep["hints"])
+
+
+def test_speed_comes_from_odom_so_a_correction_is_not_speed():
+    """2026-11-09: a report said 0.96 m/s on a 0.80 m/s route."""
+    rec = lr.Recorder()
+    for i in range(11):
+        t = 9.0 + 0.1 * i
+        odom = (0.8 * t, 0.0, 0.0)
+        shift = 0.2 if i >= 5 else 0.0  # AMCL moved the map pose 0.2 m forward mid-window
+        rec.add(lr.Sample(t, (odom[0] + shift, 0.0, 0.0), dict(AGES), None, 0.9, 0.0, 0.0, odom))
+    v, _w, _d = rec.motion(10.0)
+    assert abs(v - 0.8) < 1e-6

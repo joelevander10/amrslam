@@ -259,7 +259,7 @@ class LocalizationMonitor(Node):
 
     def _tick(self) -> None:
         t = self._now()
-        pose = None
+        pose = odom_base = None
         try:
             tr = self.tf_buffer.lookup_transform("map", "odom", rclpy.time.Time())
             q = tr.transform.rotation
@@ -285,7 +285,9 @@ class LocalizationMonitor(Node):
             pass
         ages = {k: (t - self._last[k]) if k in self._last else None for k in ("scan", "wheels", "imu", "tf")}
         rdn = self.rd
-        self._rec.add(lr.Sample(t, pose, ages, rdn.cov, rdn.scan_match, rdn.scan_long, self._unmapped))
+        self._rec.add(
+            lr.Sample(t, pose, ages, rdn.cov, rdn.scan_match, rdn.scan_long, self._unmapped, odom_base)
+        )
         held = self._torque_off_t is not None and t - self._torque_off_t <= self._drives_age
         self.rd.evaluate(t, ages, frozenset({"wheels"}) if held else frozenset())
         self._request_nomotion(t)
