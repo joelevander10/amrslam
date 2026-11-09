@@ -96,9 +96,10 @@ const homeLegAt = i => homeLeg(poseAfter(i), poseAfter(0));
 function setTool(t) {
   const was = view.tool;
   view.tool = t; view._linePreview = null;
-  ['tool-start', 'tool-line', 'tool-measure', 'tool-branchpoint'].forEach(id => $(id).classList.toggle('on', id === 'tool-' + t));
+  ['tool-start', 'tool-line', 'tool-measure', 'tool-branchpoint', 'tool-slowzone'].forEach(id => $(id).classList.toggle('on', id === 'tool-' + t));
   $('ed-hint').textContent = t === 'start' ? 'Click the start position, drag towards the heading, release.'
     : t === 'line' ? 'Click a point, or type a length in mm and press Add: the straight goes along the current heading.'
+    : t === 'slowzone' ? 'Slow zone: click A on the route (where the AMR must already be slow), then B (where it may speed up again). Type the speed first.'
     : t === 'branchpoint' ? 'Click where the AMR must stop for this POS (its centre). The branch leaves the nearest main straight at a right angle, waits there and comes back.'
     : t === 'measure' ? 'Measure: click A, then B. Snaps to waits, arc centres, step ends and route lines (this draft and the saved routes, drawn faint). Shift or untick Snap = exactly where you click. Esc clears. Drag = pan.'
     : 'Wheel = zoom, drag = pan.';
@@ -170,19 +171,93 @@ function straightV(text) {
 }
 // Speed waypoint: split straight i at `d` metres from its start into two straights on the same
 // line; both keep its speed. The first keeps the id (missions and checkpoints name it).
-function splitStraight(i, d) {
+// A POS route's main part must stay exactly its main route (server check): it is changed on
+// the main route, then Rebase. Its own branch steps may be split / slowed here.
+function mainPartStep(s) {
+  return !!(route.branch && route.branch.rejoin_after && !route.branch.steps.includes(s.id));
+}
+const MAIN_PART_MSG = s => `${s.id} is part of the main route ${route.branch.main_route_id}: add the slow zone to the main route (load it, change it, save), then load this POS route and Rebase on newest main`;
+function splitAt(i, d) {  // no snapshot, no refresh: the new step's id, or null (logged)
   const s = route.steps[i];
-  if (!s || s.type !== 'straight') { log('pick a straight to split', 'bad'); return; }
+  if (!s || s.type !== 'straight') { log('pick a straight to split', 'bad'); return null; }
+  if (mainPartStep(s)) { log(MAIN_PART_MSG(s), 'bad'); return null; }
   const a = poseAfter(i), L = stepLength(i);
-  if (!(d >= MIN_STRAIGHT_M && d <= L - MIN_STRAIGHT_M)) { log(`the waypoint must be ${mm(MIN_STRAIGHT_M)}–${mm(L - MIN_STRAIGHT_M)} mm from the start of ${s.id}`, 'bad'); return; }
+  if (!(d >= MIN_STRAIGHT_M && d <= L - MIN_STRAIGHT_M)) { log(`the waypoint must be ${mm(MIN_STRAIGHT_M)}–${mm(L - MIN_STRAIGHT_M)} mm from the start of ${s.id}`, 'bad'); return null; }
   const id = nextId(), tail = { id, type: 'straight', to: { ...s.to } };
   if (s.v_mps != null) tail.v_mps = s.v_mps;
-  snapshot();
   route.steps[i] = { ...s, to: { x_m: a.x + Math.cos(a.yaw) * d, y_m: a.y + Math.sin(a.yaw) * d } };
   route.steps.splice(i + 1, 0, tail);
+  if (route.branch && route.branch.steps.includes(s.id)) route.branch.steps.splice(route.branch.steps.indexOf(s.id) + 1, 0, id);
+  return id;
+}
+function splitStraight(i, d) {
+  const before = JSON.stringify(route), s = route.steps[i], L = s ? stepLength(i) : 0;
+  const id = splitAt(i, d); if (!id) return;
+  history.push(before); future = []; draftToken += 1; lastResult = null; savedRef = null;  // one undo step
   refresh();
   log(`${s.id} split at ${mm(d)} mm: ${s.id} ${mm(d)} mm + ${id} ${mm(L - d)} mm. Set a speed on either part in the step list.`);
 }
+// Slow zone on map (2026-11-06): A and B clicked on the route's straights; both are split
+// there (or snap to a step end within 50 mm) and every straight from A to B gets the speed.
+// The executor slows down before A (so the AMR is slow AT A) and speeds up after B.
+let slowA = null;  // { i, along, L, pos } of the first click
+function routePoint(w) {  // the nearest straight of the draft, within 0.5 m: { i, along, L, pos } or null
+  let best = null, pos = 0;
+  route.steps.forEach((s, i) => {
+    const L = stepLength(i);
+    if (s.type === 'straight') {
+      const a = poseAfter(i), c = Math.cos(a.yaw), sn = Math.sin(a.yaw), dx = w[0] - a.x, dy = w[1] - a.y;
+      const along = dx * c + dy * sn, lat = Math.abs(-dx * sn + dy * c);
+      if (along >= -0.05 && along <= L + 0.05 && lat <= 0.5 && (!best || lat < best.lat)) {
+        const al = Math.min(L, Math.max(0, along));
+        best = { i, along: al, L, lat, pos: pos + al, id: s.id };
+      }
+    }
+    pos += L;
+  });
+  return best;
+}
+function slowClick(w) {
+  if (!route.start || !route.steps.length) { log('load or draw the route first', 'bad'); return; }
+  const p = routePoint(w);
+  if (!p) { log('click ON a straight of the route (within 0.5 m of it)', 'bad'); return; }
+  if (mainPartStep(route.steps[p.i])) { log(MAIN_PART_MSG(route.steps[p.i]), 'bad'); return; }
+  if (!slowA) { slowA = p; view.draw(); log(`A on ${p.id}, ${mm(p.along)} mm along it: now click B, where it may speed up again`); return; }
+  const v = straightV($('ed-slow-v').value);
+  if (v === false) return;
+  if (v === null) { log('type the slow zone speed in m/s first (e.g. 0.30)', 'bad'); return; }
+  let [A, B] = slowA.pos <= p.pos ? [slowA, p] : [p, slowA];
+  slowA = null;
+  if (B.pos - A.pos < 0.1) { log('A and B are less than 100 mm apart along the route', 'bad'); view.draw(); return; }
+  const before = JSON.stringify(route);
+  const snap = 0.05, cut = P => P.along > snap && P.along < P.L - snap;
+  // boundary index = the first step INSIDE the zone (A) / the first step AFTER it (B)
+  let jA = A.along >= A.L - snap ? A.i + 1 : A.i;
+  if (cut(A)) {
+    if (!splitAt(A.i, A.along)) { route = JSON.parse(before); refresh(); return; }
+    jA = A.i + 1;
+    if (B.i === A.i) B = Object.assign({}, B, { i: A.i + 1, along: B.along - A.along, L: B.L - A.along });
+    else B = Object.assign({}, B, { i: B.i + 1 });
+  }
+  let jB = B.along <= snap ? B.i : B.i + 1;
+  if (cut(B)) {
+    if (!splitAt(B.i, B.along)) { route = JSON.parse(before); refresh(); return; }
+    jB = B.i + 1;
+  }
+  const slowed = [], kept = [];
+  for (let k = jA; k < jB; k++) {
+    const s = route.steps[k];
+    if (s.type !== 'straight') { kept.push(s.id); continue; }
+    if (mainPartStep(s)) { route = JSON.parse(before); refresh(); log(MAIN_PART_MSG(s), 'bad'); return; }
+    s.v_mps = v; slowed.push(s.id);
+  }
+  if (!slowed.length) { route = JSON.parse(before); refresh(); log('no straight between A and B to slow down', 'bad'); return; }
+  history.push(before); if (history.length > 100) history.shift(); future = []; draftToken += 1; lastResult = null; savedRef = null;
+  refresh();
+  log(`slow zone ${num(v, 2)} m/s on ${slowed.join(', ')}${kept.length ? ` (${kept.join(', ')} keep their own speed)` : ''}: ` +
+      'it slows down before A and speeds up after B. Validate, Save revision, then Create mission again.');
+}
+$('tool-slowzone').onclick = () => { slowA = null; setTool(view.tool === 'slowzone' ? null : 'slowzone'); };
 $('btn-split').onclick = () => {
   const i = route.steps.findIndex(s => s.id === $('ed-split-step').value), v = $('ed-split-mm').valueAsNumber;
   if (i < 0) { log('pick the straight to split', 'bad'); return; }
@@ -193,6 +268,7 @@ $('btn-split').onclick = () => {
 $('ed-steps').addEventListener('change', e => {
   const el = e.target; if (!el.classList || !el.classList.contains('sv')) return;
   const s = route.steps[+el.dataset.i]; if (!s || s.type !== 'straight') return;
+  if (mainPartStep(s)) { el.value = s.v_mps ?? ''; log(MAIN_PART_MSG(s), 'bad'); return; }
   const v = straightV(el.value);
   if (v === false) { el.value = s.v_mps ?? ''; return; }
   snapshot();
@@ -203,6 +279,7 @@ $('ed-steps').addEventListener('change', e => {
 view.onClick = w => {
   if (view.tool === 'measure') { measureClick(w); return; }
   if (view.tool === 'branchpoint') { autoBranch(w); return; }
+  if (view.tool === 'slowzone') { slowClick(w); return; }
   if (view.tool === 'start') { snapshot(); route.start = { x_m: w[0], y_m: w[1], yaw_deg: route.start ? route.start.yaw_deg : 0 }; refresh(); return; }
   if (view.tool === 'line') { const along = alongTo(w); if (along === null) { log('set the start pose first', 'bad'); return; } addStraight(along); }
 };
@@ -482,6 +559,10 @@ view.overlays.push((c, v) => {
   if (onActive && st && st.state_name !== 'UNLOCALIZED' && lastState.run && lastState.run.pose_x !== undefined) v.arrow(lastState.run.pose_x, lastState.run.pose_y, lastState.run.pose_yaw, 0.8, INK.accent);
 });
 view.overlays.push((c, v) => {
+  if (v.tool === 'slowzone' && slowA) {
+    const a = poseAfter(slowA.i), q = { x: a.x + Math.cos(a.yaw) * slowA.along, y: a.y + Math.sin(a.yaw) * slowA.along };
+    v.dot(q.x, q.y, INK.turn, 6); v.text(q.x, q.y, 'A slow from here', INK.turn);
+  }
   // Stop point on map: the main route faint, the junction and the stop point a click would make
   if (v.tool === 'branchpoint' && branchMain) branchMain.steps.forEach((s, i) => {
     if (s.type !== 'straight') return;

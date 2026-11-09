@@ -173,8 +173,9 @@ def test_editor_branch_route_is_main_plus_branch_and_rejoins_exactly():
 def test_editor_stop_point_on_the_map_makes_a_pos_route_the_server_accepts():
     """One click beside the main route: the editor's whole POS route (junction inside a main
     straight, or at a step end) is exactly main + branch for amr_navigation and compiles."""
-    from amr_navigation import route as rt  # noqa: PLC0415
     from amr_navigation.compiler import compile_route  # noqa: PLC0415
+
+    from amr_navigation import route as rt  # noqa: PLC0415
 
     harness = pathlib.Path(__file__).with_name("editor_harness.js")
     r = subprocess.run([NODE, str(harness)], capture_output=True, text=True, timeout=30)
@@ -223,3 +224,51 @@ def test_editor_stop_point_on_the_map_makes_a_pos_route_the_server_accepts():
         "reverse",
         "rotate",
     ]
+
+
+@pytest.mark.skipif(NODE is None, reason="node not installed")
+def test_editor_slow_zone_on_a_drawn_route_splits_at_a_and_b():
+    """2026-11-06: two clicks on a saved route - A inside s1, B inside s3 after a turn - split
+    both straights there; the parts between run slow, the turn keeps its own speed, one Undo
+    takes it all back, and the result compiles with the slow parts at 0.30 m/s."""
+    from amr_navigation.compiler import compile_route  # noqa: PLC0415
+
+    from amr_navigation import route as rt  # noqa: PLC0415
+
+    harness = pathlib.Path(__file__).with_name("editor_harness.js")
+    r = subprocess.run([NODE, str(harness)], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    assert "error" not in out, out
+    assert out["slow_steps"] == [
+        ["s1", "straight", [8000, 0], None],
+        ["s4", "straight", [10000, 0], 0.3],
+        ["s2", "rotate", None, None],
+        ["s3", "straight", [10000, 2000], 0.3],
+        ["s5", "straight", [10000, 5000], None],
+    ]
+    assert out["slow_undone"] == ["s1", "s2", "s3"]
+    steps = []
+    for sid, typ, to, v in out["slow_steps"]:
+        if typ == "rotate":
+            steps.append({"id": sid, "type": "rotate", "direction": "ccw", "angle_deg": 90})
+        else:
+            steps.append(
+                {
+                    "id": sid,
+                    "type": typ,
+                    "to": {"x_m": to[0] / 1000, "y_m": to[1] / 1000},
+                    **({"v_mps": v} if v else {}),
+                }
+            )
+    route = rt.Route.from_dict(
+        {
+            "schema_version": rt.SCHEMA_VERSION,
+            "route_id": "loop",
+            "map": {"id": "m", "revision": 1, "sha256": ""},
+            "start": {"x_m": 0, "y_m": 0, "yaw_deg": 0},
+            "steps": steps,
+        }
+    )
+    speeds = {s.id: s.v_mps for s in compile_route(route).steps if s.type == "straight"}
+    assert speeds["s4"] == speeds["s3"] == 0.3 and speeds["s1"] == speeds["s5"] == rt.VEHICLE_V_MAX

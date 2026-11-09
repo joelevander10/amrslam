@@ -157,6 +157,22 @@ plugged in or replugged while running); the journal says `USB keypad connected: 
 6. Press **Save map revision**. The mode returns to `IDLE`, and the map appears as
    `<id> rev N`. A revision never changes; surveying the same id again creates `rev N+1`.
 
+### 3b. Continue mapping: add a new area to a saved map
+
+1. Maps page, the revision to extend: **Continue mapping** (only revisions that keep their
+   SLAM pose graph show it: every surveyed or edited revision; not a **Rotate map** revision -
+   continue from the one before the rotation, then rotate again).
+2. The Survey session box says **Continue mapping … from `<map>` rev N**. Put the AMR **on that
+   map's survey mark, facing as when it was mapped**, standing still, then press **Continue
+   `<map>` rev N (start survey)**. SLAM loads the saved map and goes on from the mark.
+3. Drive slowly at first so the scans lock onto the known walls, then drive the new area.
+   Come back to the mark, **Returned to start**, check the closure, **Save map revision**.
+4. The result is `<map>` rev N+1, **in the same coordinates**: the old area keeps every cell
+   it had (your noise / obstacle edits too), the new area is added, dynamic areas are carried
+   over. Routes, POS branches, stop points and the homepost keep their places; draw the new
+   routes on rev N+1, re-validate the old ones there and **Create mission** again. Areas you
+   had erased to unknown may come back if the AMR sees them on this run.
+
 ### 3a. Clean up the map: noise, static and dynamic obstacles
 
 Engineer view → **Maps** → **Edit areas** on the revision. Pick a tool, drag a rectangle
@@ -228,6 +244,14 @@ ros2 run amr_mission map_edit --map block_c --rev 1 --despeckle-rect -50 -50 50 
    (the executor brakes for the end of a move at 0.2 m/s²). A straight of about 3.5 m
    between two stops reaches 0.80. **At 0.80 m/s the red protective field must be about
    1 m long** (§5b).
+
+   **Slow zone on an existing route** (no redrawing): **Load saved** the route, type the speed
+   under **Slow zone on map** (e.g. 0.30), press the button and click **A** on the route
+   (where the AMR must already be slow), then **B** (where it may speed up again). The
+   straights are cut at A and B and the part between gets the speed - across turns too (a
+   turn or arc keeps its own speed). One **Undo** takes it back. Validate, **Save revision**,
+   **Create mission** again. On a POS route only its own branch can be changed this way: put a
+   slow zone on the main part into the main route, then **Rebase on newest main**.
 
    **Slow zones (speed waypoints).** A straight can have its own, lower speed: type it in the
    straight's box in the **Steps** list (empty = the route speed), or in **Straight speed**

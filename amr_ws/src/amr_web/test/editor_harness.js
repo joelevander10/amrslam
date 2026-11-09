@@ -217,5 +217,19 @@ const flush = () => new Promise(r => setImmediate(r));
   await els['btn-save'].onclick(); for (let i = 0; i < 3; i++) await flush();
   out.auto_rev_steps = savedSteps;
   out.auto_rev_branch = lastSavedBranch;
+  // --- Slow zone on map (2026-11-06): on a route already drawn, A and B clicked ---
+  vm.runInContext(`route = { route_id: 'loop', start: { x_m: 0, y_m: 0, yaw_deg: 0 }, repeat_count: 1, limits: {}, branch: null,
+    steps: [{ id: 's1', type: 'straight', to: { x_m: 10, y_m: 0 } }, { id: 's2', type: 'rotate', direction: 'ccw', angle_deg: 90 },
+            { id: 's3', type: 'straight', to: { x_m: 10, y_m: 5 } }] }; refresh();`, ctx);
+  doc.getElementById('ed-slow-v').value = '0.3';
+  els['tool-slowzone'].onclick();
+  theView.onClick([8.0, 0.2]);                                    // A: 8 m along s1
+  theView.onClick([9.9, 2.0]);                                    // B: 2 m along s3, past the turn
+  els['ed-route-id'].value = 'loop';
+  await els['btn-save'].onclick(); for (let i = 0; i < 3; i++) await flush();
+  out.slow_steps = savedSteps.map(s => [s.id, s.type, s.to ? [Math.round(s.to.x_m * 1000), Math.round(s.to.y_m * 1000)] : null, s.v_mps ?? null]);
+  els['btn-undo'].onclick();                                      // one undo removes the whole zone
+  await els['btn-save'].onclick(); for (let i = 0; i < 3; i++) await flush();
+  out.slow_undone = savedSteps.map(s => s.id);
   console.log(JSON.stringify(out));
 })().catch(e => { console.log(JSON.stringify({ error: String(e && e.stack || e) })); });
