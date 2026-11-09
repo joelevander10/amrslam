@@ -226,7 +226,8 @@ class LocalizationMonitor(Node):
         )
         if detail:
             self._unmapped = detail["unmapped_frac"]
-            self._rec.scan = {"t": t, "laser": (lx, ly, yaw), "x": detail["x"], "y": detail["y"], "cls": detail["cls"]}
+            self._rec.scan = {"t": t, "laser": (lx, ly, yaw), "x": detail["x"], "y": detail["y"]}
+            self._rec.scan["cls"] = detail["cls"]
         stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
         self.rd.on_scan_match(t, match_frac, long_frac, stamp)
 
@@ -279,7 +280,8 @@ class LocalizationMonitor(Node):
         except Exception:  # noqa: BLE001 - no transform yet is a normal state
             pass
         ages = {k: (t - self._last[k]) if k in self._last else None for k in ("scan", "wheels", "imu", "tf")}
-        self._rec.add(lr.Sample(t, pose, ages, self.rd.cov, self.rd.scan_match, self.rd.scan_long, self._unmapped))
+        rdn = self.rd
+        self._rec.add(lr.Sample(t, pose, ages, rdn.cov, rdn.scan_match, rdn.scan_long, self._unmapped))
         held = self._torque_off_t is not None and t - self._torque_off_t <= self._drives_age
         self.rd.evaluate(t, ages, frozenset({"wheels"}) if held else frozenset())
         self._request_nomotion(t)

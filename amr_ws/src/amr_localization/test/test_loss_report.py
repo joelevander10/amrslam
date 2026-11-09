@@ -14,8 +14,17 @@ def _driving(rec, v=0.7, t_end=10.0, yaw=0.0, unmapped=0.05, match=0.85):
     t = 0.0
     while t <= t_end + 1e-9:
         x = v * t
-        rec.add(lr.Sample(t, (x * math.cos(yaw), x * math.sin(yaw), yaw), dict(AGES), (0.01, 0.01, 0.001),
-                          match, 0.02, unmapped))
+        rec.add(
+            lr.Sample(
+                t,
+                (x * math.cos(yaw), x * math.sin(yaw), yaw),
+                dict(AGES),
+                (0.01, 0.01, 0.001),
+                match,
+                0.02,
+                unmapped,
+            )
+        )
         t += 0.1
 
 
@@ -24,8 +33,13 @@ def test_a_sideways_jump_while_driving_straight_points_at_the_lidar_or_the_map(t
     _driving(rec, yaw=math.pi / 2)  # driving north at 0.7 m/s
     # the correction: 0.48 m to the robot's left (west, -x) and 0.1 m back
     jump = rd.Jump(0.49, math.radians(1.4), 10.0, -0.48, -0.10, math.pi / 2, math.radians(1.4))
-    rec.scan = {"t": 9.9, "laser": (0.0, 7.0, math.pi / 2), "x": np.array([0.0, 1.0, 2.0]),
-                "y": np.array([8.0, 8.0, 8.0]), "cls": np.array([1, 2, 3], dtype=np.int8)}
+    rec.scan = {
+        "t": 9.9,
+        "laser": (0.0, 7.0, math.pi / 2),
+        "x": np.array([0.0, 1.0, 2.0]),
+        "y": np.array([8.0, 8.0, 8.0]),
+        "cls": np.array([1, 2, 3], dtype=np.int8),
+    }
     rep = lr.build(rec, 10.0, "LOC_JUMP", "localisation corrected by 0.49 m / 1.4 deg", jump)
     assert rep["jump"] == {"dist_m": 0.49, "ahead_m": -0.1, "left_m": 0.48, "turn_deg": 1.4}
     assert rep["speed_mps"] == 0.7 and abs(rep["turn_rad_s"]) < 1e-6 and rep["travelled_m"] > 6.9

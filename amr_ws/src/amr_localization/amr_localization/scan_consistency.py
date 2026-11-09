@@ -94,7 +94,8 @@ def compare(
     match_frac = float(near_obstacle[valid].mean()) if valid.sum() >= 20 else 0.0
     if detail is not None:
         # for the loss report (2026-11-09): every beam's endpoint and what it says
-        short = valid & ~near_obstacle & in_free & ~long  # ends in mapped free floor: an object not on the map
+        # ends in mapped free floor: an object that is not on the map
+        short = valid & ~near_obstacle & in_free & ~long
         cls = np.full(n, NONE, dtype=np.int8)
         cls[valid] = OTHER
         cls[short] = UNMAPPED

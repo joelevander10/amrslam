@@ -112,7 +112,11 @@ def build(rec: Recorder, t: float, code: str, reason: str, jump=None, limits=Non
             name = CLASS_NAMES.get(int(rec.scan["cls"][i]))
             if name:
                 pts[name].append([round(float(rec.scan["x"][i]), 3), round(float(rec.scan["y"][i]), 3)])
-        rep["scan_points"] = {"laser": [round(float(x), 4) for x in rec.scan["laser"]], "age_s": round(t - rec.scan["t"], 2), **pts}
+        rep["scan_points"] = {
+            "laser": [round(float(x), 4) for x in rec.scan["laser"]],
+            "age_s": round(t - rec.scan["t"], 2),
+            **pts,
+        }
     return rep
 
 
@@ -129,31 +133,31 @@ def hints(rep: dict, limits=None) -> list[str]:
     unm, on_map, thr = sc.get("unmapped"), sc.get("on_map"), sc.get("through")
     if unm is not None and unm >= 0.25:
         out.append(
-            f"{100 * unm:.0f} % of the scan hit things that are not on the map (trolleys, pallets, people, a new "
-            "rack): mark that area dynamic (Edit areas) or map it again as it is now"
+            f"{100 * unm:.0f} % of the scan hit things that are not on the map (trolleys, pallets, people, "
+            "a new rack): mark that area dynamic (Edit areas) or map it again as it is now"
         )
     if thr is not None and thr >= 0.10:
         out.append(
-            f"{100 * thr:.0f} % of beams went THROUGH walls on the map: something mapped is gone (a door open, "
-            "a rack moved) or the pose was already off"
+            f"{100 * thr:.0f} % of beams went THROUGH walls on the map: something mapped is gone "
+            "(a door open, a rack moved) or the pose was already off"
         )
     if on_map is not None and on_map < 0.5 and (unm is None or unm < 0.25):
         out.append(
-            f"only {100 * on_map:.0f} % of the scan lay on mapped walls, without many unmapped objects: the map "
-            "does not fit here - twisted while mapping (lidar angle) or the place changed"
+            f"only {100 * on_map:.0f} % of the scan lay on mapped walls, without many unmapped objects: "
+            "the map does not fit here - twisted while mapping (lidar angle) or the place changed"
         )
     j = rep.get("jump")
     if j:
         ah, le = abs(j["ahead_m"]), abs(j["left_m"])
         if le > 2 * ah and abs(rep["turn_rad_s"]) < 0.1:
             out.append(
-                f"the correction was sideways ({j['left_m']:+.2f} m) while driving straight: a lidar not facing "
-                "straight ahead (tools/lidar_yaw.py) or a twisted map"
+                f"the correction was sideways ({j['left_m']:+.2f} m) while driving straight: a lidar "
+                "not facing straight ahead (tools/lidar_yaw.py) or a twisted map"
             )
         elif ah > 2 * le:
             out.append(
-                f"the correction was along the path ({j['ahead_m']:+.2f} m): a long aisle with little across it "
-                "to measure distance by, or wheel slip"
+                f"the correction was along the path ({j['ahead_m']:+.2f} m): a long aisle with little "
+                "across it to measure distance by, or wheel slip"
             )
         if abs(rep["turn_rad_s"]) >= 0.15:
             out.append(
@@ -162,11 +166,15 @@ def hints(rep: dict, limits=None) -> list[str]:
             )
     cov = rep.get("cov")
     if cov and (cov[0] > 0.05 or cov[1] > 0.05):
-        out.append(f"AMCL was unsure (spread {math.sqrt(max(cov[0], cov[1])):.2f} m): few fixed walls in view here")
+        out.append(
+            f"AMCL was unsure (spread {math.sqrt(max(cov[0], cov[1])):.2f} m): few fixed walls in view here"
+        )
     if rep["speed_mps"] >= 0.6:
         out.append(f"at {rep['speed_mps']:.2f} m/s: if it only happens fast, try the same place slower")
     if not out:
-        out.append("no single cause stands out: look at the scan points on the map (Alarms page, Show on map)")
+        out.append(
+            "no single cause stands out: look at the scan points on the map (Alarms page, Show on map)"
+        )
     return out
 
 
@@ -191,7 +199,9 @@ def write(state_dir: str, rep: dict, keep: int = KEEP_REPORTS) -> str:
     os.makedirs(d, exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
     # the counter keeps names in time order, also within one second (never reused after a prune)
-    used = [f[len(stamp) + 1 : -5] for f in os.listdir(d) if f.startswith(stamp + "-") and f.endswith(".json")]
+    used = [
+        f[len(stamp) + 1 : -5] for f in os.listdir(d) if f.startswith(stamp + "-") and f.endswith(".json")
+    ]
     k = 1 + max((int(u) for u in used if u.isdigit()), default=0)
     path = os.path.join(d, f"{stamp}-{k:02d}.json")
     tmp = path + ".tmp"
@@ -219,8 +229,10 @@ def list_reports(state_dir: str) -> list[dict]:
                 rep = json.load(fh)
         except (OSError, ValueError):
             continue
-        out.append({k: rep.get(k) for k in ("time", "code", "reason", "pose", "speed_mps", "jump", "scan", "hints")}
-                   | {"name": f[:-5]})
+        out.append(
+            {k: rep.get(k) for k in ("time", "code", "reason", "pose", "speed_mps", "jump", "scan", "hints")}
+            | {"name": f[:-5]}
+        )
     return out
 
 

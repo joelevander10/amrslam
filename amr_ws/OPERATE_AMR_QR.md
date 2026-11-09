@@ -459,12 +459,31 @@ put slow zones on every straight where something can step in.
 | Run `FAULT`, "drives did not power up" | No torque within 8 s of START (E-stop, push mode, I/O lost) | Fix it, then START again |
 | Run `FAULT` | Sensor, drive, localisation or a tolerance exceeded | Read the reason, fix it, press **Ack fault** (or **STOP** in MANUAL). Then **Continue route from here** + START to go on from that step (§5a), or Load + START from the route start |
 | Run aborted (Abort / STOP in AUTO) | The run was ended by hand | **Continue route from here** + START (§5a), or Load + START from the route start |
-| Localisation `LOST` | Sensor stale, pose uncertain or jumped | Set the initial pose again and **Confirm** |
+| Localisation `LOST` | Sensor stale, pose uncertain or jumped | **Alarms → Localisation losses** says why (below); set the initial pose again and **Confirm** |
 | Drives `FAULT: ... stalled` | A wheel was commanded but did not turn for 2 s: blocked wheel, driver alarm or disabled, no motor power | Fix the cause, then `ros2 service call /drives/ack_fault std_srvs/srv/Trigger` |
 | Drives `FAULT: ... AGAINST the command` | Wheel turned the wrong way: a sign in the profile is wrong | **Do not drive.** Recheck `invert_*` / `enc_invert_*` on blocks (INSTALL step 17) |
 | Drives `FAULT: encoder feedback lost` / `I/O modules lost` | CAN or Modbus link dropped | Check cables, `can0`, the modules; then ack the fault |
 | Selector `INVALID` / `STALE` | DIO module not answering | Check 192.168.1.40 and its cable; the mode falls back to MANUAL |
 | Mode `BASE_NOT_READY` / `LAYER_EXITED` | A process died | See `~/.amr/logs/base.log` or `layer.log`; use **Recover**, or `sudo systemctl restart amr.service` |
+
+**Why localisation was lost.** Every time Localisation drops from READY a report is written
+(`~/.amr/loc_losses/`, the newest 50; the last 10 also go into **Save report**). The Alarms page
+lists them under **Localisation losses**:
+
+- what triggered it, the correction split into **ahead / left** of the AMR and its turn,
+  the speed, where on the map;
+- how the scan fitted the map in the last 3 s: % **on mapped walls**, % **on things that are
+  not on the map** (trolleys, pallets, people), % **through mapped walls** (something mapped is
+  gone);
+- which sensor went quiet, if one did (lidar, wheel encoders, IMU), and how long;
+- **likely causes**, most likely first - e.g. many unmapped objects → mark the area dynamic;
+  a sideways correction while driving straight → lidar angle or a twisted map; a correction
+  along the path → a long aisle or wheel slip; a quiet sensor → that sensor's cable/network.
+
+**Show on map** opens the Run page with that moment drawn: the scan in green (on mapped walls),
+red (on unmapped things) and orange (through walls), a blue arrow where the AMR was and a dashed
+line for the correction. The event in "What happened" carries the same summary and the
+report's name.
 
 ## 7. End of shift
 
