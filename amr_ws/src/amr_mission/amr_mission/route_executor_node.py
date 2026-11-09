@@ -45,7 +45,15 @@ itself is a BLOCKED hold with a cause, not a FAULT:
              2026-11-03: three retries in 8 s faulted a 116 m straight while someone crossed
              the aisle; "continue moving after the obstacle is clear");
   pending    wheel feedback vanished while executing: stopped at once, and classified as a
-             safety stop when the drive report says torque off within safety_window_s, else FAULT.
+             safety stop when the drive report says torque off within safety_window_s, else FAULT;
+  loc        localisation dropped from READY for a reason a new pose can fix (RELOC_CODES:
+             a jump, the scan through walls, covariance; owner 2026-11-09): stopped at once;
+             once still for auto_reloc_still_s the monitor is asked to relocalise where the AMR
+             stands (/amr/localization/relocalize, amr_localization/relocalize.py) and confirms
+             by itself if the scan fits there again; READY again -> resumes by itself like the
+             holds above. At most auto_reloc_max per run (0 = off, a loss FAULTs as before), and
+             within auto_reloc_timeout_s, else FAULT LOC_RELOC_FAILED. A stale sensor or a
+             stopped scan check is never relocalised.
 
 A hold resumes once every resume check (on the segment, wheels still, ...), drives with
 torque and a clear protective field have held for auto_resume_clear_s.
@@ -146,6 +154,10 @@ def _yaw(q) -> float:
 
 
 CHECKPOINT_FILE = "route_checkpoint.json"
+# Localisation losses the automatic relocalisation handles, and those it never touches
+# (amr_localization/relocalize.py RECOVERABLE; kept here so amr_mission needs no amr_localization)
+RELOC_CODES = frozenset({"LOC_JUMP", "LOC_SCAN_MISMATCH", "LOC_COV_GREW", "LOC_LOST"})
+RELOC_NEVER = frozenset({"LOC_STREAM_STALE", "LOC_GATE_FAILED"})
 REJOIN_OK, REJOIN_DONE, REJOIN_FAR = "ok", "done", "far"
 
 
@@ -391,6 +403,15 @@ class RouteExecutor(Node):
     web_destinations = False
     _last_dest_why = ""
     rejoin_heading = math.radians(20.0)
+    # automatic relocalisation (hold "loc", module docstring)
+    auto_reloc_max = 0
+    auto_reloc_still_s = 1.0
+    auto_reloc_timeout_s = 40.0
+    _relocs = 0  # used in this run
+    _reloc_hold_t: float | None = None
+    _reloc_asked_t: float | None = None
+    _reloc_future = None
+    _reloc_cli = None
 
     def __init__(self) -> None:
         super().__init__("route_executor")
@@ -510,6 +531,10 @@ class RouteExecutor(Node):
         # update (5 Hz), long before the hold's auto_resume_clear_s countdown sends a goal.
         self.declare_parameter("costmap_clear_service", "/local_costmap/clear_entirely_local_costmap")
         self.declare_parameter("costmap_clear_after_s", 10.0)
+        # automatic relocalisation after a loss during a run (hold "loc"); 0 = off
+        self.declare_parameter("auto_reloc_max", 0)
+        self.declare_parameter("auto_reloc_still_s", 1.0)
+        self.declare_parameter("auto_reloc_timeout_s", 40.0)
         # The pre-move warning after a Start (module docstring); the profile's timing block.
         self.declare_parameter("premove_s", float(vehicle_config.AUTO_START_DELAY_S))
         self.declare_parameter("premove_timeout_s", float(vehicle_config.PREMOVE_TIMEOUT_S))
@@ -563,6 +588,9 @@ class RouteExecutor(Node):
         self.field_index = int(p("field_output_index").value)
         self.blocked_clear_m = max(0.0, float(p("controller_clear_m").value))
         self.costmap_clear_after_s = max(1.0, float(p("costmap_clear_after_s").value))
+        self.auto_reloc_max = max(0, int(p("auto_reloc_max").value))
+        self.auto_reloc_still_s = max(0.0, float(p("auto_reloc_still_s").value))
+        self.auto_reloc_timeout_s = max(5.0, float(p("auto_reloc_timeout_s").value))
         self._costmap_cleared_t: float | None = None
         self._costmap_warned = False
         self._init_hold_state()
@@ -662,6 +690,7 @@ class RouteExecutor(Node):
         self._clear_cli = self.create_client(
             ClearEntireCostmap, str(p("costmap_clear_service").value), callback_group=io
         )
+        self._reloc_cli = self.create_client(Trigger, "/amr/localization/relocalize", callback_group=io)
         self.create_service(RunMission, "/amr/run_mission", self._srv_run, callback_group=srv)
         self.create_service(Trigger, "/amr/pause", self._srv_pause, callback_group=srv)
         self.create_service(Trigger, "/amr/abort", self._srv_abort, callback_group=srv)
@@ -792,7 +821,11 @@ class RouteExecutor(Node):
         return "field" if self._field_tripped(now) else "estop"
 
     def _auto_causes(self) -> tuple[str, ...]:
-        return ("field", "controller") + (("estop",) if self.auto_resume_estop else ())
+        return (
+            ("field", "controller")
+            + (("estop",) if self.auto_resume_estop else ())
+            + (("loc",) if self.auto_reloc_max > 0 else ())
+        )
 
     def _hold(self, cause: str, why: str) -> None:
         """Stop and hold: BLOCKED with a cause (see the module docstring)."""
@@ -825,7 +858,11 @@ class RouteExecutor(Node):
     def _on_initialpose(self, _m) -> None:
         self.last_initialpose_t = self._now()
         with self._lock:
-            if self.fsm.state == fsm.EXECUTING:
+            if self.fsm.state == fsm.BLOCKED and self.hold_cause == "loc":
+                # the automatic relocalisation's own pose (or the operator's, during it): the
+                # odom frame is untouched, and the resume checks judge the new map pose
+                self.get_logger().info("initial pose during a relocalisation hold: accepted")
+            elif self.fsm.state == fsm.EXECUTING:
                 self._fault("initial pose injected during a step", "EXEC_POSE_INJECTED")
             elif self.fsm.state in (fsm.PAUSED, fsm.BLOCKED):
                 self.fsm.invalidate_resume(
@@ -1786,12 +1823,12 @@ class RouteExecutor(Node):
                     and not self._panel.mode_auto
                     and now - self._panel_t <= self.panel_age
                 )
-                if manual and (self.hold_cause in ("pending", "field", "estop") or pre is None):
+                if manual and (self.hold_cause in ("pending", "field", "estop", "loc") or pre is None):
                     self.fsm.abort("manual takeover: selector left AUTO")
                     self._interrupt("manual takeover")
                 elif self._torque_off(now) and (
                     (state == fsm.EXECUTING and self.phase != PHASE_PREMOVE)
-                    or (state == fsm.BLOCKED and self.hold_cause not in ("field", "estop"))
+                    or (state == fsm.BLOCKED and self.hold_cause not in ("field", "estop", "loc"))
                 ):
                     # the safety chain took the torque: hold, don't fault (auto-resume plan);
                     # a hold that was already on (a controller abort, then someone stepping
@@ -1804,6 +1841,8 @@ class RouteExecutor(Node):
                         # a momentary lapse while waiting must not throw the loaded mission away
                         if held:
                             self.fsm.unready(pre)
+                    elif self._reloc_case(state, pre):
+                        self._reloc_tick(now, state)
                     elif (
                         self._wheel_prereq(pre)
                         and state == fsm.EXECUTING
@@ -1834,6 +1873,59 @@ class RouteExecutor(Node):
                     self._auto_resume_tick(now)
             self._publish_permit()
             self._log_state()
+
+    def _reloc_case(self, state: int, pre: str) -> bool:
+        """A localisation loss the automatic relocalisation handles (hold "loc")."""
+        if self.auto_reloc_max <= 0 or not pre.startswith("localisation not READY") or self._loc is None:
+            return False
+        code = str(getattr(self._loc, "code", "") or "")
+        if state == fsm.EXECUTING:
+            return self._loc.state == LocalizationState.LOST and code in RELOC_CODES
+        return state == fsm.BLOCKED and self.hold_cause == "loc" and code not in RELOC_NEVER
+
+    def _reloc_tick(self, now: float, state: int) -> None:
+        """Hold "loc": stop, wait still, ask the monitor once, and give up on a timeout."""
+        why = self._loc.reason if self._loc is not None else "localisation lost"
+        if state == fsm.EXECUTING:
+            if self._relocs >= self.auto_reloc_max:
+                self._fault(
+                    f"localisation lost again after {self._relocs} automatic relocalisation(s) "
+                    f"this run: {why}",
+                    "LOC_RELOC_FAILED",
+                )
+                return
+            self._relocs += 1
+            self._reloc_hold_t, self._reloc_asked_t, self._reloc_future = now, None, None
+            self._hold(
+                "loc",
+                f"localisation lost ({why}) - relocalising, attempt {self._relocs}/{self.auto_reloc_max}",
+            )
+            return
+        if self._reloc_hold_t is None:
+            self._reloc_hold_t = now
+        if now - self._reloc_hold_t > self.auto_reloc_timeout_s:
+            self._fault(
+                f"automatic relocalisation did not finish within {self.auto_reloc_timeout_s:.0f} s: {why}",
+                "LOC_RELOC_FAILED",
+            )
+            return
+        if self._reloc_asked_t is None:
+            if not self._wheels_still or now - self._reloc_hold_t < self.auto_reloc_still_s:
+                return
+            if self._reloc_cli is None or not self._reloc_cli.service_is_ready():
+                return  # the timeout above ends it if the monitor never answers
+            self._reloc_asked_t = now
+            self._reloc_future = self._reloc_cli.call_async(Trigger.Request())
+            return
+        f = self._reloc_future
+        if f is not None and f.done():
+            self._reloc_future = None
+            r = f.result()
+            if r is None or not r.success:
+                self._fault(
+                    f"automatic relocalisation refused: {r.message if r is not None else 'no answer'}",
+                    "LOC_RELOC_FAILED",
+                )
 
     def _classify_pending(self, now: float, pre: str | None) -> None:
         if self._torque_off(now) or (
@@ -2168,6 +2260,7 @@ class RouteExecutor(Node):
         if state in (*fsm.ACTIVE, fsm.READY) and previous in (None, fsm.IDLE, fsm.DONE, fsm.FAULT):
             self._run_started = self._now()
             self._run_holds = {}
+            self._relocs = 0
             self._run_peak_cross = 0.0
         if state == fsm.BLOCKED and self.hold_cause:
             self._run_holds[self.hold_cause] = self._run_holds.get(self.hold_cause, 0) + 1

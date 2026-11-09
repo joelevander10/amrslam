@@ -503,3 +503,105 @@ def test_no_clear_service_is_harmless():
     for _ in range(6):
         assert _abort_and_resume(n) == fsm.EXECUTING
     assert n._clear_cli.calls == 0
+
+
+# ---- automatic relocalisation (hold "loc", owner 2026-11-09) ------------------------------
+
+
+class _RelocClient:
+    """/amr/localization/relocalize: answers at once with `ok`."""
+
+    def __init__(self, ok=True, msg="relocalising"):
+        self.calls, self.ok, self.msg = 0, ok, msg
+
+    def service_is_ready(self):
+        return True
+
+    def call_async(self, _req):
+        self.calls += 1
+        res = SimpleNamespace(success=self.ok, message=self.msg)
+        return SimpleNamespace(done=lambda: True, result=lambda: res)
+
+
+def _lose(n, code="LOC_JUMP", state=LocalizationState.LOST):
+    n._loc.state, n._loc.code, n._loc.reason = state, code, "localisation corrected by 0.32 m / 1.5 deg"
+
+
+def _reloc_node(max_=3):
+    n = node()
+    n.auto_reloc_max, n.auto_reloc_still_s, n.auto_reloc_timeout_s = max_, 1.0, 40.0
+    n._relocs = 0
+    n._reloc_cli = _RelocClient()
+    return n
+
+
+def test_a_jump_during_a_run_holds_relocalises_and_continues_by_itself():
+    n = _reloc_node()
+    tick(n, torque=True, field=True)
+    _lose(n)
+    tick(n, torque=True, field=True)
+    assert n.fsm.state == fsm.BLOCKED and n.hold_cause == "loc" and "attempt 1/3" in n.fsm.reason
+    assert n.drive_power()  # held with power, like the other holds that resume by themselves
+    run_for(n, 0.8, torque=True, field=True)
+    assert n._reloc_cli.calls == 0  # waits still for auto_reloc_still_s first
+    run_for(n, 0.4, torque=True, field=True)
+    assert n._reloc_cli.calls == 1
+    _lose(n, "LOC_NOT_CONFIRMED", LocalizationState.CHECKING)  # the monitor set the pose
+    n._on_initialpose(None)  # its /initialpose: accepted during this hold
+    run_for(n, 5.0, torque=True, field=True)
+    assert n.fsm.state == fsm.BLOCKED and n._reloc_cli.calls == 1  # asked once
+    n._loc.state, n._loc.code = LocalizationState.READY, ""  # the monitor confirmed
+    run_for(n, 2.5, torque=True, field=True)
+    assert n.fsm.state == fsm.EXECUTING and n.hold_cause == ""
+
+
+def test_the_attempts_per_run_are_limited():
+    n = _reloc_node(max_=1)
+    n._relocs = 1  # one used already
+    tick(n, torque=True, field=True)
+    _lose(n)
+    tick(n, torque=True, field=True)
+    assert n.fsm.state == fsm.FAULT and n.fault_code == "LOC_RELOC_FAILED"
+
+
+def test_no_relocalisation_for_a_sensor_loss_or_when_off():
+    n = _reloc_node()
+    n.prereq_grace_s = 0.0
+    tick(n, torque=True, field=True)
+    _lose(n, "LOC_STREAM_STALE")
+    tick(n, torque=True, field=True)
+    assert n.fsm.state == fsm.FAULT and n.fault_code == "EXEC_PREREQ_LOST"
+    n = _reloc_node(max_=0)
+    n.prereq_grace_s = 0.0
+    tick(n, torque=True, field=True)
+    _lose(n)
+    tick(n, torque=True, field=True)
+    assert n.fsm.state == fsm.FAULT and n.fault_code == "EXEC_PREREQ_LOST"
+
+
+def test_a_refused_or_slow_relocalisation_faults_for_the_operator():
+    n = _reloc_node()
+    n._reloc_cli = _RelocClient(ok=False, msg="no automatic relocalisation: no pose estimate")
+    tick(n, torque=True, field=True)
+    _lose(n)
+    run_for(n, 1.5, torque=True, field=True)
+    assert n.fsm.state == fsm.FAULT and "refused" in n.fsm.reason
+    n = _reloc_node()
+    tick(n, torque=True, field=True)
+    _lose(n)
+    run_for(n, 2.0, torque=True, field=True)
+    _lose(n, "LOC_NOT_CONFIRMED", LocalizationState.CHECKING)  # never converges
+    run_for(n, 37.0, torque=True, field=True)
+    assert n.fsm.state == fsm.BLOCKED
+    run_for(n, 2.0, torque=True, field=True)
+    assert n.fsm.state == fsm.FAULT and n.fault_code == "LOC_RELOC_FAILED"
+
+
+def test_manual_during_a_relocalisation_hold_aborts_the_run():
+    n = _reloc_node()
+    tick(n, torque=True, field=True)
+    _lose(n)
+    tick(n, torque=True, field=True)
+    n._panel.mode_auto = False
+    tick(n, torque=True, field=True)
+    assert n.fsm.state == fsm.IDLE and "manual takeover" in n.fsm.reason

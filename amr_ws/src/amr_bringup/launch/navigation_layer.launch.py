@@ -52,6 +52,7 @@ def executor_overrides() -> dict:
       * web_continue true: its panel has only START and STOP, so the Run page's Continue
         releases a route wait step (START does too).
       * taper_decel / taper_jerk / end_decel: amr_navigation.route.QR_AUTO_* (2026-11-06).
+      * auto_reloc_max 3: a localisation loss during a run relocalises and continues (2026-11-09).
     The protective field is used again (use_protective_field false 2026-09-24..11-02, while
     the QR ran on a broken nanoScan3)."""
     from agv_core import config  # noqa: PLC0415 - the vehicle profile (AGV_PROFILE)
@@ -76,6 +77,9 @@ def executor_overrides() -> dict:
             "taper_decel": route.QR_AUTO_D_MAX,
             "taper_jerk": route.QR_AUTO_JERK,
             "end_decel": route.QR_END_DECEL,
+            # a localisation loss during a run: stop, relocalise where it stands, continue
+            # (owner 2026-11-09; route_executor hold "loc"), at most 3 times per run
+            "auto_reloc_max": 3,
         }
     return {}
 

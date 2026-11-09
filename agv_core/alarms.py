@@ -202,6 +202,18 @@ def _rows() -> tuple[Alarm, ...]:
           "Set the initial pose on the Run page and confirm the scans line up.",
           "map->odom correction over the jump trigger since the last accepted pose, not confirmed by "
           "the scan (over jump_verified_max_m, a poor fit before it, or no fit after it)."),
+        a("LOC_RELOCALIZING", WARN, "auto", "Position lost during the run: finding it again",
+          "Keep clear; the AMR finds its position where it stopped and continues by itself.",
+          "Route executor hold 'loc' after LOC_JUMP / LOC_SCAN_MISMATCH / LOC_COV_GREW while "
+          "executing; the monitor set the initial pose at AMCL's estimate (relocalize.py)."),
+        a("LOC_RELOCALIZED", WARN, "auto", "Position found again; the run continues",
+          "Nothing to do. If it repeats at the same place, see Localisation losses on the Alarms page.",
+          "Automatic relocalisation confirmed: converged within reloc_max_shift_m of the stop, "
+          "scan fit >= reloc_fit_min."),
+        a("LOC_RELOC_FAILED", ERROR, "operator", "Could not find the position again by itself",
+          "Set the initial pose on the Run page, confirm, then Continue route.",
+          "Automatic relocalisation timed out, converged too far from the stop, or the attempts "
+          "per run (auto_reloc_max) are used up; the run FAULTed."),
         a("LOC_CORRECTED", WARN, "auto", "The position was corrected; the vehicle kept going",
           "Nothing to do. If it repeats at the same place, see the report on the Alarms page.",
           "map->odom correction over the jump trigger but within jump_verified_max_m, with the scan "
@@ -413,6 +425,7 @@ HOLD_CODES = {
     "estop": "ESTOP_HOLD",
     "controller": "PATH_BLOCKED",
     "pending": "WAITING_FOR_PREREQ",
+    "loc": "LOC_RELOCALIZING",
 }
 
 

@@ -505,6 +505,26 @@ mean the wheel scale is off: check the wheel diameter / gear ratio in the vehicl
 The limits are `jump_verified_max_m`, `jump_fit_min`, `jump_verify_s` in
 `amr_localization/readiness.py`.
 
+**Lost during a run: it finds itself again and continues (2026-11-09).** When the position is
+lost during a route because of a jump (`LOC_JUMP`), the scan passing through walls
+(`LOC_SCAN_MISMATCH`) or AMCL becoming unsure (`LOC_COV_GREW`), the AMR does not FAULT at once:
+
+1. It stops where it is (Run page: BLOCKED, `LOC_RELOCALIZING`, "relocalising, attempt 1/3").
+2. After standing still 1 s it sets the initial pose itself, where it thinks it is, and lets
+   AMCL settle in place (up to 30 s).
+3. It confirms by itself only if the scan then lies at least 70 % on mapped walls, nothing goes
+   through walls, and the position it settles on is within 0.50 m / 15° of where it stopped
+   (`LOC_RELOCALIZED`).
+4. It continues the route from where it stopped after 2 s, like after a safety-field stop.
+
+It gives up and FAULTs (`LOC_RELOC_FAILED`) when it does not settle within 40 s, settles too
+far away, or is lost a 4th time in the same run. Then do it by hand: set the initial pose,
+Confirm, **Continue route**. A sensor that went quiet (`LOC_STREAM_STALE`) or a stopped scan
+check (`LOC_GATE_FAILED`) is never retried: that is hardware. Switching to MANUAL during it
+aborts the run, as for any hold. Keep clear of a stopped AMR: it can move off again by itself.
+Limits: `auto_reloc_max` (3; 0 = off) in `navigation_layer.launch.py` executor_overrides,
+`reloc_*` parameters of the localization monitor.
+
 ## 7. End of shift
 
 1. Finish or **Abort** the run. Press **STOP** so the vehicle is in MANUAL, then **Return

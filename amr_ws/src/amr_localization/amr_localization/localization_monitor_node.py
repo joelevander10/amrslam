@@ -6,10 +6,14 @@ Feeds amr_localization.readiness with /amcl_pose covariance, map->odom samples
 
   /amr/localization/confirm  Trigger  operator: scans align with fixed structure -> READY
   /amr/localization/reset    Trigger  back to UNLOCALIZED
+  /amr/localization/relocalize Trigger  the route executor, after a loss during a run: set the
+                             initial pose where the AMR stands and confirm by itself once the
+                             scan fits again close to there (relocalize.py)
 
 While CHECKING it calls AMCL's /request_nomotion_update every nomotion_period_s, so a
 parked vehicle converges on its scan without being nudged (AMCL otherwise only updates
-after update_min_d / update_min_a of motion). Confirmation stays with the operator.
+after update_min_d / update_min_a of motion). Confirmation stays with the operator, except
+for an automatic relocalisation the executor asked for (relocalize.py's conditions).
 
 /initialpose is only observed here; AMCL subscribes to it itself. The
 executor (T7) faults if one arrives during a segment.
@@ -37,6 +41,7 @@ from tf2_ros import Buffer, TransformListener
 from amr_interfaces.msg import DriveStatus, Event, LocalizationState, WheelStates
 from amr_localization import loss_report as lr
 from amr_localization import readiness as rd
+from amr_localization import relocalize as rl
 from amr_localization import scan_consistency as consistency
 from amr_maps import grid as gridio
 
@@ -85,6 +90,11 @@ class LocalizationMonitor(Node):
         # older than this says both drives have their torque off
         self.declare_parameter("drives_age_limit_s", 0.5)
         self.declare_parameter("nomotion_period_s", 0.5)  # 0 = never ask AMCL for an in-place update
+        # automatic relocalisation (relocalize.py, 2026-11-09): when the executor asks for it
+        self.declare_parameter("reloc_max_shift_m", 0.50)
+        self.declare_parameter("reloc_max_turn_deg", 15.0)
+        self.declare_parameter("reloc_fit_min", 0.70)
+        self.declare_parameter("reloc_timeout_s", 30.0)
         # loss reports (2026-11-09): <state_dir>/loc_losses/<time>.json, why READY dropped
         self.declare_parameter("state_dir", os.environ.get("AMR_STATE_DIR", os.path.expanduser("~/.amr")))
         p = self.get_parameter
@@ -112,6 +122,16 @@ class LocalizationMonitor(Node):
             )
         )
         self._last: dict[str, float] = {}
+        self._reloc = rl.AutoReloc(
+            rl.Limits(
+                max_shift_m=float(p("reloc_max_shift_m").value),
+                max_turn_rad=math.radians(float(p("reloc_max_turn_deg").value)),
+                fit_min=float(p("reloc_fit_min").value),
+                timeout_s=float(p("reloc_timeout_s").value),
+            )
+        )
+        self._own_initialpose = 0  # /initialpose messages we published and have not seen back
+        self._pose_now: tuple[float, float, float] | None = None
         self._rec = lr.Recorder()
         self._unmapped: float | None = None
         self._state_dir = os.path.expanduser(str(p("state_dir").value))
@@ -151,6 +171,8 @@ class LocalizationMonitor(Node):
         self.create_subscription(Imu, "/imu/data", lambda _m: self._touch("imu"), SENSOR_DATA)
         self.create_service(Trigger, "/amr/localization/confirm", self._srv_confirm)
         self.create_service(Trigger, "/amr/localization/reset", self._srv_reset)
+        self.create_service(Trigger, "/amr/localization/relocalize", self._srv_relocalize)
+        self._pub_initialpose = self.create_publisher(PoseWithCovarianceStamped, "/initialpose", RELIABLE_1)
         self._pub = self.create_publisher(LocalizationState, "/amr/localization_state", LATCHED)
         # Operator events on STATE CHANGES only (the tick runs at 2 Hz and _evaluate
         # is called per sample): UNLOCALIZED -> CHECKING -> READY -> LOST.
@@ -196,6 +218,7 @@ class LocalizationMonitor(Node):
                 self._dynamic = self._dynamic_grid.data >= 65
         if self._map_key is not None and key != self._map_key:
             # Pose, covariance and scan evidence were all about the previous map.
+            self._reloc.cancel("map changed")
             self.rd.reset("map changed; give a new initial pose")
             self._publish()
         self._map_key = key
@@ -253,6 +276,11 @@ class LocalizationMonitor(Node):
         self.rd.on_amcl_pose(self._now(), c[0], c[7], c[35], stamp if stamp > 0.0 else None)
 
     def _on_initialpose(self, _msg: PoseWithCovarianceStamped) -> None:
+        if self._own_initialpose > 0:
+            self._own_initialpose -= 1
+        elif self._reloc.active:
+            self._reloc.cancel("someone set the initial pose by hand")
+            self.get_logger().info("automatic relocalisation cancelled: initial pose set by hand")
         self.rd.on_initialpose(self._now())
         self.get_logger().info("initial pose received: CHECKING")
         self._publish()
@@ -281,6 +309,7 @@ class LocalizationMonitor(Node):
             self.rd.on_map_odom(t, tr.transform.translation.x, tr.transform.translation.y, yaw, odom_base)
             if odom_base is not None:
                 pose = rd._apply((tr.transform.translation.x, tr.transform.translation.y, yaw), odom_base)
+                self._pose_now = pose
         except Exception:  # noqa: BLE001 - no transform yet is a normal state
             pass
         ages = {k: (t - self._last[k]) if k in self._last else None for k in ("scan", "wheels", "imu", "tf")}
@@ -291,6 +320,7 @@ class LocalizationMonitor(Node):
         held = self._torque_off_t is not None and t - self._torque_off_t <= self._drives_age
         self.rd.evaluate(t, ages, frozenset({"wheels"}) if held else frozenset())
         self._request_nomotion(t)
+        self._reloc_tick(t, pose)
         if self.rd.accepted_count != self._accepted_seen:
             self._accepted_seen = self.rd.accepted_count
             self._correction_report(t)
@@ -384,7 +414,61 @@ class LocalizationMonitor(Node):
         self._publish()
         return res
 
+    def _srv_relocalize(self, _req, res: Trigger.Response):
+        """The executor's request after a loss during a run (relocalize.py)."""
+        t = self._now()
+        why = self._reloc.start(t, self._pose_now, self.rd.state == rd.LOST, self.rd.code)
+        if why:
+            res.success, res.message = False, f"no automatic relocalisation: {why}"
+            self.get_logger().warning(res.message)
+            return res
+        x, y, yaw = self._pose_now
+        m = PoseWithCovarianceStamped()
+        m.header.stamp = self.get_clock().now().to_msg()
+        m.header.frame_id = "map"
+        m.pose.pose.position.x, m.pose.pose.position.y = x, y
+        m.pose.pose.orientation.z, m.pose.pose.orientation.w = math.sin(yaw / 2.0), math.cos(yaw / 2.0)
+        m.pose.covariance[0] = m.pose.covariance[7] = rl.INITIAL_SIGMA_XY_M**2
+        m.pose.covariance[35] = rl.INITIAL_SIGMA_YAW_RAD**2
+        self._own_initialpose += 1
+        self._pub_initialpose.publish(m)
+        why_lost = self.rd.reason
+        text = f"relocalising automatically at x {x:.2f} y {y:.2f} after: {why_lost}"
+        self.get_logger().warning(text)
+        self._event_code("LOC_RELOCALIZING", text)
+        res.success, res.message = True, text
+        return res
+
+    def _reloc_tick(self, t: float, pose) -> None:
+        if not self._reloc.active:
+            return
+        out = self._reloc.tick(t, pose, self.rd.state == rd.CHECKING, self.rd.can_confirm, self.rd.scan_match)
+        if out is None:
+            return
+        if out.startswith("confirm") and self.rd.confirm():
+            self.rd.reason = "relocalised automatically: " + out.split(": ", 1)[1]
+            self.get_logger().warning("READY: " + self.rd.reason)
+            self._event_code("LOC_RELOCALIZED", self.rd.reason)
+        else:
+            why = out.split(": ", 1)[-1]
+            self.rd.reason = f"automatic relocalisation failed: {why} - set the position by hand"
+            self.get_logger().error(self.rd.reason)
+            self._event_code("LOC_RELOC_FAILED", self.rd.reason)
+        self._publish()
+
+    def _event_code(self, code: str, text: str) -> None:
+        row = alarms.get(code)
+        m = Event()
+        m.header.stamp = self.get_clock().now().to_msg()
+        m.source = "localization_monitor"
+        m.level = {alarms.ERROR: Event.ERROR, alarms.WARN: Event.WARN}.get(row.severity, Event.INFO)
+        m.code, m.text = code, text
+        self._event_seq += 1
+        m.seq = self._event_seq
+        self._pub_event.publish(m)
+
     def _srv_reset(self, _req, res: Trigger.Response):
+        self._reloc.cancel("reset")
         self.rd.reset()
         self.get_logger().info("UNLOCALIZED: reset")
         self._publish()
