@@ -231,5 +231,22 @@ const flush = () => new Promise(r => setImmediate(r));
   els['btn-undo'].onclick();                                      // one undo removes the whole zone
   await els['btn-save'].onclick(); for (let i = 0; i < 3; i++) await flush();
   out.slow_undone = savedSteps.map(s => s.id);
+  // --- the slow zone list (2026-11-09): change its speed, remove it, add one again ---
+  els['btn-redo'].onclick();                                      // the zone is back
+  out.zone_list = els['ed-slow-list'].innerHTML;
+  const fire = (ev, cls, data, value) => { const t = { classList: new Set([cls]), dataset: data, value, closest: () => (ev === 'click' ? t : null) };
+    t.classList.contains = t.classList.has; els['ed-slow-list'].listeners[ev].forEach(fn => fn({ target: t })); };
+  fire('change', 'zv', { k: '0' }, '0.25');
+  await els['btn-save'].onclick(); for (let i = 0; i < 3; i++) await flush();
+  out.zone_changed = savedSteps.map(s => s.v_mps ?? null);
+  fire('click', 'x', { zoneRemove: '0' });
+  await els['btn-save'].onclick(); for (let i = 0; i < 3; i++) await flush();
+  out.zone_removed = savedSteps.map(s => [s.id, s.v_mps ?? null]);
+  out.zone_list_after = els['ed-slow-list'].innerHTML;
+  doc.getElementById('ed-slow-v').value = '0.4';
+  out.tool_still_on = theView.tool;                               // stays on for the next zone
+  theView.onClick([1.0, 0.0]); theView.onClick([5.0, 0.0]);       // a new zone on s1
+  await els['btn-save'].onclick(); for (let i = 0; i < 3; i++) await flush();
+  out.zone_again = savedSteps.map(s => [s.id, s.v_mps ?? null]);
   console.log(JSON.stringify(out));
 })().catch(e => { console.log(JSON.stringify({ error: String(e && e.stack || e) })); });

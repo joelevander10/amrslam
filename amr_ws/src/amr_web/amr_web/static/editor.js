@@ -257,6 +257,53 @@ function slowClick(w) {
   log(`slow zone ${num(v, 2)} m/s on ${slowed.join(', ')}${kept.length ? ` (${kept.join(', ')} keep their own speed)` : ''}: ` +
       'it slows down before A and speeds up after B. Validate, Save revision, then Create mission again.');
 }
+// The route's slow zones, for the list under "Slow zone on map" (2026-11-09): runs of straights
+// with their own speed; turns and arcs between two slow straights belong to the run. Removing
+// one gives its straights the route speed back. The cuts stay as plain waypoints: they drive
+// as one move, and other routes (POS branches) may name those steps.
+function slowZones() {
+  const zones = []; let cur = null;
+  route.steps.forEach((s, i) => {
+    if (s.type !== 'straight') return;  // a turn / arc / wait neither opens nor closes a run
+    if (s.v_mps != null) { if (!cur) { cur = { idx: [] }; zones.push(cur); } cur.idx.push(i); }
+    else cur = null;
+  });
+  zones.forEach(z => {
+    const vs = [...new Set(z.idx.map(i => +route.steps[i].v_mps))];
+    z.v = vs.length === 1 ? vs[0] : null;
+    z.ids = z.idx.map(i => route.steps[i].id);
+    z.main = z.idx.some(i => mainPartStep(route.steps[i]));
+    z.length = z.idx.reduce((a, i) => a + stepLength(i), 0);
+  });
+  return zones;
+}
+function slowList() {
+  const el = $('ed-slow-list'); if (!el) return;
+  const zones = slowZones();
+  el.innerHTML = zones.length ? zones.map((z, k) => `<div class="row three"><span class="k">${esc(z.ids[0])}${z.ids.length > 1 ? '–' + esc(z.ids[z.ids.length - 1]) : ''}</span>` +
+    `<span class="n">${mm(z.length)} mm${z.main ? ' <i>main route</i>' : ''}</span><span class="v">` +
+    (z.main ? `${z.v != null ? num(z.v, 2) : 'mixed'} m/s`
+      : `<input class="zv" data-k="${k}" type="number" step="0.05" min="${STEP_V_MIN}" max="${num(SPEED_V, 2)}" value="${z.v != null ? num(z.v, 2) : ''}" placeholder="mixed" style="width:5.5em" title="m/s for the whole zone"> <button class="tool danger" data-zone-remove="${k}" title="back to the route speed">Remove</button>`) +
+    '</span></div>').join('') : '<div class="none">no slow zones</div>';
+}
+function zoneEdit(k, fn, what) {
+  const z = slowZones()[k]; if (!z) return;
+  if (z.main) { log(MAIN_PART_MSG(route.steps[z.idx[0]]), 'bad'); return; }
+  snapshot(); z.idx.forEach(i => fn(route.steps[i])); refresh();
+  log(`slow zone ${z.ids.join(', ')}: ${what}. Validate, Save revision, then Create mission again.`);
+}
+if ($('ed-slow-list')) {
+  $('ed-slow-list').addEventListener('click', e => {
+    const b = e.target.closest ? e.target.closest('[data-zone-remove]') : null; if (!b) return;
+    zoneEdit(+b.dataset.zoneRemove, s => { delete s.v_mps; }, `removed - back to the route speed ${num(SPEED_V, 2)} m/s`);
+  });
+  $('ed-slow-list').addEventListener('change', e => {
+    const el = e.target; if (!el.classList || !el.classList.contains('zv')) return;
+    const v = straightV(el.value);
+    if (v === false || v === null) { if (v === null) log('type a speed, or Remove the zone', 'bad'); slowList(); return; }
+    zoneEdit(+el.dataset.k, s => { s.v_mps = v; }, `${num(v, 2)} m/s`);
+  });
+}
 $('tool-slowzone').onclick = () => { slowA = null; setTool(view.tool === 'slowzone' ? null : 'slowzone'); };
 $('btn-split').onclick = () => {
   const i = route.steps.findIndex(s => s.id === $('ed-split-step').value), v = $('ed-split-mm').valueAsNumber;
@@ -444,6 +491,7 @@ function refresh() {
                            : `<span class="n">rotate</span><span class="v">${esc(String(s.direction).toUpperCase())} ${esc(s.angle_deg)}<i>°</i></span>`) + '</div>').join('')
     : '<div class="none">no steps</div>';
   $('ed-repeat').value = route.repeat_count;
+  slowList();
   const pick = $('ed-split-step'), keep = pick.value;
   pick.innerHTML = '<option value="">— straight —</option>' + route.steps.map((s, i) => s.type === 'straight'
     ? `<option value="${esc(s.id)}">${esc(s.id)} · ${mm(stepLength(i))} mm${s.v_mps != null ? ` · ${num(+s.v_mps, 2)} m/s` : ''}</option>` : '').join('');

@@ -272,3 +272,19 @@ def test_editor_slow_zone_on_a_drawn_route_splits_at_a_and_b():
     )
     speeds = {s.id: s.v_mps for s in compile_route(route).steps if s.type == "straight"}
     assert speeds["s4"] == speeds["s3"] == 0.3 and speeds["s1"] == speeds["s5"] == rt.VEHICLE_V_MAX
+
+
+@pytest.mark.skipif(NODE is None, reason="node not installed")
+def test_editor_slow_zone_list_changes_removes_and_adds_again():
+    """2026-11-09: the slow zones of a loaded route are listed; a zone's speed can be changed
+    or the zone removed (its straights back to the route speed), and a new one added."""
+    harness = pathlib.Path(__file__).with_name("editor_harness.js")
+    r = subprocess.run([NODE, str(harness)], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    assert "error" not in out, out
+    assert "s4–s3" in out["zone_list"] and 'data-zone-remove="0"' in out["zone_list"]
+    assert out["zone_changed"] == [None, 0.25, None, 0.25, None]  # both straights, not the turn
+    assert all(v is None for _sid, v in out["zone_removed"]) and "no slow zones" in out["zone_list_after"]
+    assert out["tool_still_on"] == "slowzone"
+    assert out["zone_again"][:3] == [["s1", None], ["s6", 0.4], ["s7", None]]

@@ -249,7 +249,11 @@ ros2 run amr_mission map_edit --map block_c --rev 1 --despeckle-rect -50 -50 50 
    under **Slow zone on map** (e.g. 0.30), press the button and click **A** on the route
    (where the AMR must already be slow), then **B** (where it may speed up again). The
    straights are cut at A and B and the part between gets the speed - across turns too (a
-   turn or arc keeps its own speed). One **Undo** takes it back. Validate, **Save revision**,
+   turn or arc keeps its own speed). One **Undo** takes it back. The tool stays on for the
+   next zone. **Every slow zone of the loaded route is listed** under it: change a zone's
+   speed in its box, or **Remove** it (its straights go back to the route speed; the cut
+   points stay as plain waypoints, which drive as one move). Then add a new one where you
+   want it. Validate, **Save revision**,
    **Create mission** again. On a POS route only its own branch can be changed this way: put a
    slow zone on the main part into the main route, then **Rebase on newest main**.
 

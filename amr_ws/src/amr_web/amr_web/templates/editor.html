@@ -26,6 +26,7 @@
     <label class="field">Slow zone on map <small>on a route already drawn or loaded · click A, then B on the route</small>
       <span class="inline"><input id="ed-slow-v" type="number" step="0.05" min="0.1" max="{{ '%.2f' % trackless_v }}" placeholder="0.30" title="m/s between A and B"><button id="tool-slowzone" class="tool" title="Click A (where the AMR must already be slow) and B (where it may speed up again) on the route's straights: they are split there and the part between runs at this speed. It slows down before A and speeds up after B, without stopping.">Slow zone on map</button></span>
     </label>
+    <div id="ed-slow-list" class="list" title="the route's slow zones: change the speed or remove one; then Save revision"></div>
     <label class="field">Speed waypoint <small>split a straight · the parts drive as one move</small>
       <span class="inline"><select id="ed-split-step" title="the straight to split"><option value="">— straight —</option></select><input id="ed-split-mm" type="number" step="1" min="50" placeholder="mm from its start" title="where the new waypoint goes, mm from the straight's start"><button id="btn-split" class="tool" title="Split the straight at this point into two straights. Then give one part its own speed in the step list.">Split</button></span>
     </label>
