@@ -1243,6 +1243,9 @@ class RouteExecutor(Node):
                 self._mark_resume()
             else:
                 self._clear_checkpoint("a new run started from the route start")
+                # the homepost (owner 2026-11-09): every run leaves it with a fresh local costmap -
+                # no mark left from the last trip, a trolley moved meanwhile, a person who passed
+                self._clear_costmap("leaving the homepost")
                 pose, s = self._pose(), self.route.start
                 if pose is not None:
                     self._start_off = offset_text(pose, (s.x_m, s.y_m, s.yaw_rad))
@@ -1490,6 +1493,11 @@ class RouteExecutor(Node):
         self._resumed_at: tuple[str, float] | None = None  # (step id, along) of the last resume
         self._aborts = 0
         self._blocked_since, self._blocked_xy = None, None  # a new step is progress
+
+    def _ends_at_home(self) -> bool:
+        """The route comes back to its start (the homepost): a Go home last step, or it closes."""
+        steps = getattr(self.compiled, "steps", None) or []
+        return bool(getattr(self.compiled, "closes", False)) or (bool(steps) and steps[-1].type == HOME)
 
     def _clear_costmap(self, why: str) -> bool:
         """Drop every mark in the controller's local costmap (stale phantoms beside the vehicle,
@@ -2066,8 +2074,11 @@ class RouteExecutor(Node):
                 f"{d:.3f} m / {math.degrees(a):.2f} deg from expected"
                 + (f"; {offset_text(pose, st.end)}" if st.type != ROTATE else "")
             )
+            pass_ends = self.fsm.step_index + 1 >= self.fsm.n_steps
             self.fsm.step_done()
             self._reset_step_state()
+            if pass_ends and self._ends_at_home():
+                self._clear_costmap("back at the homepost")  # also between the passes of a loop
 
     # ---- outputs ----------------------------------------------------------------------------------
 

@@ -401,6 +401,12 @@ route start` and `last stop … from its end`, in mm ahead / left of the AMR's h
   or a dynamic area there). Map it again with the area empty, or keep fixed structure in
   the scanner's view.
 
+**The homepost resets the obstacle map.** Every run clears the local costmap (the obstacle marks
+the path follower keeps around the AMR) when it leaves the homepost, and again each time the
+route comes back to it (a Go home step or a closed loop, every pass). A trolley that was
+moved, or a person who walked past, cannot hold the next trip. The scanner still sees what is
+really there; the Alarms page shows `COSTMAP_CLEARED` each time.
+
 ## 5a. Continue a route after Abort or FAULT
 
 When a run is aborted (web **Abort**, or **STOP** in AUTO) or faults part-way, the Run page

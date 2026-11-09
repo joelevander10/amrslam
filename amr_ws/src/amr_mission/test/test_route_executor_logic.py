@@ -770,3 +770,28 @@ def test_offsets_read_along_and_left_of_the_expected_heading():
     assert ren.offset_text((-0.03, 0.05, math.pi / 2 + math.radians(1.5)), (0.0, 0.0, math.pi / 2)) == (
         "58 mm (ahead +50, left +30), +1.5 deg"
     )
+
+
+def test_the_local_costmap_is_cleared_leaving_and_reaching_the_homepost():
+    """Owner 2026-11-09: every run leaves the homepost with a fresh local costmap, and it is
+    cleared again when the route comes back there (each pass of a loop)."""
+    st = CompiledStep("s1", STRAIGHT, (0.0, 0.0, 0.0), (2.0, 0.0, 0.0), length_m=2.0)
+    n = make_node([st], passes=2)
+    _clock_stub(n)
+    cleared = []
+    n._clear_cli = SimpleNamespace(service_is_ready=lambda: True, call_async=lambda _r: cleared.append(1))
+    n.notes = []
+    n._note = lambda level, code, text: n.notes.append(text)
+    n.settle_s, n.verify_pos, n.verify_yaw = 0.5, 0.15, math.radians(8.0)
+    n._start_edge()
+    assert n.fsm.state == fsm.EXECUTING and len(cleared) == 1 and "leaving the homepost" in n.notes[0]
+    # the step ends: not back home (an open route) - nothing cleared
+    n.phase, n.settle_since = ren.PHASE_SETTLE, n.clock[0] - 60.0
+    n._pose = lambda: (2.0, 0.0, 0.0)
+    n._execute(n.clock[0])
+    assert n.fsm.pass_index == 1 and len(cleared) == 1
+    # a closed loop: the end of each pass is the homepost
+    n.compiled.closes = True
+    n.phase, n.settle_since = ren.PHASE_SETTLE, n.clock[0] - 60.0
+    n._execute(n.clock[0])
+    assert n.fsm.state == fsm.DONE and len(cleared) == 2 and "back at the homepost" in n.notes[-1]
