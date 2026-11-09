@@ -36,7 +36,8 @@ USB keypad (qr_keypad.py, optional `keypad` argument of tick): its G / ENTER lev
 into START / STOP after the debounce, so they follow every rule above (baseline included);
 a Q press toggles the selector as STOP-in-AUTO / START-in-MANUAL would, but never queues -
 a press while the image is untrusted or STOP is held is dropped; its E latch is ORed into
-the E-stop; its direction keys are ORed into the pendant levels. All only with a trusted
+the E-stop; its direction keys are ORed into the pendant levels; an F press is one
+dest_edge on that frame (dropped like Q while the image is untrusted or STOP is held). All only with a trusted
 DIO image: the keypad never makes an untrusted panel usable.
 """
 
@@ -63,6 +64,7 @@ class QrPanelFrame:
     comms_ok: bool
     changed: str | None = None
     pendant: panel_core.PendantIntent = panel_core.PENDANT_IDLE
+    dest_edge: int = 0  # keypad F-key: 1-based destination pressed on THIS frame, 0 = none
 
 
 class VirtualSelector:
@@ -91,6 +93,7 @@ class VirtualSelector:
         self._last_comms: bool | None = None
         self._last_estop: bool | None = None
         self._kp_toggles: int | None = None  # Q counter already acted on
+        self._kp_dests: int | None = None  # F-key counter already acted on
 
     def tick(self, snapshot: dict, now: float, keypad: KeypadImage = KEYPAD_IDLE) -> QrPanelFrame:
         comms = bool(snapshot.get("comms_ok"))
@@ -106,6 +109,7 @@ class VirtualSelector:
             self._last_valid = valid
 
         start_edge = reset_edge = False
+        dest_edge = 0
         estop = True
         if not valid:
             self._prev = None
@@ -171,7 +175,17 @@ class VirtualSelector:
                 else:
                     self.mode = AUTO
                     notes.append("selector AUTO (keypad Q)")
+            if (
+                self._kp_dests is not None
+                and keypad.dest_presses != self._kp_dests
+                and keypad.dest
+                and not stop
+            ):
+                # one press, one edge; the executor decides (AUTO, no run under way, ...)
+                dest_edge = keypad.dest
+                notes.append(f"destination {dest_edge} (keypad F{dest_edge})")
         self._kp_toggles = keypad.toggles
+        self._kp_dests = keypad.dest_presses  # presses during a bad image are dropped, not queued
         if valid and estop != self._last_estop:
             notes.append("E-STOP " + ("ACTIVE" if estop else "released"))
             if estop and keypad.estop:
@@ -202,4 +216,5 @@ class VirtualSelector:
             comms_ok=comms,
             changed="; ".join(notes) or None,
             pendant=pend,
+            dest_edge=dest_edge,
         )

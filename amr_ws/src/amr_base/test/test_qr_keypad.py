@@ -14,8 +14,8 @@ def img(estop_ok=True, comms=True):
 
 
 class Rig:
-    def __init__(self, panel_keys=True, **kw):
-        self.kp = KeypadState(panel_keys)
+    def __init__(self, panel_keys=True, dests=(), **kw):
+        self.kp = KeypadState(panel_keys, dest_names=dests)
         self.sel = VirtualSelector(START, STOP, ESTOP, True, 2, **kw)
         self.t = 0.0
         self.kp.heartbeat(self.t)
@@ -31,13 +31,15 @@ class Rig:
         return g, {k: e[k] + e2[k] for k in e}
 
     def scan(self, n=3, **kw):
-        out, edges = None, {"start": 0, "reset": 0}
+        out, edges = None, {"start": 0, "reset": 0, "dest": []}
         for _ in range(n):
             self.kp.heartbeat(self.t)
             out = self.sel.tick(img(**kw), self.t, self.kp.image(self.t))
             self.t += 0.03
             edges["start"] += out.start_edge
             edges["reset"] += out.reset_edge
+            if out.dest_edge:
+                edges["dest"].append(out.dest_edge)
         return out, edges
 
 
@@ -172,6 +174,7 @@ def test_unused_kim2a_keys_are_logged_once():
     assert "not used" in kp.key(DEV, "4", 1, 0.0)
     assert kp.key(DEV, "4", 1, 0.1) is None
     assert kp.key(DEV, "f1", 0, 0.1) is None  # releases never log
+    assert "no destination 1" in kp.key(DEV, "f1", 1, 0.1)  # no panel.destinations here
 
 
 def test_device_name_filters():
@@ -179,3 +182,52 @@ def test_device_name_filters():
     assert not name_ok("Logitech USB Keyboard", "XING WEI", "")
     assert name_ok("Logitech USB Keyboard", "", "AT Translated Set 2")
     assert not name_ok("AT Translated Set 2 keyboard", "", "AT Translated Set 2, Power Button")
+
+
+POS = tuple(f"POS {i}" for i in range(1, 7))
+
+
+def test_f_keys_are_one_destination_edge_per_press():
+    """2026-11-09: F1..F6 = the Run page's POS 1..6 buttons."""
+    r = Rig(dests=POS)
+    r.scan()
+    assert r.key("f3", 1) == "keypad F3: go to POS 3"
+    f, e = r.scan()
+    assert e["dest"] == [3]
+    r.key("f3", 2)  # auto-repeat while held: nothing more
+    r.key("f3", 0)
+    _, e = r.scan()
+    assert e["dest"] == []
+    r.key("f1", 1)
+    r.key("f1", 0)
+    r.key("f6", 1)
+    r.key("f6", 0)
+    _, e = r.scan()
+    assert e["dest"] == [6]  # two presses between frames: the newest one, once
+    assert "no destination 7" in r.key("f7", 1)
+    _, e = r.scan()
+    assert e["dest"] == []
+
+
+def test_f_keys_are_dropped_while_the_image_is_bad_or_stop_is_held():
+    r = Rig(dests=POS)
+    r.scan()
+    r.key("f2", 1)
+    r.key("f2", 0)
+    _, e = r.scan(comms=False)
+    _, e2 = r.scan(4)
+    assert e["dest"] == [] and e2["dest"] == []  # not queued for later
+    r.key("enter", 1)
+    r.scan()
+    r.key("f2", 1)
+    r.key("f2", 0)
+    _, e = r.scan()
+    assert e["dest"] == []
+
+
+def test_f_keys_follow_panel_keys_off():
+    r = Rig(panel_keys=False, dests=POS)
+    r.scan()
+    assert "panel keys are off" in r.key("f1", 1)
+    _, e = r.scan()
+    assert e["dest"] == []

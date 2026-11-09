@@ -724,7 +724,7 @@ The repo carries the unit and its helpers under `amr_ws/deploy/`:
 | File | Role |
 |---|---|
 | `amr.service` | the **only** application boot unit; `BindsTo` can0; `EnvironmentFile=amr.env`; `ExecStartPre` creates `/run/lock/amr` (1777), `~/.amr`, `~/amr_maps`; `KillSignal=SIGINT`, `TimeoutStopSec=55`; `Restart=on-failure` 3×/60 s |
-| `amr.env` | `AMR_MAPS_DIR`, `AMR_STATE_DIR`, feature flags `AMR_WEB/AMR_LIDAR=true`, `AMR_LOC_BLANK_DYNAMIC=false`. **Paths and switches only; boot never selects a map or resumes a job.** |
+| `amr.env` | `AMR_MAPS_DIR`, `AMR_STATE_DIR`, feature flags `AMR_WEB/AMR_LIDAR=true`, `AMR_LOC_BLANK_DYNAMIC=true` (AMR QR, 2026-11-09). **Paths and switches only; boot never selects a map or resumes a job.** |
 | `amr-supervisor.sh` | `ExecStart`: sources ROS + overlay + `env/vehicle.sh`, runs `amr_bringup.supervisor_node -p real:=true ...` |
 | `amr-launch.sh` | the same overlay for `ros2 launch` children; exports `PYTHONPATH=<repo root>` |
 | `validate.sh` | no-side-effect check: paths, `bash -n`, `systemd-analyze verify`, every `${VAR}` in Exec lines defined in `amr.env`, `agv_core/` present |

@@ -21,7 +21,8 @@ reset of KYB are switched off: the AMR QR has none of that hardware.
 | **STOP** | **Reset**: acknowledge a route FAULT | back to **MANUAL** (a running route is aborted) |
 | **E-stop** | motors 0 V + brake | same; the route is held (BLOCKED), continue with START after release |
 
-The USB keypad has the same buttons: **G** = START, **ENTER** = STOP, **E** = E-stop (§2a).
+The USB keypad has the same buttons: **G** = START, **ENTER** = STOP, **E** = E-stop, and
+**F1–F6** = Go to POS 1–6 (§2a).
 
 - **After power-up the vehicle is always in MANUAL.**
 - To run a route: START once to switch to AUTO, then START again to start it.
@@ -113,12 +114,18 @@ plugged in or replugged while running); the journal says `USB keypad connected: 
 | **ENTER** | the **STOP** button: AUTO → MANUAL (aborts a running route); in MANUAL = Reset |
 | **Q** | switch MANUAL ↔ AUTO |
 | **E** | **keypad E-stop** (latched). **ENTER** releases it; that press does nothing else |
+| **F1** … **F6** | go to **POS 1** … **POS 6**: the same as **Go to POS n** on the Run page (§4b) |
 
 - Driving keys work in **MANUAL only**, like the panel pendant: 0.50 m/s straight,
   0.39 rad/s spin, soft S-curve start and stop. Releasing every key stops the vehicle.
 - A held key outranks the web jog. After any E-stop, let go of every key once before it
   drives again.
-- The other KIM2A keys (1–5 speed, K/L, T/Y, R, F1–F12, the trolley keys) do nothing here.
+- **F1–F6** work in **AUTO** (press **Q** or hold **G** first) with no run under way and the
+  position confirmed: the AMR loads the newest saved mission of that POS route and starts it
+  (pre-move warning, start gate), exactly as the Run page POS button. In MANUAL, during a run,
+  or with no saved mission for that POS, the press is refused and "What happened" says why
+  (`DEST_REFUSED`). A press while ENTER is held or the panel is not trusted is dropped.
+- The other KIM2A keys (1–5 speed, K/L, T/Y, R, F7–F12, the trolley keys) do nothing here.
 - The keypad E is a **software** stop. The red E-stop button and the scanner are the real
   safety stops.
 - The scanner fields do not slow a manual drive; the lidar's own safety output still stops
@@ -183,7 +190,7 @@ revision never changes; the new one is `rev N+1`. Nothing moves the vehicle.
 |---|---|---|
 | **Remove noise** | Lidar dots / speckle in open floor | Inside the rectangle, every occupied dot or blob up to 4 cells (about 10 × 10 cm) becomes free. Walls, racks and bigger objects stay. You can drag it over the whole map |
 | **Static obstacle** | A permanent thing the survey missed or drew badly (wall, fixed rack, a no-go block) | Cells become occupied: routes are refused through it, localisation uses it |
-| **Dynamic area** | Things that move: trolleys, pallets, parked forklifts | The map keeps them, but routes may be validated through them (yellow "provisional"), and the scan check of localisation ignores them. **Check the area is clear before Start** |
+| **Dynamic area** | Things that move: trolleys, pallets, parked forklifts | The map keeps them, but routes may be validated through them (yellow "provisional"), and localisation ignores them (the scan check, and AMCL itself: `AMR_LOC_BLANK_DYNAMIC=true`). **Check the area is clear before Start** |
 | **Clear dynamic** | Undo a dynamic mark (make it static again) | Removes the mark |
 | **Paint free** | A big object that is gone for good | Cells become free floor |
 | **Erase to unknown** | Safe erase when unsure | Cells become unknown (routes still refused unless dynamic) |
@@ -312,7 +319,8 @@ main route again, which takes it home.
 **Go to POS n** (Run page, Mission tab): selector **AUTO**, AMR on the homepost, no run under
 way; one press loads the newest mission of route `posN` on the active map and starts it after
 the 2 s warning - exactly like pressing START with that mission loaded. A POS without a
-mission yet is greyed. At the stop point the run WAITS: **Continue** (Run page) or **START**
+mission yet is greyed. The USB keypad's **F1 … F6** are the same six buttons (§2a). At the
+stop point the run WAITS: **Continue** (Run page) or **START**
 sends it on, back along the main route to the homepost.
 
 ## 4a. Remove a map, a route or a mission (engineer)
@@ -527,6 +535,7 @@ real stop.
   If the fields are changed in Safety Designer, measure again and update that file.
   The analog drives have no torque feedback, so a stop the scanner's OSSD makes in
   hardware is seen as a stall (see AMR_QR.md §5 no. 8).
-- **No Manual Arm switch, no horn, no pendant, no Reset / Continue / destination buttons,
-  no GLS floor camera** (`gls.enabled: false`), no RFID and no tape mode (both removed
+- **No Manual Arm switch, no horn, no pendant, no Reset / Continue / destination push buttons,
+  no GLS floor camera** (`gls.enabled: false`; POS 1–6 are the Run page buttons and keypad
+  F1–F6), no RFID and no tape mode (both removed
   from the code in KYB trackless).

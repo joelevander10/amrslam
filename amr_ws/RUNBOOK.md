@@ -263,13 +263,12 @@ What a dynamic area does:
   warns at load which steps cross dynamic areas.
 - **Localisation monitor**: beams that end in a dynamic area, or where the map
   expects a wall inside one, are left out of the scan match.
-- **AMCL** by default still localises against the full map. With
-  `AMR_LOC_BLANK_DYNAMIC=true` in `amr.env`, it uses a copy with the dynamic
-  areas set to unknown, served on `/map_loc`. The web view keeps showing
-  `/map`. Leave it `false` until AMCL covariance and scan match have been
-  compared on the same route with both settings on a trolley-heavy map. The
+- **AMCL**: with `AMR_LOC_BLANK_DYNAMIC=true` in `amr.env` (the AMR QR's
+  setting since 2026-11-09; `false` = the full map) it uses a copy with the
+  dynamic areas set to unknown, served on `/map_loc`. The web view keeps
+  showing `/map`. A map without dynamic areas is used as it is. The
   navigation layer refuses to start if fewer than 500 occupied cells remain
-  outside the dynamic areas.
+  outside the dynamic areas: shrink them, or set it back to `false`.
 - The rear blind spot is unchanged: a dynamic area behind the vehicle is not
   seen during a reverse.
 

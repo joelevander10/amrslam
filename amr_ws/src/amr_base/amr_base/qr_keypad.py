@@ -11,6 +11,8 @@ hot-plugged, GRABbed so its keys never reach the PC's desktop or a terminal.
     ENTER       the STOP button     (AUTO -> MANUAL; in MANUAL = Reset, acks a route FAULT)
     Q           switch MANUAL <-> AUTO (one press)
     E           keypad EMERGENCY STOP, latched; ENTER releases it (that press does nothing else)
+    F1..F6      go to POS 1..6 (panel.destinations[k-1]): exactly the Run page's POS button -
+                AUTO only, no run under way, start gate, pre-move warning (route executor)
 
 How it reaches the vehicle - nothing new downstream:
   * the four direction keys are a SECOND PENDANT: qr_base_node ORs them into the panel
@@ -19,6 +21,8 @@ How it reaches the vehicle - nothing new downstream:
     survey spin cap and the after-E-stop "release once" guard;
   * G / ENTER are ORed into the START / STOP levels of the virtual selector (qr_panel.py),
     so they behave exactly like the push buttons, auto_hold_s included;
+  * F1..Fn (n = len(panel.destinations)) are momentary destination buttons: one press, one
+    PanelState.dest_edge (qr_panel.py), the executor's _dest_edge decides as for a DI button;
   * E is ORed into the E-stop: emergency ACTIVE, drives out, as the mushroom does. It is
     a SOFTWARE stop - not safety rated; the mushroom and the scanner OSSD are the real ones.
 
@@ -27,7 +31,7 @@ STALE_S) all read as "nothing held". A wireless keyboard that goes out of range 
 receiver's business: most send the release on link loss, but the host cannot know.
 
 Keys of the KIM2A map with nothing to do here (speed 1-5, K/L track, T/Y rotate, R,
-F1-F12 cabang, the PLC trolley keys) are ignored, each logged once.
+F keys past the last destination, the PLC trolley keys) are ignored, each logged once.
 
 The key logic (KeypadState) is pure and tested; KeypadReader is the evdev part.
     ros2 run amr_base qr_keypad --list     which input devices would be used
@@ -48,8 +52,9 @@ POLL_S = 0.2  # reader wake-up (heartbeat) period
 
 MOVE = {"w": "fwd", "s": "rvs", "a": "left", "d": "right"}
 PANEL = {"g", "enter", "q", "e"}
+DEST = {f"f{i}": i for i in range(1, 13)}  # F-key -> destination index (1-based)
 # the rest of the KIM2A / Kayaba layout, recognised so it is logged once as unused
-UNUSED = set("12345klrtyzxuiobnm") | {f"f{i}" for i in range(1, 13)}
+UNUSED = set("12345klrtyzxuiobnm")
 
 
 @dataclass(frozen=True)
@@ -62,6 +67,8 @@ class KeypadImage:
     stop: bool = False  # ENTER held (not the press that released the keypad E-stop)
     toggles: int = 0  # Q presses so far (the selector acts on a change)
     estop: bool = False  # keypad E-stop latched
+    dest: int = 0  # destination of the newest F press (1-based), 0 = none yet
+    dest_presses: int = 0  # F presses so far (the selector acts on a change)
 
 
 IDLE = KeypadImage()
@@ -70,14 +77,18 @@ IDLE = KeypadImage()
 class KeypadState:
     """Held keys per device, the E latch and the Q counter. Thread-safe, pure (no evdev)."""
 
-    def __init__(self, panel_keys: bool = True, stale_s: float = STALE_S) -> None:
+    def __init__(
+        self, panel_keys: bool = True, stale_s: float = STALE_S, dest_names: tuple[str, ...] = ()
+    ) -> None:
         self.panel_keys = bool(panel_keys)
+        self.dest_names = tuple(dest_names)  # panel.destinations names: F1 = the first
         self.stale_s = float(stale_s)
         self._lock = threading.Lock()
         self._held: dict[str, set[str]] = {}
         self._alive_t: float | None = None
         self._estop = False
         self._toggles = 0
+        self._dest, self._dest_presses = 0, 0
         self._unused_logged: set[str] = set()
         self.devices: list[str] = []
         self.detail = "no reader"
@@ -123,6 +134,18 @@ class KeypadState:
                     self._estop = True
                     return "keypad E: EMERGENCY STOP (ENTER releases it)"
                 return None
+            if name in DEST:
+                if not press:
+                    return None
+                k = DEST[name]
+                if k > len(self.dest_names):
+                    return self._once(
+                        name, f"no destination {k} (panel.destinations has {len(self.dest_names)})"
+                    )
+                if not self.panel_keys:
+                    return self._once(name, "panel keys are off (qr_base.keypad_panel_keys)")
+                self._dest, self._dest_presses = k, self._dest_presses + 1
+                return f"keypad {name.upper()}: go to {self.dest_names[k - 1]}"
             if press and name in UNUSED:
                 return self._once(name, "not used on the AMR QR")
             return None
@@ -145,6 +168,8 @@ class KeypadState:
                 stop="enter" in held,
                 toggles=self._toggles,
                 estop=self._estop,
+                dest=self._dest,
+                dest_presses=self._dest_presses,
             )
 
     def _once(self, name: str, why: str) -> str | None:

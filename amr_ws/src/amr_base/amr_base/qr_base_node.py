@@ -27,7 +27,8 @@ Emergency (gvievo's emergency suite, read in QR terms): PanelState.emergency is 
 the E-stop input is open or the panel image is not trusted, NORMAL otherwise. There is no
 RESET_NEEDED step: the QR has no Flexi Soft and no STO to reset, and releasing the E-stop
 moves nothing - a held run still needs START (or the web's Continue at a wait step).
-PanelState.continue_edge and dest_edge stay false/0: the QR panel has only START and STOP.
+PanelState.continue_edge stays false: the QR panel has only START and STOP. dest_edge comes
+from the USB keypad's F1..F6 (POS 1..6), 0 otherwise.
 Push mode is reported as link "standby" with both states "Ready to switch on" - power off
 on purpose, not an emergency - and the reason in power_reason.
 
@@ -257,7 +258,10 @@ class QrBaseNode(Node):
         # USB keypad (qr_keypad.py): a second pendant + the panel buttons. Its own thread; a
         # dead or missing reader only means "nothing held" (heartbeat), never a stuck key.
         if config.QR_KEYPAD_ENABLED:
-            self.keypad = KeypadState(config.QR_KEYPAD_PANEL_KEYS)
+            self.keypad = KeypadState(
+                config.QR_KEYPAD_PANEL_KEYS,
+                dest_names=tuple(name for name, _ch, _route in config.PANEL_DESTINATIONS),
+            )
             reader = KeypadReader(
                 self.keypad,
                 config.QR_KEYPAD_NAME_CONTAINS,
@@ -641,7 +645,7 @@ class QrBaseNode(Node):
         m.estop_ok = bool(frame.valid and not frame.estop)
         m.emergency = self._emergency(frame)
         m.continue_edge = False  # no Continue push button on the QR panel
-        m.dest_edge = 0  # no destination buttons
+        m.dest_edge = int(getattr(frame, "dest_edge", 0))  # keypad F1..F6; no DI buttons on the QR
         self._safe_publish(self._pub_panel, m)
         now = time.monotonic()
         if now - self._ui_panel_t >= 0.1:
