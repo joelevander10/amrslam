@@ -2,6 +2,9 @@
 # a calibrated IMU and a live scan; the current map pose becomes the start reference.
 string map_id          # e.g. "line_section"; becomes the bundle directory name
 string description     # where the physical start mark is
+# 0 = a new map. N = continue map_id revN: slam_toolbox loads its pose graph with the vehicle on
+# that revision's survey start mark, maps on in the same frame; the save is a new revision.
+uint32 continue_revision
 ---
 bool accepted
 string message

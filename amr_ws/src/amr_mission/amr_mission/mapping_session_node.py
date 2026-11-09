@@ -2,7 +2,8 @@
 
 States IDLE -> MAPPING -> RETURN_REVIEW -> SAVING -> SAVED. Services:
 
-  /amr/survey/start     StartSurvey   readiness checks, record the start reference
+  /amr/survey/start     StartSurvey   readiness checks, record the start reference; with
+                                      continue_revision: load that revision's pose graph first
   /amr/survey/returned  Trigger       compute closure evidence vs the reference
   /amr/survey/save      SaveMap       pause SLAM, serialise, stage, verify, publish
   /amr/survey/abort     Trigger       back to IDLE (SLAM keeps its graph: relaunch for a clean survey)
@@ -32,7 +33,7 @@ from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import Imu, LaserScan
-from slam_toolbox.srv import Pause, SerializePoseGraph
+from slam_toolbox.srv import DeserializePoseGraph, Pause, SerializePoseGraph
 from std_srvs.srv import Trigger
 from tf2_ros import Buffer, TransformListener
 
@@ -105,6 +106,7 @@ class MappingSession(Node):
         self._map: OccupancyGrid | None = None
         self._map_t: float | None = None
         self._slam_paused = False
+        self._base: tuple[mb.Manifest, str] | None = None  # continue mapping: (base manifest, its dir)
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
@@ -129,6 +131,9 @@ class MappingSession(Node):
         )
         self._serialize = self.create_client(
             SerializePoseGraph, "/slam_toolbox/serialize_map", callback_group=io_group
+        )
+        self._deserialize = self.create_client(
+            DeserializePoseGraph, "/slam_toolbox/deserialize_map", callback_group=io_group
         )
 
         self.create_service(StartSurvey, "/amr/survey/start", self._srv_start, callback_group=srv_group)
@@ -290,23 +295,52 @@ class MappingSession(Node):
             self._set(self._state, res.message)
             return res
         x, y, yaw = self._pose_in_map()
+        base, desc = None, req.description
+        cont = int(getattr(req, "continue_revision", 0) or 0)
+        if cont:
+            try:
+                base, x, y, yaw = self._continue_from(req.map_id, cont)
+            except Exception as e:  # noqa: BLE001 - say why, nothing was started
+                res.accepted, res.message = False, f"cannot continue {req.map_id} rev{cont}: {e}"
+                self._set(self._state, res.message)
+                return res
+            desc = desc or str(base[0].start.get("description", ""))
         # HOME (gls-wait-coding-plan §C.3): the label under the camera at the start mark, if
         # there is one. T_MB is the start reference itself. OPTIONAL: a map may be surveyed
         # without a HOME label (owner 2026-11-02), so it is never a reason to refuse a survey.
         obs, why = label_record.observe(list(self._gls), self._still_since, self._now(), need_pose=False)
         home = label_record.at(obs, (x, y, yaw)) if obs else None
         with self._lock:
-            self._map_id, self._description = req.map_id, req.description
-            self._start = mb.StartReference(x, y, yaw, req.description)
+            self._map_id, self._description = req.map_id, desc
+            self._start = mb.StartReference(x, y, yaw, desc)
             self._review, self._saved_path, self._revision = None, "", 0
             self._home = home
+            self._base = base
         seen = f"; HOME label {home.label_id} seen" if home else f"; mapping without a HOME label ({why})"
+        what = f"continuing '{req.map_id}' rev{cont} (its map loaded)" if base else ""
+        what = what or f"surveying '{req.map_id}'"
         self._set(
             MappingState.MAPPING,
-            f"surveying '{req.map_id}' from ({x:.2f}, {y:.2f}, {math.degrees(yaw):.1f} deg){seen}",
+            f"{what} from ({x:.2f}, {y:.2f}, {math.degrees(yaw):.1f} deg){seen}",
         )
         res.accepted, res.message = True, self._message
         return res
+
+    def _continue_from(self, map_id: str, revision: int):
+        """Continue mapping (2026-11-06): load revision's pose graph into slam_toolbox with the
+        vehicle on that revision's survey start mark (START_AT_GIVEN_POSE: the first scans are
+        matched against the graph nodes near it, then mapping goes on in the SAME frame). The
+        start reference is that mark itself. Returns ((manifest, dir), x, y, yaw)."""
+        manifest, stem = mb.continue_base(self.maps_dir, map_id, revision)
+        s = manifest.start
+        req = DeserializePoseGraph.Request()
+        req.filename = stem
+        req.match_type = getattr(DeserializePoseGraph.Request, "START_AT_GIVEN_POSE", 2)
+        req.initial_pose = Pose2D(x=float(s["x_m"]), y=float(s["y_m"]), theta=float(s["yaw_rad"]))
+        self._call(self._deserialize, req)
+        self.get_logger().info(f"{map_id} rev{revision}: pose graph loaded, vehicle on its survey start mark")
+        base = (manifest, mb.revision_dir(self.maps_dir, map_id, revision))
+        return base, float(s["x_m"]), float(s["y_m"]), float(s["yaw_rad"])
 
     def _srv_returned(self, _req, res: Trigger.Response):
         if self._state not in (MappingState.MAPPING, MappingState.RETURN_REVIEW):
@@ -334,7 +368,7 @@ class MappingSession(Node):
             res.success, res.message = False, "save in progress"
             return res
         with self._lock:
-            self._start, self._review, self._home = None, None, None
+            self._start, self._review, self._home, self._base = None, None, None, None
         self._set(MappingState.IDLE, "survey aborted; relaunch mapping for a clean graph")
         res.success, res.message = True, self._message
         return res
@@ -406,6 +440,15 @@ class MappingSession(Node):
         self._call(self._serialize, SerializePoseGraph.Request(filename=os.path.join(stage, "posegraph")))
         grid_msg = self._wait_for_map(after=pause_t, timeout=2.5)
         grid = gridio.from_occupancy_grid_msg(grid_msg)
+        software = {"slam": "slam_toolbox online_async", "profile": "slam_mapping.yaml"}
+        if self._base is not None:
+            # continue mapping: the base revision's cells stay as they were (edits included), the
+            # new area comes from SLAM; its dynamic / keepout marks move onto the bigger map
+            base, base_dir = self._base
+            _m, base_grid = mb.load(self.maps_dir, self._map_id, base.revision)
+            grid = mb.merge_continued(base_grid, grid)
+            mb.stage_continued(stage, base_dir, base, grid, req.note)
+            software["continued_from"] = {"revision": int(base.revision), "sha256": base.sha256}
         review = mb.ReturnReview(**{**asdict(self._review), "note": req.note})
         manifest = mb.Manifest(
             map_id=self._map_id,
@@ -418,7 +461,7 @@ class MappingSession(Node):
             height=grid.height,
             start=asdict(self._start),
             review=asdict(review),
-            software={"slam": "slam_toolbox online_async", "profile": "slam_mapping.yaml"},
+            software=software,
         )
         mb.stage_bundle(stage, grid, os.path.join(stage, "posegraph"), manifest)
         mb.verify(stage)

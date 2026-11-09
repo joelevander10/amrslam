@@ -489,3 +489,79 @@ def test_derive_rotation_refuses_a_nothing_angle(tmp_path):
     with pytest.raises(maprot.RotateError):
         mb.derive_rotation(maps, "line_section", 1, 0.0)
     assert mb.list_revisions(maps, "line_section") == [1]
+
+
+# ---- continue mapping (2026-11-06) ----
+
+
+def _publish(tmp_path, maps, grid, rev, posegraph=True, start=True):
+    m = manifest(rev)
+    m.origin = [grid.meta.origin_x, grid.meta.origin_y, 0.0]
+    m.height, m.width = grid.data.shape
+    if not start:
+        m.start = {}
+    stage = mb.staging_dir(maps, "line_section", rev)
+    pg = fake_posegraph(tmp_path) if posegraph else None
+    mb.stage_bundle(stage, grid, pg, m, required_posegraph=posegraph)
+    return mb.publish(stage, maps, "line_section", rev)
+
+
+def test_continue_needs_a_pose_graph_and_a_start_mark(tmp_path):
+    maps = str(tmp_path / "maps")
+    os.makedirs(maps)
+    _publish(tmp_path, maps, small_grid(), 1)
+    m, stem = mb.continue_base(maps, "line_section", 1)
+    assert m.revision == 1 and stem.endswith(os.path.join("rev1", "posegraph"))
+    _publish(tmp_path, maps, small_grid(), 2, posegraph=False)
+    with pytest.raises(mb.BundleError, match="no SLAM pose graph"):
+        mb.continue_base(maps, "line_section", 2)
+    _publish(tmp_path, maps, small_grid(), 3, start=False)
+    with pytest.raises(mb.BundleError, match="survey start mark"):
+        mb.continue_base(maps, "line_section", 3)
+    with pytest.raises(mb.BundleError, match="no such map revision"):
+        mb.continue_base(maps, "line_section", 9)
+
+
+def test_a_continued_map_keeps_every_known_base_cell_and_adds_the_new_area():
+    base = small_grid()  # origin (-1, -0.5), 30 x 20, known block rows 5..14, cols 5..24
+    base.data[10, 10] = 0  # an operator's "free" edit inside the known area
+    # SLAM's map: grown by 1 m to the right, its lattice offset by whole cells, and it sees an
+    # obstacle where the base has the operator's free cell, and fills a cell the base left unknown
+    slam = Grid(np.full((20, 50), -1, dtype=np.int8), GridMeta(0.05, -1.0, -0.5))
+    slam.data[5:15, 5:45] = 0
+    slam.data[10, 10] = 100
+    slam.data[2, 2] = 100  # base unknown there
+    slam.data[8, 40] = 100  # the new area
+    out = mb.merge_continued(base, slam)
+    assert (out.width, out.height) == (50, 20) and out.meta.origin_x == pytest.approx(-1.0)
+    assert out.data[10, 10] == 0  # the base knew it: unchanged
+    assert out.data[5, 10] == 100  # the base's wall
+    assert out.data[2, 2] == 100 and out.data[8, 40] == 100  # unknown before / new: SLAM's
+    # a SLAM map that does not reach as far as the base: the union keeps the base's cells
+    small = Grid(np.zeros((10, 10), dtype=np.int8), GridMeta(0.05, 0.0, 0.0))
+    u = mb.merge_continued(base, small)
+    assert (u.width, u.height) == (30, 20) and u.meta.origin_x == pytest.approx(-1.0)
+    with pytest.raises(mb.BundleError, match="resolution"):
+        mb.merge_continued(base, Grid(slam.data, GridMeta(0.1, -1.0, -0.5)))
+
+
+def test_marks_move_onto_the_bigger_map(tmp_path):
+    base = small_grid()
+    dyn = np.zeros(base.data.shape, dtype=bool)
+    dyn[6:8, 6:9] = True
+    mask = edit.mask_grid(base, dyn)
+    big = Grid(np.zeros((40, 60), dtype=np.int8), GridMeta(0.05, -2.0, -1.5))  # 1 m further out
+    placed = mb.place_mask(mask, big)
+    assert placed.data.shape == (40, 60) and int((placed.data >= 65).sum()) == 6
+    assert placed.data[6 + 20, 6 + 20] == 100  # same world cell, shifted by 20 cells each way
+    rev_dir = tmp_path / "base"
+    rev_dir.mkdir()
+    gridio.write(mask, str(rev_dir / "dynamic"))
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    m = manifest(4)
+    m.sha256 = "abc"
+    mb.stage_continued(str(stage), str(rev_dir), m, big, "new aisle")
+    assert int((gridio.read(str(stage / "dynamic.yaml")).data >= 65).sum()) == 6
+    assert mb.load_edits(str(stage))["ops"] == [{"op": "continue_mapping"}]
+    assert mb.load_edits(str(stage))["parent"] == {"revision": 4, "sha256": "abc"}

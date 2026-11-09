@@ -3,7 +3,28 @@ const $ = id => document.getElementById(id);
 const busy = (on) => ['btn-survey-start', 'btn-survey-returned', 'btn-survey-save', 'btn-survey-abort'].forEach(id => $(id).disabled = on);
 function op(path, body) { busy(true); return operation(path, body, () => { busy(false); loadMaps().catch(() => {}); }); }
 const MAP_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;  // same rule as the supervisor (readiness.check_map_id)
+// Continue mapping (2026-11-06): a saved revision's "Continue mapping" picks it; Start then
+// loads its SLAM pose graph with the AMR on its survey mark and maps on in the same frame.
+let continueFrom = null;  // { map_id, revision, start }
+function setContinue(c) {
+  continueFrom = c;
+  $('survey-continue').hidden = !c;
+  $('btn-survey-start').textContent = c ? `Continue ${c.map_id} rev${c.revision} (start survey)` : 'New map (start survey)';
+  $('survey-map-id').disabled = !!c;
+  if (c) {
+    $('survey-map-id').value = c.map_id;
+    const s = c.start || {};
+    $('survey-continue-text').textContent = `from ${c.map_id} rev${c.revision}: put the AMR on its survey mark` +
+      `${s.description ? ` (${s.description})` : ''}, facing as when it was mapped, standing still; then Start. ` +
+      'Drive the new area, come back to the mark, Returned to start, Save: a new revision of the same map, same coordinates (routes keep their places; make their missions again).';
+  }
+}
+$('btn-continue-cancel').onclick = () => setContinue(null);
 $('btn-survey-start').onclick = () => {
+  if (continueFrom) {
+    op('/api/survey/start', { map_id: continueFrom.map_id, continue_revision: continueFrom.revision, description: $('survey-desc').value.trim() });
+    return;
+  }
   const mapId = $('survey-map-id').value.trim();
   if (!MAP_ID_RE.test(mapId)) {
     // the grey placeholder is not a value: an empty field was the usual cause
@@ -89,6 +110,7 @@ onState(st => {
 });
 async function loadMaps() {
   const { data } = await apiGet('/api/maps');
+  mapsIndex = data || [];
   if (!data.length) { $('maps-list').innerHTML = '<div class="none">no saved maps yet</div>'; return; }
   const head = '<div class="row head"><span>rev · created · size</span><span>closure review · routes · bundle</span></div>';
   $('maps-list').innerHTML = data.map(m => `<h3>${esc(m.map_id)} <button class="tool danger" data-remove-map="${esc(m.map_id)}" title="Remove the whole map: every revision, its routes and the missions on it (moved to the maps trash)">Remove map</button></h3><div class="list">${head}` +
@@ -101,9 +123,18 @@ async function loadMaps() {
         `<code>${esc(String(r.sha256).slice(0, 12))}</code><br>` +
         `<span class="n">${derived(r)}</span> ` +
         `<a class="tool" href="/review?map=${encodeURIComponent(m.map_id)}&rev=${encodeURIComponent(r.revision)}" title="Mark dynamic areas (trolleys, parked forklifts) or clean up this map: saves a new revision">Edit areas</a> ` +
+        (r.continuable ? `<button class="tool" data-continue-map="${esc(m.map_id)}" data-rev="${esc(r.revision)}" title="Map more area into this map: same coordinates, saved as a new revision">Continue mapping</button> ` : '') +
         `<button class="tool danger" data-remove-map="${esc(m.map_id)}" data-rev="${esc(r.revision)}" title="Remove this revision, the route revisions drawn on it and the missions using them (moved to the maps trash)">Remove</button></span></div>`).join('') + '</div>').join('');
 }
 // Remove a map or one revision (engineer; the server lists what goes and refuses the active map)
+let mapsIndex = [];
+$('maps-list').addEventListener('click', e => {
+  const b = e.target.closest ? e.target.closest('[data-continue-map]') : null; if (!b) return;
+  const m = mapsIndex.find(x => x.map_id === b.dataset.continueMap), r = m && m.revisions.find(x => +x.revision === +b.dataset.rev);
+  setContinue({ map_id: b.dataset.continueMap, revision: +b.dataset.rev, start: r && r.start });
+  log(`continue mapping ${b.dataset.continueMap} rev${b.dataset.rev}: see Survey session`);
+  window.scrollTo && window.scrollTo(0, 0);
+});
 $('maps-list').addEventListener('click', async e => {
   const b = e.target.closest ? e.target.closest('[data-remove-map]') : null; if (!b) return;
   const rev = b.dataset.rev ? +b.dataset.rev : null;

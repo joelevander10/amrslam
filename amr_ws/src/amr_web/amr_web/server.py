@@ -443,6 +443,7 @@ def create_app(
                             "start": m.start,
                             "review": m.review,
                             "routes": store.list_routes(maps_dir, map_id),
+                            "continuable": all(n in m.files for n in mb.POSEGRAPH),
                             "dynamic_cells": ex["dynamic_cells"],
                             "edits": _edits_summary(ex["edits"]),
                         }
@@ -1094,7 +1095,20 @@ def create_app(
             return err
         rid = str(d.get("request_id") or uuid.uuid4().hex)
         desc = str(d.get("description", d.get("note", "")))
-        return _accepted(*adapter.survey_request(SURVEY_OPS[op], str(d.get("map_id", "")), desc, rid))
+        cont = d.get("continue_revision", 0) or 0
+        if isinstance(cont, bool) or not isinstance(cont, int) or cont < 0:
+            return _result(False, "continue_revision must be a revision number (0 = a new map)", 400)
+        if op != "start" or not cont:
+            return _accepted(*adapter.survey_request(SURVEY_OPS[op], str(d.get("map_id", "")), desc, rid))
+        # Continue mapping (2026-11-06): the revision must exist and still carry its pose graph
+        try:
+            m, _g = bundle(str(d.get("map_id", "")), cont)
+        except (mb.BundleError, gridio.GridError) as e:
+            return _result(False, f"cannot continue: {e}", 404)
+        if not all(n in m.files for n in mb.POSEGRAPH):
+            return _result(False, f"cannot continue: {m.map_id} rev{cont} has no SLAM pose graph "
+                                  "(a rotated revision): continue from the revision before the rotation", 409)
+        return _accepted(*adapter.survey_request(SURVEY_OPS[op], m.map_id, desc, rid, cont))
 
     # preset survey moves (press once): validated again by survey_move_node, which also checks
     # the MANUAL authority; a refused move answers 409 with the node's reason

@@ -738,7 +738,7 @@ class RosAdapter(Node):
         return bool(r.accepted), r.operation_id, r.message
 
     def survey_request(
-        self, operation: int, map_id: str, description: str, request_id: str
+        self, operation: int, map_id: str, description: str, request_id: str, continue_revision: int = 0
     ) -> tuple[bool, str, str]:
         inst, gen = self.supervisor_identity()
         if not inst:
@@ -746,6 +746,7 @@ class RosAdapter(Node):
         req = RequestSurvey.Request()
         req.request_id, req.expected_instance, req.expected_generation = request_id, inst, gen
         req.operation, req.map_id, req.description = int(operation), map_id, description
+        req.continue_revision = int(continue_revision)
         r = self._call("survey", req, timeout=5.0)
         if r is None:
             return False, "", "supervisor unavailable"

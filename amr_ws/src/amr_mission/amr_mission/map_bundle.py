@@ -516,3 +516,93 @@ def load(maps_dir: str, map_id: str, revision: int) -> tuple[Manifest, gridio.Gr
 
 def now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S%z")
+
+
+# ---- continue mapping (2026-11-06) ---------------------------------------------------------
+# A survey that carries on from a saved revision: slam_toolbox loads that revision's pose graph
+# (deserialize_map, the AMR placed on its survey start mark) and maps on in the SAME frame, so
+# routes, POS branches and stop points keep their coordinates. Its save is a new revision of
+# the same map id; the old area keeps every cell the base revision knew (operator edits
+# included), new cells come from SLAM, and the dynamic / keepout marks move onto the bigger map.
+
+
+def continue_base(maps_dir: str, map_id: str, revision: int) -> tuple[Manifest, str]:
+    """The revision a continued survey starts from: verified, with its slam_toolbox pose graph
+    and a survey start mark. Returns (manifest, pose graph path stem for deserialize_map)."""
+    rev_dir = revision_dir(maps_dir, map_id, revision)
+    if not os.path.isdir(rev_dir):
+        raise BundleError(f"no such map revision: {map_id} rev{revision}")
+    m = verify(rev_dir)
+    if not all(os.path.isfile(os.path.join(rev_dir, n)) for n in POSEGRAPH):
+        raise BundleError(
+            f"{map_id} rev{revision} has no SLAM pose graph (a rotated revision has none): "
+            "continue from the revision before the rotation, then rotate again"
+        )
+    s = m.start or {}
+    if not all(isinstance(s.get(k), (int, float)) for k in ("x_m", "y_m", "yaw_rad")):
+        raise BundleError(f"{map_id} rev{revision} has no survey start mark to start from")
+    return m, os.path.join(rev_dir, "posegraph")
+
+
+def _place(data: np.ndarray, src: gridio.GridMeta, dst: gridio.GridMeta, w: int, h: int, outside: int):
+    """`data` (in src geometry) onto a w x h grid of dst geometry, same resolution, both axis
+    aligned: every destination cell takes the source cell its centre falls in (exact for grids
+    on one lattice, nearest otherwise - no thickening)."""
+    res = dst.resolution
+    cols, rows = np.meshgrid(np.arange(w), np.arange(h))
+    co = np.floor((dst.origin_x + (cols + 0.5) * res - src.origin_x) / src.resolution).astype(np.int64)
+    ro = np.floor((dst.origin_y + (rows + 0.5) * res - src.origin_y) / src.resolution).astype(np.int64)
+    sh, sw = data.shape
+    inside = (co >= 0) & (co < sw) & (ro >= 0) & (ro < sh)
+    out = np.full((h, w), outside, dtype=data.dtype)
+    out[inside] = data[ro[inside], co[inside]]
+    return out
+
+
+def merge_continued(base: gridio.Grid, slam: gridio.Grid) -> gridio.Grid:
+    """The continued survey's map: the union of both extents, at SLAM's resolution; where the
+    base revision knew a cell (free or occupied, edits included) it stays as it was, everywhere
+    else - the new area and what the base left unknown - is SLAM's. Pure."""
+    gridio.require_axis_aligned(base.meta)
+    gridio.require_axis_aligned(slam.meta)
+    res = slam.meta.resolution
+    if abs(base.meta.resolution - res) > 1e-9:
+        raise BundleError(f"resolution changed ({base.meta.resolution} -> {res} m): continue needs the same")
+    x0 = min(base.meta.origin_x, slam.meta.origin_x)
+    y0 = min(base.meta.origin_y, slam.meta.origin_y)
+    x1 = max(base.meta.origin_x + base.width * res, slam.meta.origin_x + slam.width * res)
+    y1 = max(base.meta.origin_y + base.height * res, slam.meta.origin_y + slam.height * res)
+    # keep SLAM's cell lattice: the union grows by whole cells from SLAM's origin
+    nx0 = slam.meta.origin_x - math.ceil(round((slam.meta.origin_x - x0) / res, 6)) * res
+    ny0 = slam.meta.origin_y - math.ceil(round((slam.meta.origin_y - y0) / res, 6)) * res
+    w = int(math.ceil(round((x1 - nx0) / res, 6)))
+    h = int(math.ceil(round((y1 - ny0) / res, 6)))
+    sm = slam.meta
+    meta = gridio.GridMeta(res, nx0, ny0, 0.0, sm.occupied_thresh, sm.free_thresh, sm.negate)
+    b = _place(base.data, base.meta, meta, w, h, -1)
+    s = _place(slam.data, slam.meta, meta, w, h, -1)
+    return gridio.Grid(np.where(b != -1, b, s).astype(np.int8), meta)
+
+
+def place_mask(mask: gridio.Grid, like: gridio.Grid) -> gridio.Grid:
+    """A base revision's mask (dynamic / keepout, 100 = marked) on the continued map's geometry."""
+    return gridio.Grid(_place(mask.data, mask.meta, like.meta, like.width, like.height, 0), like.meta)
+
+
+def stage_continued(stage: str, base_dir: str, base: Manifest, merged: gridio.Grid, note: str = "") -> None:
+    """Into a continued survey's stage, before stage_bundle: the base revision's masks on the
+    merged map, and an edits.json naming the base revision (the Maps page shows "from revN")."""
+    for name in MASKS:
+        g = load_mask(base_dir, name)
+        if g is not None:
+            gridio.write(place_mask(g, merged), os.path.join(stage, name))
+    doc = {
+        "parent": {"revision": int(base.revision), "sha256": base.sha256},
+        "created": now_iso(),
+        "note": str(note)[:500],
+        "ops": [{"op": "continue_mapping"}],
+        "cells": [],
+        "dynamic_cells": 0,
+    }
+    with open(os.path.join(stage, EDITS), "w") as fh:
+        json.dump(doc, fh, indent=1)

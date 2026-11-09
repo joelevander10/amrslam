@@ -9,6 +9,7 @@ uint32 expected_generation
 uint8 operation
 string map_id               # START
 string description          # START: physical start-mark description; SAVE: review note
+uint32 continue_revision    # START: 0 = a new map; N = carry on mapping map_id revN (2026-11-06)
 ---
 bool accepted
 string operation_id

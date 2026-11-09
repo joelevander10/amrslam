@@ -449,7 +449,8 @@ class Supervisor(Node):
                     return res
             op, _ = self.book.submit(req.request_id, kind, map_id=req.map_id, message=req.description)
             if kind == fsm.REQ_SURVEY_START:
-                self._begin_transaction(op, fsm.MAPPING, req.map_id, 0, "")
+                # map_revision carries the revision to continue (0 = a new map) to StartSurvey
+                self._begin_transaction(op, fsm.MAPPING, req.map_id, int(req.continue_revision), "")
             else:
                 self.survey_op = (op.operation_id, kind)
                 if kind == fsm.REQ_SURVEY_SAVE:
@@ -757,6 +758,7 @@ class Supervisor(Node):
             req = StartSurvey.Request()
             req.map_id = t.map_id
             req.description = self.book.get(t.operation_id).message
+            req.continue_revision = int(t.map_revision or 0)
             self._pending_future = self._cli["start"].call_async(req)
             self.book.phase(t.operation_id, "starting survey")
             return

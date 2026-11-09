@@ -37,8 +37,9 @@ class Stub:
         self.ops["op-mode"] = {"operation_id": "op-mode", "status": 0, "status_name": "PENDING"}
         return True, "op-mode", "accepted"
 
-    def survey_request(self, operation, map_id, description, request_id):
-        self.calls.append(("survey_request", (operation, map_id, description, request_id)))
+    def survey_request(self, operation, map_id, description, request_id, continue_revision=0):
+        args = (operation, map_id, description, request_id)
+        self.calls.append(("survey_request", args + ((continue_revision,) if continue_revision else ())))
         return True, "op-survey", "accepted"
 
     def get_operation(self, oid):
@@ -989,3 +990,30 @@ def test_a_pos_route_must_keep_its_main_part(env):
     r = client.post("/api/maps/sim_factory/1/routes/validate", json=bad)
     assert r.status_code == 422
     assert any(i["code"] == "branch" and "rev7" in i["message"] for i in r.json["issues"])
+
+
+def test_continue_mapping_needs_a_revision_with_its_pose_graph(env, tmp_path):
+    """2026-11-06: Maps page, Continue mapping - forwarded with the revision; refused for a
+    revision with no SLAM pose graph (rotated) or none at all."""
+    client, stub, maps, *_ = env
+    assert client.get("/api/maps").json[0]["revisions"][0]["continuable"] is False  # the fixture has none
+    r = client.post("/api/survey/start", json={"map_id": "sim_factory", "continue_revision": 1})
+    assert r.status_code == 409 and "pose graph" in r.json["message"]
+    for rev, code in ((7, 404), (-1, 400)):
+        r = client.post("/api/survey/start", json={"map_id": "sim_factory", "continue_revision": rev})
+        assert r.status_code == code
+    # a revision that keeps its pose graph (as a survey save does)
+    m1, g = mb.load(maps, "sim_factory", 1)
+    stem = str(tmp_path / "pg")
+    for ext in (".posegraph", ".data"):
+        with open(stem + ext, "wb") as fh:
+            fh.write(b"\x01" * 32)
+    m1.revision = 2
+    stage = mb.staging_dir(maps, "sim_factory", 2)
+    mb.stage_bundle(stage, g, stem, m1)
+    mb.publish(stage, maps, "sim_factory", 2)
+    assert [r["continuable"] for r in client.get("/api/maps").json[0]["revisions"]] == [False, True]
+    r = client.post("/api/survey/start", json={"map_id": "sim_factory", "continue_revision": 2})
+    assert r.status_code == 202 and stub.calls[-1][0] == "survey_request"
+    op, map_id, desc, _rid, rev = stub.calls[-1][1]
+    assert (op, map_id, desc, rev) == (0, "sim_factory", "", 2)
