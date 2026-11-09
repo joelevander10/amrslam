@@ -10,6 +10,8 @@ exactly on the AMR's centre line, D metres in front of the lidar (stretch a stri
 middle of the rear to the middle of the front, measure along it). Nothing else within 0.5 m
 of it. Then:
 
+    source ~/agv_can/amr_ws/install/setup.bash
+    source ~/agv_can/amr_ws/env/vehicle.sh            # ROS_DOMAIN_ID=10 + CycloneDDS, as the service
     python3 ~/agv_can/tools/lidar_yaw.py 2.0          # D = 2.0 m
     python3 ~/agv_can/tools/lidar_yaw.py 2.0 1.0      # optional 2nd run at 1.0 m: also the
                                                       # sideways offset (laser_y)
@@ -30,15 +32,17 @@ from sensor_msgs.msg import LaserScan
 
 N_SCANS = 40
 WINDOW = math.radians(30.0)
+WAIT_S = 10.0
 
 
 class Probe(Node):
     def __init__(self, d: float) -> None:
         super().__init__("lidar_yaw_probe")
-        self.d, self.angles, self.ranges = d, [], []
+        self.d, self.angles, self.ranges, self.scans = d, [], [], 0
         self.create_subscription(LaserScan, "/scan", self.on_scan, qos_profile_sensor_data)
 
     def on_scan(self, m: LaserScan) -> None:
+        self.scans += 1
         pts = []
         for i, r in enumerate(m.ranges):
             a = m.angle_min + i * m.angle_increment
@@ -54,9 +58,27 @@ class Probe(Node):
 
 
 def measure(d: float) -> tuple[float, float]:
+    import os  # noqa: PLC0415
+    import time  # noqa: PLC0415
+
     node = Probe(d)
+    print(f"measuring at {d:.2f} m ...", flush=True)
+    t0 = time.monotonic()
     while rclpy.ok() and len(node.angles) < N_SCANS:
-        rclpy.spin_once(node, timeout_sec=1.0)
+        rclpy.spin_once(node, timeout_sec=0.5)
+        if time.monotonic() - t0 > WAIT_S:
+            if node.scans == 0:
+                sys.exit(
+                    "no /scan received in 10 s. This shell must use the service's ROS settings:\n"
+                    "  source ~/agv_can/amr_ws/env/vehicle.sh   (ROS_DOMAIN_ID=10, CycloneDDS)\n"
+                    f"  now: ROS_DOMAIN_ID={os.environ.get('ROS_DOMAIN_ID', '(unset)')}, "
+                    f"RMW_IMPLEMENTATION={os.environ.get('RMW_IMPLEMENTATION', '(unset)')}\n"
+                    "and the service must be running with the lidar (ros2 topic hz /scan)."
+                )
+            sys.exit(
+                f"{node.scans} scans received but no object within +-30 deg and 0.4..{d + 1:.1f} m "
+                "in front: is it at the lidar's height, on the centre line?"
+            )
     a, r = statistics.mean(node.angles), statistics.mean(node.ranges)
     sd = statistics.pstdev(node.angles)
     node.destroy_node()
