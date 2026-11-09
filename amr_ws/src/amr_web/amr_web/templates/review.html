@@ -32,6 +32,25 @@
     <label class="field" style="margin-top:1rem">Note <input id="rv-note" placeholder="trolleys along rack C marked dynamic"></label>
     <div class="bar"><button id="btn-rv-save" class="big run">Save as new revision</button></div>
     <div class="sep"></div>
+    <h3>Changes seen during runs <small>where the map no longer fits</small></h3>
+    <label class="check"><input id="rv-chg-show" type="checkbox" checked> Show on the map: <b style="color:var(--stop)">red</b> = on the map but gone, <b style="color:var(--hazard-ink)">yellow</b> = there now but not on the map</label>
+    <p id="rv-chg-note" class="note"></p>
+    <div id="rv-chg-list" class="list"><div class="none">loading…</div></div>
+    <div class="sep"></div>
+    <h3>Re-map area <small>replace boxes with the latest survey</small></h3>
+    <p id="rv-remap-note" class="note"></p>
+    <div class="bar" style="margin-top:0">
+      <button id="tool-remap" class="tool" title="Drag a box over the stretch that changed: inside it the map becomes what the latest Continue mapping drive saw">Re-map box</button>
+      <button id="btn-remap-clear" class="tool">Clear boxes</button>
+    </div>
+    <div id="rv-remap-boxes" class="list"><div class="none">no boxes</div></div>
+    <div class="bar">
+      <button id="btn-remap-preview" class="tool" disabled>Preview</button>
+      <label class="check" style="margin:0;align-items:center"><input id="rv-remap-after" type="checkbox" disabled> Show after</label>
+    </div>
+    <p id="rv-remap-check" class="note"></p>
+    <div class="bar"><button id="btn-remap-save" class="big run" disabled>Save re-mapped revision</button></div>
+    <div class="sep"></div>
     <h3>Rotate map <small>straighten onto a wall</small></h3>
     <div class="bar" style="margin-top:0">
       <button id="tool-align" class="tool" title="Drag a line along a long straight wall: the map is turned so that wall runs exactly along X or Y">Reference line</button>

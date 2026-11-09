@@ -24,6 +24,7 @@ import threading
 import time
 from dataclasses import asdict
 
+import numpy as np
 import rclpy
 from agv_core import alarms
 from geometry_msgs.msg import Pose2D
@@ -40,6 +41,7 @@ from tf2_ros import Buffer, TransformListener
 from amr_interfaces.msg import Event, GlsReading, MappingState, WheelStates
 from amr_interfaces.srv import SaveMap, StartSurvey
 from amr_maps import grid as gridio
+from amr_maps import survey_scan
 from amr_mission import label_record
 from amr_mission import map_bundle as mb
 
@@ -56,6 +58,11 @@ STATE_NAMES = {
     MappingState.SAVING: "SAVING",
     MappingState.SAVED: "SAVED",
 }
+
+
+KEYFRAME_M = 0.20
+KEYFRAME_RAD = math.radians(8.0)
+KEYFRAMES_MAX = 3000  # ~600 m of driving; ~5 MB of ranges
 
 
 def _wrap(a: float) -> float:
@@ -107,6 +114,10 @@ class MappingSession(Node):
         self._map_t: float | None = None
         self._slam_paused = False
         self._base: tuple[mb.Manifest, str] | None = None  # continue mapping: (base manifest, its dir)
+        # Re-map area (2026-11-09): a continued survey's own scans, one per KEYFRAME_M / _RAD of
+        # laser motion, made into survey_scan at save (amr_maps.survey_scan)
+        self._keyframes: list[survey_scan.Keyframe] = []
+        self._last_kf: tuple[float, float, float] | None = None
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
@@ -151,6 +162,35 @@ class MappingSession(Node):
     def _on_scan(self, msg: LaserScan) -> None:
         self._last_scan_t = self._now()
         self._last_scan_stamp = rclpy.time.Time.from_msg(msg.header.stamp).nanoseconds * 1e-9
+        if self._base is not None and self._state == MappingState.MAPPING:
+            self._keyframe(msg)
+
+    def _keyframe(self, msg: LaserScan) -> None:
+        """Keep this scan for the survey scan when the laser moved enough since the last one."""
+        if len(self._keyframes) >= KEYFRAMES_MAX:
+            return
+        try:
+            tr = self.tf_buffer.lookup_transform("map", msg.header.frame_id, msg.header.stamp)
+        except Exception:  # noqa: BLE001 - SLAM has not covered this stamp (yet): skip it
+            return
+        q = tr.transform.rotation
+        pose = (
+            tr.transform.translation.x,
+            tr.transform.translation.y,
+            math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z)),
+        )
+        last = self._last_kf
+        if last is not None and (
+            math.hypot(pose[0] - last[0], pose[1] - last[1]) < KEYFRAME_M
+            and abs(_wrap(pose[2] - last[2])) < KEYFRAME_RAD
+        ):
+            return
+        self._last_kf = pose
+        self._keyframes.append(
+            survey_scan.Keyframe(
+                *pose, msg.angle_min, msg.angle_increment, np.asarray(msg.ranges, dtype=np.float32)
+            )
+        )
 
     def _slam_lag_s(self) -> float | None:
         """Seconds between the newest scan and the scan SLAM last consumed, from the
@@ -316,6 +356,7 @@ class MappingSession(Node):
             self._review, self._saved_path, self._revision = None, "", 0
             self._home = home
             self._base = base
+            self._keyframes, self._last_kf = [], None
         seen = f"; HOME label {home.label_id} seen" if home else f"; mapping without a HOME label ({why})"
         what = f"continuing '{req.map_id}' rev{cont} (its map loaded)" if base else ""
         what = what or f"surveying '{req.map_id}'"
@@ -369,6 +410,7 @@ class MappingSession(Node):
             return res
         with self._lock:
             self._start, self._review, self._home, self._base = None, None, None, None
+            self._keyframes, self._last_kf = [], None
         self._set(MappingState.IDLE, "survey aborted; relaunch mapping for a clean graph")
         res.success, res.message = True, self._message
         return res
@@ -447,7 +489,11 @@ class MappingSession(Node):
             base, base_dir = self._base
             _m, base_grid = mb.load(self.maps_dir, self._map_id, base.revision)
             grid = mb.merge_continued(base_grid, grid)
-            mb.stage_continued(stage, base_dir, base, grid, req.note)
+            scan = None
+            if self._keyframes:
+                scan = survey_scan.rasterize(grid.meta, grid.width, grid.height, list(self._keyframes))
+                self.get_logger().info(f"survey scan: {len(self._keyframes)} keyframes")
+            mb.stage_continued(stage, base_dir, base, grid, req.note, scan)
             software["continued_from"] = {"revision": int(base.revision), "sha256": base.sha256}
         review = mb.ReturnReview(**{**asdict(self._review), "note": req.note})
         manifest = mb.Manifest(

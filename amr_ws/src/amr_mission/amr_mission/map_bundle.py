@@ -41,6 +41,7 @@ import yaml
 
 from amr_maps import edit
 from amr_maps import grid as gridio
+from amr_maps import remap as mapremap
 from amr_maps import rotate as maprot
 
 MANIFEST = "manifest.yaml"
@@ -208,6 +209,10 @@ def stage_bundle(
 # ordered operator edits that made this revision from its parent (dynamic-mapping plan §1.1).
 MASKS = ("keepout", "dynamic")
 EDITS = "edits.json"
+# Re-map area (2026-11-09): a continued survey's OWN scans as a grid on the map's geometry
+# (amr_maps.survey_scan). Derived revisions carry it; a rotation drops it (other frame).
+SURVEY_SCAN = "survey_scan"
+SURVEY_SCAN_FILES = (f"{SURVEY_SCAN}.pgm", f"{SURVEY_SCAN}.yaml")
 CONSUMED_OPTIONAL = ("keepout.yaml", "keepout.pgm", "dynamic.yaml", "dynamic.pgm", EDITS)
 
 
@@ -451,8 +456,66 @@ def derive_rotation(
             "start": {**s, "x_m": sx, "y_m": sy, "yaw_rad": syaw},
             "review": r,
         }
-        path, revision = derive_revision(maps_dir, map_id, from_revision, extra, POSEGRAPH, changes)
+        drop = POSEGRAPH + SURVEY_SCAN_FILES  # both hold the old frame
+        path, revision = derive_revision(maps_dir, map_id, from_revision, extra, drop, changes)
     return path, revision, new
+
+
+def load_survey_scan(rev_dir: str) -> gridio.Grid | None:
+    """The revision's survey scan (Re-map area), or None when it has none."""
+    path = os.path.join(rev_dir, f"{SURVEY_SCAN}.yaml")
+    return _read_grid(path) if os.path.isfile(path) else None
+
+
+def remap_preview(maps_dir: str, map_id: str, from_revision: int, boxes) -> tuple[gridio.Grid, int, dict]:
+    """(the re-mapped grid, changed cells, alignment check) without saving anything."""
+    boxes = mapremap.normalize_boxes(boxes)
+    src_dir = revision_dir(maps_dir, map_id, from_revision)
+    _parent, grid = load(maps_dir, map_id, from_revision)
+    scan = load_survey_scan(src_dir)
+    if scan is None:
+        raise edit.EditError(
+            "this revision has no survey scan: Continue mapping from it through the changed stretch "
+            "first, then re-map on the revision that saves"
+        )
+    check = mapremap.check_alignment(grid, scan, boxes)
+    new, changed = mapremap.apply(grid, scan, boxes)
+    return new, changed, check
+
+
+def derive_remap(
+    maps_dir: str, map_id: str, from_revision: int, boxes, note: str = "", force: bool = False
+) -> tuple[str, int, dict]:
+    """A NEW revision: inside `boxes` the map is what the latest survey saw (amr_maps.remap),
+    elsewhere and in every other file the parent. Refused when the survey scan does not line
+    up with the map around the boxes; when there was nothing to check against, only with
+    `force` (the operator looked at the preview). Returns (path, revision, check)."""
+    boxes = mapremap.normalize_boxes(boxes)
+    new, changed, check = remap_preview(maps_dir, map_id, from_revision, boxes)
+    if check["ok"] is False:
+        raise edit.EditError(f"not re-mapped: {check['text']}")
+    if check["ok"] is None and not force:
+        raise edit.EditError(f"not re-mapped: {check['text']} (look at the preview, then save anyway)")
+    if changed == 0:
+        raise edit.EditError("the re-map changes nothing inside the boxes (the new drive saw the same)")
+    parent = load_manifest(revision_dir(maps_dir, map_id, from_revision), map_id, from_revision)
+    with tempfile.TemporaryDirectory(prefix="amr_remap_") as tmp:
+        gridio.write(new, os.path.join(tmp, "map"))
+        extra = {"map.pgm": os.path.join(tmp, "map.pgm"), "map.yaml": os.path.join(tmp, "map.yaml")}
+        doc = {
+            "parent": {"revision": int(from_revision), "sha256": parent.sha256},
+            "created": now_iso(),
+            "note": str(note)[:500],
+            "ops": [{"op": "remap", "polygon": b} for b in boxes],
+            "cells": [changed],
+            "dynamic_cells": 0,
+            "check": check,
+        }
+        with open(os.path.join(tmp, EDITS), "w") as fh:
+            json.dump(doc, fh, indent=1)
+        extra[EDITS] = os.path.join(tmp, EDITS)
+        path, revision = derive_revision(maps_dir, map_id, from_revision, extra)
+    return path, revision, {**check, "changed_cells": changed}
 
 
 def _fsync_path(path: str, directory: bool = False) -> None:
@@ -589,9 +652,23 @@ def place_mask(mask: gridio.Grid, like: gridio.Grid) -> gridio.Grid:
     return gridio.Grid(_place(mask.data, mask.meta, like.meta, like.width, like.height, 0), like.meta)
 
 
-def stage_continued(stage: str, base_dir: str, base: Manifest, merged: gridio.Grid, note: str = "") -> None:
+def stage_continued(
+    stage: str,
+    base_dir: str,
+    base: Manifest,
+    merged: gridio.Grid,
+    note: str = "",
+    scan: gridio.Grid | None = None,
+) -> None:
     """Into a continued survey's stage, before stage_bundle: the base revision's masks on the
-    merged map, and an edits.json naming the base revision (the Maps page shows "from revN")."""
+    merged map, an edits.json naming the base revision (the Maps page shows "from revN") and,
+    when given, the survey's own scans on the merged geometry (SURVEY_SCAN, for Re-map area)."""
+    if scan is not None:
+        if scan.data.shape != merged.data.shape:
+            raise BundleError(
+                f"survey scan {scan.data.shape} is not on the map's geometry {merged.data.shape}"
+            )
+        gridio.write(scan, os.path.join(stage, SURVEY_SCAN))
     for name in MASKS:
         g = load_mask(base_dir, name)
         if g is not None:

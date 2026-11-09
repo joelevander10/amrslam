@@ -234,7 +234,14 @@ def _compose(context):
             executable="localization_monitor_node",
             name="localization_monitor",
             output="screen",
-            parameters=[{"generation": generation, "dynamic_yaml": dynamic_yaml}],
+            parameters=[
+                {
+                    "generation": generation,
+                    "dynamic_yaml": dynamic_yaml,
+                    "map_id": map_id,  # map_changes: where the map no longer fits, per revision
+                    "map_revision": revision,
+                }
+            ],
         ),
         "localization_monitor",
     )

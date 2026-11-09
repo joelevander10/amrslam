@@ -40,6 +40,7 @@ from tf2_ros import Buffer, TransformListener
 
 from amr_interfaces.msg import DriveStatus, Event, LocalizationState, WheelStates
 from amr_localization import loss_report as lr
+from amr_localization import map_changes as mc
 from amr_localization import readiness as rd
 from amr_localization import relocalize as rl
 from amr_localization import scan_consistency as consistency
@@ -95,6 +96,10 @@ class LocalizationMonitor(Node):
         self.declare_parameter("reloc_max_turn_deg", 15.0)
         self.declare_parameter("reloc_fit_min", 0.70)
         self.declare_parameter("reloc_timeout_s", 30.0)
+        # where the map no longer fits, learnt during runs (map_changes.py); "" = not recorded
+        self.declare_parameter("map_id", "")
+        self.declare_parameter("map_revision", 0)
+        self.declare_parameter("changes_min_match", 0.6)
         # loss reports (2026-11-09): <state_dir>/loc_losses/<time>.json, why READY dropped
         self.declare_parameter("state_dir", os.environ.get("AMR_STATE_DIR", os.path.expanduser("~/.amr")))
         p = self.get_parameter
@@ -130,6 +135,11 @@ class LocalizationMonitor(Node):
                 timeout_s=float(p("reloc_timeout_s").value),
             )
         )
+        self._changes: mc.ChangeMap | None = None
+        mid, mrev = str(p("map_id").value or ""), int(p("map_revision").value or 0)
+        sd = os.path.expanduser(str(p("state_dir").value))
+        self._changes_path = mc.path_for(sd, mid, mrev) if mid and mrev > 0 else ""
+        self._changes_min_match = float(p("changes_min_match").value)
         self._own_initialpose = 0  # /initialpose messages we published and have not seen back
         self._pose_now: tuple[float, float, float] | None = None
         self._rec = lr.Recorder()
@@ -183,6 +193,7 @@ class LocalizationMonitor(Node):
         self._nomotion_t = 0.0
         self._nomotion_pending = None
         self.create_timer(0.1, self._tick)
+        self.create_timer(60.0, self._save_changes)
         self.create_timer(0.5, self._publish)
         self.get_logger().info("UNLOCALIZED: waiting for /initialpose")
 
@@ -223,6 +234,11 @@ class LocalizationMonitor(Node):
             self._publish()
         self._map_key = key
         self.get_logger().info(f"map {grid.width}x{grid.height} loaded for scan consistency")
+        if self._changes_path:
+            geo = (grid.width, grid.height, m.resolution, m.origin_x, m.origin_y)
+            if self._changes is None or not self._changes.same_geometry(*geo):
+                old = mc.load(self._changes_path) if os.path.isfile(self._changes_path) else None
+                self._changes = old if old is not None and old.same_geometry(*geo) else mc.ChangeMap(*geo)
 
     def _on_scan(self, _msg: LaserScan) -> None:
         self._touch("scan")
@@ -257,6 +273,23 @@ class LocalizationMonitor(Node):
             self._rec.scan["cls"] = detail["cls"]
         stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
         self.rd.on_scan_match(t, match_frac, long_frac, stamp)
+        if (
+            self._changes is not None
+            and detail
+            and self.rd.state == rd.READY
+            and match_frac >= self._changes_min_match
+        ):
+            d = detail
+            self._changes.add((lx, ly, yaw), d["x"], d["y"], d["cls"], d["ex"], d["ey"])
+
+    def _save_changes(self) -> None:
+        if self._changes is None or not self._changes.dirty:
+            return
+        try:
+            self._changes.fade()
+            self._changes.save(self._changes_path)
+        except OSError as e:
+            self.get_logger().warning(f"map changes not saved to {self._changes_path}: {e}")
 
     def _request_nomotion(self, t: float) -> None:
         if self._nomotion_period <= 0.0 or not self.rd.wants_nomotion_update():

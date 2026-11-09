@@ -35,6 +35,7 @@ from amr_maps import edit as mapedit
 from amr_maps import grid as gridio
 from amr_maps import rotate as maprot
 from amr_localization import loss_report
+from amr_localization import map_changes
 from amr_mission import map_bundle as mb
 from amr_navigation import footprint as fpmod
 from amr_navigation import store
@@ -155,7 +156,7 @@ def _edits_summary(e: dict | None) -> dict | None:
         "ops": len(ops),
         "counts": {
             k: kinds.count(k)
-            for k in ("dynamic", "undynamic", "free", "unknown", "occupied", "despeckle")
+            for k in ("dynamic", "undynamic", "free", "unknown", "occupied", "despeckle", "remap")
             if k in kinds
         },
     }
@@ -472,6 +473,102 @@ def create_app(
                 "routes": store.list_routes(app.config["MAPS_DIR"], map_id),
                 "dynamic_cells": ex["dynamic_cells"],
                 "edits": _edits_summary(ex["edits"]),
+                # Re-map area: this revision carries a continued survey's own scans
+                "survey_scan": os.path.isfile(
+                    os.path.join(
+                        mb.revision_dir(app.config["MAPS_DIR"], map_id, rev), f"{mb.SURVEY_SCAN}.yaml"
+                    )
+                ),
+            }
+        )
+
+    def _map_png(g: gridio.Grid) -> bytes:
+        img = np.full(g.data.shape, 205, dtype=np.uint8)
+        img[g.data == 0] = 254
+        img[g.data >= 65] = 0
+        return encode_gray(np.flipud(img))  # row 0 = bottom in the grid, top in the image
+
+    @app.get("/api/maps/<map_id>/<int:rev>/changes")
+    def api_map_changes(map_id: str, rev: int):
+        """Where the map no longer fits, learnt during runs on this revision (map_changes):
+        blocks to draw and the changed areas with what to do about each."""
+        try:
+            _m, g = bundle(map_id, rev)
+        except (mb.BundleError, gridio.GridError) as e:
+            return _result(False, str(e), 404)
+        cm = map_changes.load(map_changes.path_for(app.config["STATE_DIR"], map_id, rev))
+        geo = (g.width, g.height, g.meta.resolution, g.meta.origin_x, g.meta.origin_y)
+        if cm is None or not cm.same_geometry(*geo):
+            return jsonify({"available": False, "block_m": map_changes.BLOCK_M, "blocks": [], "regions": []})
+        return jsonify(
+            {
+                "available": True,
+                "scans": cm.scans,
+                "updated": time.strftime("%Y-%m-%d %H:%M", time.localtime(cm.updated)) if cm.updated else "",
+                "block_m": cm.resolution * cm.k,
+                "blocks": cm.blocks(),
+                "regions": cm.regions(),
+            }
+        )
+
+    def _remap_body():
+        d, err = _body()
+        if err:
+            return None, err
+        note, force = d.get("note", ""), d.get("force", False)
+        if not isinstance(note, str) or not isinstance(force, bool):
+            return None, _result(False, "note must be text and force true/false", 400)
+        return d, None
+
+    @app.post("/api/maps/<map_id>/<int:rev>/remap/preview")
+    def api_map_remap_preview(map_id: str, rev: int):
+        """Re-map area, nothing saved: the alignment check and the map as it would be."""
+        d, err = _remap_body()
+        if err:
+            return err
+        try:
+            bundle(map_id, rev)
+            new, changed, check = mb.remap_preview(app.config["MAPS_DIR"], map_id, rev, d.get("boxes"))
+        except mapedit.EditError as e:
+            return _result(False, str(e), 422)
+        except (mb.BundleError, gridio.GridError) as e:
+            return _result(False, str(e), 404)
+        import base64  # noqa: PLC0415
+
+        return jsonify(
+            {
+                "ok": True,
+                "check": check,
+                "changed_cells": changed,
+                "image": "data:image/png;base64," + base64.b64encode(_map_png(new)).decode(),
+            }
+        )
+
+    @app.post("/api/maps/<map_id>/<int:rev>/remap")
+    def api_map_remap(map_id: str, rev: int):
+        """Re-map area: a NEW revision whose cells inside the boxes are what the latest
+        continued survey saw (map_bundle.derive_remap); refused when it does not line up."""
+        d, err = _remap_body()
+        if err:
+            return err
+        try:
+            bundle(map_id, rev)
+            _path, new_rev, info = mb.derive_remap(
+                app.config["MAPS_DIR"], map_id, rev, d.get("boxes"), d.get("note", ""), d.get("force", False)
+            )
+        except mapedit.EditError as e:
+            return _result(False, str(e), 422)
+        except (mb.BundleError, gridio.GridError) as e:
+            return _result(False, str(e), 404)
+        return jsonify(
+            {
+                "ok": True,
+                "map_id": map_id,
+                "revision": new_rev,
+                "parent_revision": rev,
+                "check": info,
+                "message": f"{map_id} rev{new_rev} saved from rev{rev}: "
+                f"{info['changed_cells']} cells re-mapped ({info['text']})",
             }
         )
 
@@ -481,11 +578,7 @@ def create_app(
             _, g = bundle(map_id, rev)
         except mb.BundleError as e:
             return _result(False, str(e), 404)
-        img = np.full(g.data.shape, 205, dtype=np.uint8)
-        img[g.data == 0] = 254
-        img[g.data >= 65] = 0
-        png = encode_gray(np.flipud(img))  # row 0 = bottom in the grid, top in the image
-        return Response(png, mimetype="image/png", headers={"Cache-Control": "max-age=3600"})
+        return Response(_map_png(g), mimetype="image/png", headers={"Cache-Control": "max-age=3600"})
 
     @app.get("/api/maps/<map_id>/<int:rev>/dynamic.png")
     def api_map_dynamic(map_id: str, rev: int):

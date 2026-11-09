@@ -56,7 +56,9 @@ def compare(
     lies in one, are left out of both fractions: a trolley that is there, gone or new proves
     nothing about the pose (dynamic-mapping plan §1.2).
     `detail` (a dict to fill, optional): x, y (every beam's endpoint in the map frame), cls (the
-    classes above) and unmapped_frac (returned beams ending on mapped free floor)."""
+    classes above), ex, ey (where the map expected the beam to stop, nan where it expects no
+    wall: for a THROUGH beam, the mapped obstacle that is gone) and unmapped_frac (returned
+    beams ending on mapped free floor)."""
     ranges = np.asarray(ranges, dtype=np.float64)
     n = len(ranges)
     expected = cast(grid, lx, ly, yaw, geom)  # inf where the map has nothing within range
@@ -104,8 +106,9 @@ def compare(
         if dynamic is not None:
             cls[drop & np.isfinite(ranges)] = DYNAMIC
         d = np.where(np.isfinite(ranges), ranges, 0.0)
+        e = np.where(np.isfinite(expected), expected, np.nan)
         detail.update(
-            x=lx + d * np.cos(a), y=ly + d * np.sin(a), cls=cls,
+            x=lx + d * np.cos(a), y=ly + d * np.sin(a), cls=cls, ex=lx + e * np.cos(a), ey=ly + e * np.sin(a),
             unmapped_frac=float(short.sum()) / max(1, int(valid.sum())),
         )
     return match_frac, long_frac

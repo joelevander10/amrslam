@@ -1,6 +1,7 @@
 """Flask API against a stub adapter and a temp maps dir (spec §8 "Coordinates", T6)."""
 
 import math
+import os
 import struct
 import zlib
 
@@ -11,6 +12,7 @@ from amr_maps.grid import Grid, write
 from amr_web.png import encode_gray
 from amr_web.server import create_app
 
+from amr_maps import grid as gridio
 from amr_mission import map_bundle as mb
 
 FOOTPRINT_YAML = "polygon: [[-0.5, -0.35], [1.1, -0.35], [1.1, 0.35], [-0.5, 0.35]]\nmargin_m: 0.20\n"
@@ -1033,3 +1035,55 @@ def test_localisation_loss_reports_are_served_and_listed(env, tmp_path):
     assert client.get("/api/loc_losses/nope").status_code == 404
     page = client.get("/alarms").get_data(as_text=True)
     assert 'id="losses"' in page and "/api/loc_losses" in page
+
+
+def test_map_changes_layer_is_served_per_revision(env, tmp_path):
+    """2026-11-09: where the map no longer fits, learnt during runs (map_changes)."""
+    from amr_localization import map_changes  # noqa: PLC0415
+
+    client, _stub, maps, _rev_dir, _m = env
+    assert client.get("/api/maps/sim_factory/1/changes").json["available"] is False
+    g = mb.load(maps, "sim_factory", 1)[1]
+    cm = map_changes.ChangeMap(g.width, g.height, g.meta.resolution, g.meta.origin_x, g.meta.origin_y)
+    for i in range(6):
+        xs = np.array([2.0, 2.2, 2.4])
+        nan = np.full(3, np.nan)
+        cm.add((0.3 * i, 0.0, 0.0), xs, np.ones(3), np.full(3, map_changes.UNMAPPED), nan, nan)
+    cm.save(map_changes.path_for(str(tmp_path / "state"), "sim_factory", 1))
+    d = client.get("/api/maps/sim_factory/1/changes").json
+    assert d["available"] and d["scans"] == 6 and d["blocks"] and d["regions"][0]["kind"] == "new"
+    assert client.get("/api/maps/nope/1/changes").status_code == 404
+
+
+def test_remap_needs_a_survey_scan_and_saves_a_revision(env):
+    """Re-map area (2026-11-09): only a revision carrying a continued survey's scans."""
+    client, _stub, maps, _rev_dir, _m = env
+    box = _rect(1.0, -1.0, 3.0, 1.0)
+    r = client.post("/api/maps/sim_factory/1/remap/preview", json={"boxes": [box]})
+    assert r.status_code == 422 and "no survey scan" in r.json["message"]
+    assert client.get("/api/maps/sim_factory/1").json["survey_scan"] is False
+    # a revision with a survey scan: the map with its aisle seen empty by the new drive
+    _m1, g = mb.load(maps, "sim_factory", 1)
+    scan = gridio.Grid(np.full(g.data.shape, -1, dtype=np.int8), g.meta)
+    r0, c0 = g.world_to_cell(2.0, 0.0)
+    scan.data[r0 - 10 : r0 + 10, c0 - 10 : c0 + 10] = 0
+    scan.data[r0, c0 - 10 : c0 + 10] = 100  # a new machine front the old map does not have
+    import tempfile  # noqa: PLC0415
+
+    with tempfile.TemporaryDirectory() as tmp:
+        gridio.write(scan, os.path.join(tmp, mb.SURVEY_SCAN))
+        extra = {n: os.path.join(tmp, n) for n in mb.SURVEY_SCAN_FILES}
+        _p, rev = mb.derive_revision(maps, "sim_factory", 1, extra)
+    assert client.get(f"/api/maps/sim_factory/{rev}").json["survey_scan"] is True
+    r = client.post(f"/api/maps/sim_factory/{rev}/remap/preview", json={"boxes": [box]})
+    assert r.status_code == 200 and r.json["image"].startswith("data:image/png;base64,")
+    assert r.json["check"]["ok"] in (True, False, None)
+    body = {"boxes": [box], "note": "aisle", "force": True}
+    r = client.post(f"/api/maps/sim_factory/{rev}/remap", json=body)
+    if r.status_code == 200:
+        assert r.json["revision"] == rev + 1
+        idx = {x["map_id"]: x for x in client.get("/api/maps").json}["sim_factory"]["revisions"]
+        assert idx[-1]["edits"]["counts"] == {"remap": 1}
+    else:  # the alignment check refused it (the world fixture's structure around the box)
+        assert r.status_code == 422 and "not re-mapped" in r.json["message"], r.json
+    assert client.post(f"/api/maps/sim_factory/{rev}/remap", json={"boxes": []}).status_code == 422

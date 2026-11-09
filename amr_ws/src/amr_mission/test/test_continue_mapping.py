@@ -131,3 +131,46 @@ def test_a_revision_without_a_pose_graph_is_refused_and_nothing_starts(tmp_path)
     res = MappingSession._srv_start(sv, req, StartSurvey.Response())
     assert not res.accepted and "no SLAM pose graph" in res.message
     assert sv.calls == [] and sv._state == MappingState.IDLE
+
+
+def test_a_continued_save_carries_its_own_scans_for_re_map_area(tmp_path, monkeypatch):
+    """Re-map area (2026-11-09): the continued survey's keyframes become survey_scan, on the
+    saved map's geometry; a rotation drops it; a re-map without fixed structure needs force."""
+    import math  # noqa: PLC0415
+
+    from amr_maps import survey_scan  # noqa: PLC0415
+
+    maps = _base(tmp_path)
+    sv = _session(maps)
+    req = StartSurvey.Request()
+    req.map_id, req.continue_revision = "line_section", 1
+    assert MappingSession._srv_start(sv, req, StartSurvey.Response()).accepted
+    assert sv._keyframes == []
+    n = 181
+    r = np.full(n, 0.6, dtype=np.float32)  # a ring of returns 0.6 m around the laser
+    sv._keyframes.append(survey_scan.Keyframe(0.5, 0.0, 0.0, -math.pi / 2, math.pi / (n - 1), r))
+    sv._keyframes.append(survey_scan.Keyframe(0.55, 0.0, 0.0, -math.pi / 2, math.pi / (n - 1), r))
+    sv._state, sv._review = MappingState.RETURN_REVIEW, mb.ReturnReview(0.01, 0.0, 0.0)
+    slam = Grid(np.full((20, 50), -1, dtype=np.int8), GridMeta(0.05, -1.0, -0.5))
+    monkeypatch.setattr(msn.gridio, "from_occupancy_grid_msg", lambda _m: slam)
+    msg = types.SimpleNamespace(header=types.SimpleNamespace(frame_id="map"))
+    sv._wait_for_map = lambda after, timeout: msg
+    out = MappingSession._srv_save(sv, SaveMap.Request(note="re-mapped aisle"), SaveMap.Response())
+    assert out.ok, out.message
+    rev2 = mb.revision_dir(maps, "line_section", 2)
+    scan = mb.load_survey_scan(rev2)
+    _m2, g2 = mb.load(maps, "line_section", 2)
+    assert scan is not None and scan.data.shape == g2.data.shape and (scan.data == 100).any()
+    box = edit.rectangle(-0.2, -0.5, 1.4, 0.45)
+    _new, changed, check = mb.remap_preview(maps, "line_section", 2, [box])
+    assert changed > 0 and check["ok"] in (None, False, True)
+    if check["ok"] is None:
+        import pytest  # noqa: PLC0415
+
+        with pytest.raises(edit.EditError):
+            mb.derive_remap(maps, "line_section", 2, [box])
+        _p, rev3, info = mb.derive_remap(maps, "line_section", 2, [box], "aisle", force=True)
+        e3 = mb.load_edits(mb.revision_dir(maps, "line_section", rev3))
+        assert e3["ops"][0]["op"] == "remap" and info["changed_cells"] == changed
+    _p, rot, _g = mb.derive_rotation(maps, "line_section", 2, math.radians(10))
+    assert mb.load_survey_scan(mb.revision_dir(maps, "line_section", rot)) is None

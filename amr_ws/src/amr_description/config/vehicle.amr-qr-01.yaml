@@ -8,7 +8,7 @@
 # MEASURE = assumed, not measured. VERIFY = to be confirmed by the lidar commissioning
 # (RUNBOOK "Lidar commissioning": a box 2.00 m ahead must read +x, one to the left +y).
 xacro:
-  wheel_radius: 0.09
+  wheel_radius: 0.09055     # profile wheel_dia_m 0.1811 / 2 (calibrated 2026-11-09)
   track_width: 0.37652
   wheel_width: 0.18          # as specified (visual only)
   chassis_length: 1.18

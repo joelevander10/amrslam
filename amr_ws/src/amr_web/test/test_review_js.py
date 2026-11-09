@@ -52,3 +52,15 @@ def test_save_posts_ordered_ops_and_selects_the_new_revision(out):
 def test_refused_save_keeps_the_edits_and_a_map_switch_asks_first(out):
     assert "not saved" in out["refused_msg"] and out["refused_rows"] == 1
     assert out["cancel_switch"] == ["m1/2", 1, 2]
+
+
+def test_changes_list_and_re_map_area(out):
+    """2026-11-09: a changed area becomes a dynamic edit or a re-map box; a re-map previews, then saves."""
+    assert "C1" in out["chg_rows"] and "comes and goes" in out["chg_rows"]
+    assert out["remap_tool_enabled"] is True
+    assert out["chg_dyn_rows"] == 1
+    assert out["remap_rows"] == 2  # the region's box and the dragged one; the 10 cm one ignored
+    assert out["save_before_preview"] is True and out["preview_boxes"] == 2
+    assert "lines up" in out["check_text"] and out["save_after_preview"] is False
+    assert len(out["remap_saved"]["boxes"]) == 2 and out["remap_saved"]["force"] is False
+    assert out["after_remap"] == ["m1/4", True]

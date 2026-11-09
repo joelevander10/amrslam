@@ -179,6 +179,9 @@ plugged in or replugged while running); the journal says `USB keypad connected: 
    over. Routes, POS branches, stop points and the homepost keep their places; draw the new
    routes on rev N+1, re-validate the old ones there and **Create mission** again. Areas you
    had erased to unknown may come back if the AMR sees them on this run.
+5. Continue mapping only **adds**: where the old map had cells it keeps them, also where the
+   floor has changed since. To bring a changed stretch up to date, use **Re-map area** (§3d)
+   on rev N+1: the drive's own scans are saved with it for that.
 
 ### 3a. Clean up the map: noise, static and dynamic obstacles
 
@@ -212,6 +215,53 @@ From a shell, the same, e.g. remove the noise of a whole map:
 ```bash
 ros2 run amr_mission map_edit --map block_c --rev 1 --despeckle-rect -50 -50 50 50 --note "noise"
 ```
+
+### 3c. Changes seen during runs: where the map no longer fits
+
+While the AMR runs routes localised (`READY`, the scan fitting), the localisation monitor
+counts, per 20 cm block of the map, what its scan check sees: **mapped things it looks
+through** (they are gone) and **objects where the map has floor** (they are new). Counted at
+most once per 20 cm / 10° of travel; older sightings fade (half every 3 days). It is kept per
+map revision (`~/.amr/map_changes/<map>-rev<N>.npz`): a new revision starts from nothing.
+
+Maps → **Edit areas** on the revision you run on → **Changes seen during runs**:
+
+- on the map: **red** blocks = on the map but gone, **yellow** = there now but not on the
+  map, darker = seen more often; dashed boxes `C1`, `C2`, … = the changed areas;
+- the list, strongest first, with what to do:
+
+| Says | Means | Do |
+|---|---|---|
+| **gone** | seen through nearly every time | **Re-map box** (§3d), or Erase to unknown if it will not come back |
+| **comes and goes** | sometimes there, sometimes not (trolleys, pallets) | **Mark dynamic**, then Save as new revision |
+| **not on the map** | objects that are not on the map | Mark dynamic if they move; Re-map box if they stay (a new machine) |
+
+**Show** zooms to the area; **Mark dynamic** adds a Dynamic area edit over it (pending, like
+a drawn one: Save as new revision); **Re-map box** adds it to the Re-map boxes. It needs a few
+runs before the picture means much, and knows only the stretches the AMR drives.
+
+### 3d. Re-map area: bring a changed stretch up to date
+
+For a stretch that really changed (a machine moved, a rack row gone) without mapping
+everything again:
+
+1. **Maps** → **Continue mapping** from the revision you use (§3b). Drive **slowly through the
+   changed stretch** (both directions if you can), come back to the mark, Returned to start,
+   Save. That saves rev N+1 **with the drive's own scans** (`survey_scan`): what the floor looks
+   like now. (rev N+1's map itself is still the old one where it had cells.)
+2. **Edit areas** on rev N+1 → **Re-map area**: **Re-map box** and drag boxes over the changed
+   stretch (or use a `C` area's **Re-map box**). Let each box reach into machines or walls
+   that did **not** change: they are what the alignment is checked against.
+3. **Preview**: the server checks that the new scans line up with the map around the boxes
+   (at least 60 % of the fixed structure there seen again in place, and no shift of a few cm
+   fitting better) and shows **Show after**: the map as it will be. A survey that slipped is
+   refused ("displaced about N cm": drive it again more slowly); with nothing fixed around
+   the boxes it cannot check: the button says "not checked" and asks before saving.
+4. **Save re-mapped revision** → rev N+2: inside the boxes every cell the drive saw is what it
+   saw (free or occupied); cells it did not see, and everything outside the boxes, stay as
+   they were. Dynamic and keepout areas, the survey mark and the homepost are unchanged.
+5. As after any map edit: in **Routes** open each route on rev N+2, **Validate**, **Save
+   revision**, **Create mission**; on **Run**, use rev N+2.
 
 ## 4. Draw a route (Routes page) — nothing moves
 

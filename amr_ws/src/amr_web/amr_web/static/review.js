@@ -6,6 +6,8 @@ const view = new MapView(document.getElementById('rv-canvas'));
 const $ = id => document.getElementById(id);
 let mapId = null, mapRev = null, ops = [], history = [], future = [], saving = false, mapToken = 0;
 let refLine = null;  // [[x, y], [x, y]] the wall drawn with Reference line, map metres
+let changes = null;  // GET .../changes: where the map no longer fits (bottom of this file)
+let remapBoxes = [], remapAfter = null, remapCheck = null;  // Re-map area (bottom of this file)
 
 // op per tool, as amr_maps.edit expects it; colours per kind on the canvas and in the list
 const TOOLS = {
@@ -42,6 +44,7 @@ function setTool(t) {
   view.tool = t; view._rect = null;
   Object.keys(TOOLS).forEach(k => TOOLS[k].btn.classList.toggle('on', k === t));
   $('tool-align').classList.toggle('on', t === 'align');
+  $('tool-remap').classList.toggle('on', t === 'remap');
   $('rv-tool-note').textContent = t && TOOLS[t] ? TOOLS[t].note : '';
   view.draw();
 }
@@ -70,6 +73,14 @@ function rotNote() {
 $('rv-rot-deg').oninput = () => { rotNote(); refresh(); };
 
 view.onDrag = (a, b, done) => {
+  if (view.tool === 'remap' && view.meta) {
+    const poly = rect(a, b);
+    if (!done) { view._rect = poly; return; }
+    view._rect = null;
+    const [w, h] = size(poly);
+    if (w < 0.3 || h < 0.3) { log('re-map box smaller than 0.3 m: ignored', 'warn'); return; }
+    remapBoxes.push(poly); remapStale(); return;
+  }
   if (view.tool === 'align' && view.meta) {
     refLine = [a, b];
     if (done) {
@@ -98,6 +109,8 @@ view.overlays.push((c, v) => {
     v.text(o.polygon[3][0], o.polygon[3][1], String(i + 1), st.stroke);
   });
   if (v._rect && v.tool && TOOLS[v.tool]) { const st = style(v.tool); v.fillPolygon(v._rect, st.fill, null); v.dashed(v._rect, st.stroke); }
+  if (v._rect && v.tool === 'remap') v.dashed(v._rect, INK.accent);
+  remapBoxes.forEach((b, i) => { v.polygon(b, INK.accent); v.text(b[3][0], b[3][1], `R${i + 1}`, INK.accent); });
   if (refLine) {
     // the wall as drawn, and dashed: where the rotation will lay it (turned about the origin)
     const [p, q] = refLine, t = rotDeg() * Math.PI / 180, c = Math.cos(t), s = Math.sin(t);
@@ -117,6 +130,7 @@ function refresh() {
   const deg = rotDeg(), canRotate = !saving && !ops.length && Math.abs(deg) >= 0.05 && Math.abs(deg) <= 180;
   $('btn-rv-rotate').disabled = !canRotate;
   $('btn-rv-rotate').title = ops.length ? 'Save or clear the area edits first: a rotation is its own revision' : '';
+  remapButtons();
   view.draw();
 }
 $('rv-ops').onclick = e => {
@@ -179,10 +193,13 @@ async function selectMap(value) {
   [mapId, mapRev] = value.split('/'); mapRev = +mapRev;
   mapToken += 1; const c = mapToken;
   ops = []; history = []; future = []; view._rect = null; $('rv-msg').textContent = '';
+  changes = null; remapBoxes = []; remapStale();
   refLine = null; $('rv-rot-deg').value = '0'; refresh();
   const loaded = await view.load(mapId, mapRev);
   if (!loaded || c !== mapToken) return;
   showInfo();
+  remapNote();
+  loadChanges(mapId, mapRev, c);
 }
 let shown = null;
 $('rv-map').onchange = async e => {
@@ -201,3 +218,124 @@ window.addEventListener('beforeunload', e => { if (ops.length) { e.preventDefaul
   $('rv-map').value = shown = first;
   await selectMap(first);
 })();
+
+
+// ---- Changes seen during runs (2026-11-09): GET /api/maps/<id>/<rev>/changes ------------------
+// The localization monitor counts, per 20 cm block, mapped obstacles seen through ("gone", red)
+// and objects where the map has floor ("new", yellow) while localisation is READY; regions
+// group them with what to do. Mark dynamic / Re-map box take a region's box as an edit.
+async function loadChanges(id, rev, token) {
+  $('rv-chg-list').innerHTML = '<div class="none">loading…</div>';
+  const { status, data } = await apiGet(`/api/maps/${id}/${rev}/changes`);
+  if (token !== mapToken) return;
+  if (status !== 200 || !data.available) {
+    changes = null;
+    $('rv-chg-note').textContent = 'Nothing recorded on this revision yet: the AMR learns it while it runs routes on it (localised READY).';
+    $('rv-chg-list').innerHTML = '<div class="none">no changes recorded</div>';
+    view.draw(); return;
+  }
+  changes = data;
+  $('rv-chg-note').textContent = `${data.scans} scans counted, last ${data.updated}. Older sightings fade (half every 3 days).`;
+  const KIND = { gone: 'gone', varies: 'comes and goes', new: 'not on the map' };
+  $('rv-chg-list').innerHTML = data.regions.length ? data.regions.map((r, i) => {
+    const w = r.box[2] - r.box[0], h = r.box[3] - r.box[1];
+    return `<div class="row"><span><span class="k">C${i + 1}</span> <span class="v">${esc(KIND[r.kind] || r.kind)}</span> <span class="n">${num(w, 1)} × ${num(h, 1)} m</span><br>` +
+      `<span class="n">${esc(r.advice)}</span></span><span>` +
+      `<button class="tool" data-chg-show="${i}">Show</button> <button class="tool" data-chg-dyn="${i}" title="Add a Dynamic area edit over this box (then Save as new revision)">Mark dynamic</button> ` +
+      `<button class="tool" data-chg-remap="${i}" title="Add this box to the Re-map boxes below">Re-map box</button></span></div>`;
+  }).join('') : '<div class="none">no changed areas: the map fits</div>';
+  view.draw();
+}
+const pad = (b, m) => rect([b[0] - m, b[1] - m], [b[2] + m, b[3] + m]);
+$('rv-chg-list').onclick = e => {
+  const t = e.target && e.target.dataset; if (!t || !changes) return;
+  const i = t.chgShow ?? t.chgDyn ?? t.chgRemap; if (i === undefined) return;
+  const r = changes.regions[+i], poly = pad(r.box, 0.2);
+  if (t.chgShow !== undefined) { zoomTo(r.box); return; }
+  if (t.chgDyn !== undefined) { snapshot(); ops.push(opFor('dynamic', poly)); refresh(); log(`C${+i + 1}: dynamic area added - Save as new revision to keep it`); return; }
+  remapBoxes.push(poly); remapStale(); log(`C${+i + 1}: added as re-map box R${remapBoxes.length}`);
+};
+function zoomTo(b) {
+  if (!view.meta) return;
+  const [u0, v0] = view.worldToPixel(b[0], b[3]), [u1, v1] = view.worldToPixel(b[2], b[1]);
+  const w = Math.max(10, Math.abs(u1 - u0)), h = Math.max(10, Math.abs(v1 - v0));
+  view.scale = Math.min(view.canvas.width / w, view.canvas.height / h) * 0.5;
+  view.ox = view.canvas.width / 2 - (u0 + u1) / 2 * view.scale; view.oy = view.canvas.height / 2 - (v0 + v1) / 2 * view.scale;
+  view.draw();
+}
+$('rv-chg-show').onchange = () => view.draw();
+view.overlays.unshift((c, v) => {
+  // the re-map preview ("after"), under every other overlay
+  if (c && remapAfter && $('rv-remap-after').checked) c.drawImage(remapAfter, v.ox, v.oy, remapAfter.width * v.scale, remapAfter.height * v.scale);
+  if (!changes || !$('rv-chg-show').checked) return;
+  const s = changes.block_m / 2;
+  changes.blocks.forEach(([x, y, gone, nw]) => {
+    const a = Math.min(0.8, 0.25 + (gone + nw) / 40);
+    v.fillPolygon([[x - s, y - s], [x + s, y - s], [x + s, y + s], [x - s, y + s]], alpha(gone >= nw ? INK.stop : INK.preview, a), null);
+  });
+  changes.regions.forEach((r, i) => { const b = r.box; v.dashed([[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]]], INK.ink3); v.text(b[0], b[3], `C${i + 1}`, INK.ink3); });
+});
+
+// ---- Re-map area (2026-11-09): POST /api/maps/<id>/<rev>/remap[/preview] ----------------------
+// Inside the boxes the map becomes what the revision's survey scan (its Continue mapping drive's
+// own scans) saw; the server checks it lines up with the map around the boxes first.
+$('tool-remap').onclick = () => setTool(view.tool === 'remap' ? null : 'remap');
+$('btn-remap-clear').onclick = () => { remapBoxes = []; remapStale(); };
+function remapNote() {
+  const has = view.meta && view.meta.survey_scan;
+  $('rv-remap-note').textContent = has
+    ? 'This revision carries the scans of the Continue mapping drive that saved it. Drag Re-map boxes over the stretch that changed (reach into machines or walls that did not change), Preview, then Save.'
+    : 'No survey scan in this revision. First, on the Maps page, Continue mapping from it and drive slowly through the changed stretch (and back to the mark, Save). Then open the revision that saves here and draw the boxes.';
+  $('tool-remap').disabled = !has;
+}
+function remapStale() {
+  remapAfter = null; remapCheck = null; $('rv-remap-after').checked = false;
+  $('rv-remap-check').textContent = ''; $('rv-remap-check').classList.toggle('bad', false);
+  $('rv-remap-boxes').innerHTML = remapBoxes.length ? remapBoxes.map((b, i) => {
+    const [w, h] = size(b);
+    return `<div class="row three"><span class="k">R${i + 1}</span><span class="n">re-map</span><span class="v">${num(w, 2)} × ${num(h, 2)}<i>m</i> <button class="tool" data-rm="${i}" title="remove this box">×</button></span></div>`;
+  }).join('') : '<div class="none">no boxes</div>';
+  remapButtons(); view.draw();
+}
+$('rv-remap-boxes').onclick = e => { const i = e.target && e.target.dataset ? e.target.dataset.rm : undefined; if (i === undefined) return; remapBoxes.splice(+i, 1); remapStale(); };
+function remapButtons() {
+  const has = !!(view.meta && view.meta.survey_scan);
+  $('btn-remap-preview').disabled = saving || !has || !remapBoxes.length;
+  $('rv-remap-after').disabled = !remapAfter;
+  const ok = remapCheck && remapCheck.ok !== false;
+  $('btn-remap-save').disabled = saving || !has || !remapBoxes.length || !ok || ops.length > 0;
+  $('btn-remap-save').textContent = remapCheck && remapCheck.ok === null ? 'Save re-mapped revision (not checked)' : 'Save re-mapped revision';
+  $('btn-remap-save').title = ops.length ? 'Save or clear the area edits first: a re-map is its own revision' : (remapCheck ? '' : 'Preview first');
+}
+$('rv-remap-after').onchange = () => view.draw();
+$('btn-remap-preview').onclick = async () => {
+  const forMap = mapId, forRev = mapRev, c = mapToken, boxes = remapBoxes.slice();
+  $('rv-remap-check').textContent = 'checking…';
+  const { status, data } = await api(`/api/maps/${forMap}/${forRev}/remap/preview`, { boxes });
+  if (c !== mapToken) return;
+  if (status !== 200) { $('rv-remap-check').textContent = `not possible: ${data.message || status}`; $('rv-remap-check').classList.toggle('bad', true); return; }
+  remapCheck = data.check;
+  remapAfter = await new Promise(res => { const i = new Image(); i.onload = () => res(i); i.onerror = () => res(null); i.src = data.image; });
+  const t = `${data.changed_cells} cells change. ${data.check.text}`;
+  $('rv-remap-check').textContent = data.check.ok === false ? `${t}. Not saveable.` : data.check.ok === null ? `${t}. Look at "Show after" carefully before saving.` : t;
+  $('rv-remap-check').classList.toggle('bad', data.check.ok !== true);
+  $('rv-remap-after').checked = true;
+  remapButtons(); view.draw();
+};
+$('btn-remap-save').onclick = async () => {
+  if (saving || !remapCheck) return;
+  const forMap = mapId, forRev = mapRev, c = mapToken, force = remapCheck.ok === null;
+  if (force && !window.confirm('The alignment could not be checked (nothing fixed around the boxes). Save it anyway, as the preview shows?')) return;
+  saving = true; refresh();
+  try {
+    const { status, data } = await api(`/api/maps/${forMap}/${forRev}/remap`, { boxes: remapBoxes.slice(), note: $('rv-note').value.trim(), force });
+    if (status !== 200) { $('rv-remap-check').textContent = `not saved: ${data.message || status}`; $('rv-remap-check').classList.toggle('bad', true); log(`re-map refused: ${data.message || status}`, 'bad'); return; }
+    log(data.message);
+    if (c !== mapToken) return;
+    $('rv-note').value = '';
+    await fillMapSelect($('rv-map'));
+    $('rv-map').value = shown = `${forMap}/${data.revision}`;
+    await selectMap(shown);
+    $('rv-msg').textContent = `${data.message}. Validate and save the routes on it in Routes, make their missions again, then use it on the Run page.`;
+  } finally { saving = false; refresh(); }
+};
