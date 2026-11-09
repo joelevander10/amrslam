@@ -409,7 +409,9 @@ qr_base.*
     actually takes - not the 0.37652 m between the wheel centres (the URDF keeps
     that). Tyre width and castor scrub make a diff-drive turn as if the wheels
     were further apart: 2026-11-05, 3 turns each way, the encoders read 13.2 %
-    more than the gyro, so 0.37652 x 1.132 = 0.4263 m. With it, odometry turns
+    more than the gyro, so 0.37652 x 1.132 = 0.4263 m; x 1.0061 with wheel_dia_m
+    0.18 -> 0.1811 (2026-11-09, tools/scan_odom_sync.py: the wheels counted 0.59 %
+    short against a wall) = 0.4289, so a turn reads the same. With it, odometry turns
     as much as the vehicle does and a commanded spin rate is the one driven.
 
     Straight-line trim: wheel_scale_left / wheel_scale_right are each wheel's

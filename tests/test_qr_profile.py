@@ -55,7 +55,7 @@ def test_qr_profile():
               not config.GLS_ENABLED and config.PANEL_DESTINATIONS
               == tuple((f"POS {i}", None, f"pos{i}") for i in range(1, 7)))
         # effective track from the 2026-11-05 spin test (wheels 0.37652 m apart, see config notes)
-        check("track and wheel are the QR's", (config.TRACK_M, config.WHEEL_DIA_M) == (0.4263, 0.18))
+        check("track and wheel are the QR's", (config.TRACK_M, config.WHEEL_DIA_M) == (0.4289, 0.1811))
         check("the right motor is mirrored (QR wiring)", config.INVERT_RIGHT and not config.INVERT_LEFT)
         check("top speed derives from motor_max_rpm, under the voltage cap",
               0.1 < config.MAX_SPEED_MPS < 1.0, f"{config.MAX_SPEED_MPS:.3f} m/s")
