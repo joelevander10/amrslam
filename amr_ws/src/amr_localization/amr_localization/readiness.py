@@ -42,6 +42,14 @@ class Limits:
     max_scan_long: float = 0.15  # beams passing THROUGH mapped obstacles: the loss trigger
     match_hold_s: float = 1.0  # too many long beams must persist this long before LOST
     jump_dist_m: float = 0.15  # spec §4.3 initial trigger
+    # A correction over the trigger but at most jump_verified_max_m, with the scan fitting the map
+    # before it (scan_match >= jump_fit_min, nothing through walls), is AMCL fixing the wheel
+    # odometry - typical along an aisle (vehicle 2026-11-09: 0.16 m back with 95 % of the scan on
+    # the map). It is kept if the next scan comparison after it fits as well, within
+    # jump_verify_s; otherwise, or over jump_verified_max_m or jump_angle_rad, the fix is LOST.
+    jump_verified_max_m: float = 0.30
+    jump_fit_min: float = 0.8
+    jump_verify_s: float = 1.5
     jump_angle_rad: float = math.radians(5.0)
     settle_s: float = 2.0  # no jump and covariance under limits for this long
     initial_grace_s: float = 1.5  # corrections right after /initialpose are expected
@@ -100,6 +108,9 @@ class Readiness:
     _match_bad_since: float | None = None
     _prev_map_odom: tuple[float, float, float] | None = None
     _prev_map_odom_t: float | None = None
+    _pending_jump: Jump | None = None  # over the trigger, waiting for the scan check after it
+    last_accepted: Jump | None = None  # the newest correction kept after that check
+    accepted_count: int = 0
 
     # ---- inputs ------------------------------------------------------------
 
@@ -147,6 +158,18 @@ class Readiness:
             self.scan_match = self.scan_long = self.scan_match_t = None
             return
         self.scan_match, self.scan_long, self.scan_match_t = match, long, t
+        pj = self._pending_jump
+        if pj is not None and self.state == READY and (stamp if stamp is not None else t) > pj.t:
+            self._pending_jump = None
+            if match >= self.limits.jump_fit_min and long <= self.limits.max_scan_long:
+                self.last_accepted, self.accepted_count = pj, self.accepted_count + 1
+            else:
+                self._lose(
+                    f"localisation corrected by {pj.dist_m:.2f} m / {math.degrees(pj.angle_rad):.1f} deg "
+                    f"and the scan did not fit after it ({100 * match:.0f} % on the map)",
+                    "LOC_JUMP",
+                )
+                return
         if long <= self.limits.max_scan_long:
             self._match_bad_since = None
             return
@@ -195,6 +218,15 @@ class Readiness:
         self._stable_since = None
         why = f"localisation corrected by {d:.2f} m / {math.degrees(a):.1f} deg"
         if self.state == READY:
+            if (
+                self._pending_jump is None
+                and d <= self.limits.jump_verified_max_m
+                and a <= self.limits.jump_angle_rad
+                and self._fits(t)
+            ):
+                self._pending_jump = self.last_jump  # the next scan comparison decides
+                return
+            self._pending_jump = None
             self._lose(why, "LOC_JUMP")
         elif self.state == CHECKING:
             self.reason = why + "; waiting to settle"
@@ -231,6 +263,14 @@ class Readiness:
         )
         amcl_fresh = self.cov_t is not None and t - self.cov_t <= self.limits.amcl_age_max_s
 
+        pj = self._pending_jump
+        if pj is not None and self.state == READY and t - pj.t > self.limits.jump_verify_s:
+            self._pending_jump = None
+            self._lose(
+                f"localisation corrected by {pj.dist_m:.2f} m / {math.degrees(pj.angle_rad):.1f} deg "
+                f"and no scan check followed within {self.limits.jump_verify_s:g} s",
+                "LOC_JUMP",
+            )
         if self.state == READY:
             # READY is held on continuing evidence (Q07): the raw streams AND the independent
             # scan-vs-map comparison must keep arriving. AMCL itself may legitimately go quiet
@@ -323,12 +363,23 @@ class Readiness:
 
     # ---- helpers -------------------------------------------------------------
 
+    def _fits(self, t: float) -> bool:
+        """The scan fitted the map at the last comparison, and that comparison is recent."""
+        return (
+            self.scan_match is not None
+            and self.scan_match_t is not None
+            and t - self.scan_match_t <= self.limits.match_age_max_s
+            and self.scan_match >= self.limits.jump_fit_min
+            and (self.scan_long or 0.0) <= self.limits.max_scan_long
+        )
+
     def _clear_evidence(self) -> None:
         """Covariance, scan consistency and jump history all belong to one attempt."""
         self._initial_t, self._stable_since = None, None
         self.cov = self.cov_t = self._cov_bad_since = None
         self.scan_match = self.scan_long = self.scan_match_t = self._match_bad_since = None
         self._prev_map_odom = self._prev_map_odom_t = self.last_jump = None
+        self._pending_jump = None
 
     def _lose(self, why: str, code: str = "LOC_LOST") -> None:
         """Lose the fix. `code` is the alarm-catalogue code the operator surface looks up

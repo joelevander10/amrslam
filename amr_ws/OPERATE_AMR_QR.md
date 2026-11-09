@@ -485,6 +485,18 @@ red (on unmapped things) and orange (through walls), a blue arrow where the AMR 
 line for the correction. The event in "What happened" carries the same summary and the
 report's name.
 
+**Small corrections are not losses.** AMCL keeps correcting the wheel odometry; in a long aisle
+or after a little wheel slip that correction can come in one step. A step over 0.15 m / 5° is
+only a loss when the scan does not back it up. Up to **0.30 m** (and under 5°), when the scan
+fitted the map (≥ 80 % on mapped walls) just before it AND the next scan after it fits too
+(within 1.5 s), the AMR keeps going: the step is logged as **`LOC_CORRECTED`** (yellow row in
+**Localisation losses**, at most one report every 30 s). Over 0.30 m, over 5°, a poor fit before
+it, or no fit after it is still **`LOC_JUMP`** and stops the AMR. Many `LOC_CORRECTED` rows with
+the correction **along the path in the same direction** (always ahead -, or always ahead +)
+mean the wheel scale is off: check the wheel diameter / gear ratio in the vehicle profile.
+The limits are `jump_verified_max_m`, `jump_fit_min`, `jump_verify_s` in
+`amr_localization/readiness.py`.
+
 ## 7. End of shift
 
 1. Finish or **Abort** the run. Press **STOP** so the vehicle is in MANUAL, then **Return

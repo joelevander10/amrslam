@@ -70,3 +70,13 @@ def test_reports_are_kept_to_the_newest_ones(tmp_path):
     names = [lr.write(str(tmp_path), rep, keep=3) for _ in range(5)]
     assert [r["name"] for r in lr.list_reports(str(tmp_path))] == names[-3:][::-1]
     assert lr.load(str(tmp_path), "../x") is None
+
+
+def test_a_confirmed_correction_says_the_amr_kept_going():
+    """2026-11-09: 0.16 m along the path with 95 % of the scan on the map was not a loss."""
+    rec = lr.Recorder()
+    _driving(rec, match=0.95)
+    jump = rd.Jump(0.16, math.radians(1.2), 10.0, -0.16, -0.01, 0.0, math.radians(1.2))
+    rep = lr.build(rec, 10.0, "LOC_CORRECTED", "localisation corrected by 0.16 m / 1.2 deg, scan fits", jump)
+    assert "kept going" in rep["hints"][0] and "wheel" in rep["hints"][0]
+    assert any("along the path" in h for h in rep["hints"])

@@ -147,6 +147,12 @@ def hints(rep: dict, limits=None) -> list[str]:
             "the map does not fit here - twisted while mapping (lidar angle) or the place changed"
         )
     j = rep.get("jump")
+    if rep.get("code") == "LOC_CORRECTED":
+        out.append(
+            "the scan fitted the map before and after this correction, so it was AMCL fixing the wheel "
+            "odometry and the AMR kept going. Only if it repeats along the path in the same direction: "
+            "check the wheel diameter / gear ratio (wheel scale)"
+        )
     if j:
         ah, le = abs(j["ahead_m"]), abs(j["left_m"])
         if le > 2 * ah and abs(rep["turn_rad_s"]) < 0.1:

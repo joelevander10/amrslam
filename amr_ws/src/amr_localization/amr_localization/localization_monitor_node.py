@@ -50,6 +50,8 @@ RELIABLE_1 = QoSProfile(
     depth=1, reliability=QoSReliabilityPolicy.RELIABLE, durability=QoSDurabilityPolicy.VOLATILE
 )
 
+CORRECTION_REPORT_GAP_S = 30.0  # at most one LOC_CORRECTED report per this many seconds
+
 
 class LocalizationMonitor(Node):
     def __init__(self) -> None:
@@ -114,6 +116,8 @@ class LocalizationMonitor(Node):
         self._unmapped: float | None = None
         self._state_dir = os.path.expanduser(str(p("state_dir").value))
         self._last_state: int | None = None
+        self._accepted_seen = 0
+        self._correction_report_t = -1e9
         self._last_reason = ""
         self._match_tol_cells = 0
         self._match_period = p("match_period_s").value
@@ -285,6 +289,9 @@ class LocalizationMonitor(Node):
         held = self._torque_off_t is not None and t - self._torque_off_t <= self._drives_age
         self.rd.evaluate(t, ages, frozenset({"wheels"}) if held else frozenset())
         self._request_nomotion(t)
+        if self.rd.accepted_count != self._accepted_seen:
+            self._accepted_seen = self.rd.accepted_count
+            self._correction_report(t)
         if self.rd.state != self._last_state or self.rd.reason != self._last_reason:
             if self.rd.state != self._last_state:
                 self.get_logger().info(f"{rd.NAMES[self.rd.state]}: {self.rd.reason}")
@@ -305,8 +312,26 @@ class LocalizationMonitor(Node):
             self.get_logger().error(f"loss report failed: {e!r}")
             return ""
 
-    def _event(self, text: str = "") -> None:
-        code = self.rd.code or "MODE_CHANGE"
+    def _correction_report(self, t: float) -> None:
+        """A correction over the jump trigger that the scan confirmed: READY kept, but worth
+        knowing about (wheel scale, aisles). At most one report per CORRECTION_REPORT_GAP_S so a
+        bad stretch cannot push the real loss reports out of the folder."""
+        if t - self._correction_report_t < CORRECTION_REPORT_GAP_S:
+            return
+        self._correction_report_t = t
+        j = self.rd.last_accepted
+        try:
+            deg = math.degrees(j.angle_rad)
+            why = f"localisation corrected by {j.dist_m:.2f} m / {deg:.1f} deg, scan fits"
+            rep = lr.build(self._rec, t, "LOC_CORRECTED", why, j, self.rd.limits)
+            name = lr.write(self._state_dir, rep)
+            self.get_logger().warning(f"correction report {name}: " + " | ".join(rep["hints"]))
+            self._event(lr.summary(rep, name), code="LOC_CORRECTED")
+        except Exception as e:  # noqa: BLE001
+            self.get_logger().error(f"correction report failed: {e!r}")
+
+    def _event(self, text: str = "", code: str | None = None) -> None:
+        code = code or self.rd.code or "MODE_CHANGE"
         row = alarms.get(code)
         m = Event()
         m.header.stamp = self.get_clock().now().to_msg()

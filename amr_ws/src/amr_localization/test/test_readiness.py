@@ -332,3 +332,61 @@ def test_nomotion_updates_are_wanted_only_while_checking():
     assert not r.wants_nomotion_update()
     r.evaluate(3.0, {**FRESH, "scan": 0.3})
     assert r.state == rd.LOST and not r.wants_nomotion_update()  # LOST needs a new pose
+
+
+def test_verified_correction_is_kept_when_the_scan_fits_after_it():
+    """2026-11 loss report: AMCL fixed 0.16 m along an aisle with 95 % of the scan on the map."""
+    r = _ready()
+    aligned(r, 3.0)
+    r.on_map_odom(3.0, 0.0, 0.0, 0.0)
+    r.on_map_odom(3.1, 0.16, 0.0, 0.0)  # over the 0.15 m trigger, under 0.30 m, scan fitted before
+    assert r.state == rd.READY
+    r.on_scan_match(3.2, match=0.93, long=0.0, stamp=3.15)  # the scan fits after it too
+    assert r.state == rd.READY and r.accepted_count == 1
+    assert r.last_accepted is not None and abs(r.last_accepted.dist_m - 0.16) < 1e-6
+    assert r.evaluate(5.0, FRESH) == rd.READY  # nothing left pending
+
+
+def test_verified_correction_lost_when_the_scan_does_not_fit_after_it():
+    r = _ready()
+    aligned(r, 3.0)
+    r.on_map_odom(3.0, 0.0, 0.0, 0.0)
+    r.on_map_odom(3.1, 0.2, 0.0, 0.0)
+    assert r.state == rd.READY
+    r.on_scan_match(3.15, match=0.95, long=0.0, stamp=3.05)  # taken before the jump: decides nothing
+    assert r.state == rd.READY
+    r.on_scan_match(3.2, match=0.5, long=0.0, stamp=3.15)
+    assert r.state == rd.LOST and r.code == "LOC_JUMP" and "did not fit" in r.reason
+    assert r.accepted_count == 0
+
+
+def test_verified_correction_lost_without_a_scan_check():
+    r = _ready()
+    aligned(r, 3.0)
+    r.on_map_odom(3.0, 0.0, 0.0, 0.0)
+    r.on_map_odom(3.1, 0.2, 0.0, 0.0)
+    assert r.evaluate(3.5, FRESH) == rd.READY
+    assert r.evaluate(4.7, FRESH) == rd.LOST and "no scan check" in r.reason
+
+
+def test_unverified_or_large_corrections_still_lose_at_once():
+    r = _ready()  # last scan fit at 2.0: too old by 4.5
+    r.on_map_odom(4.4, 0.0, 0.0, 0.0)
+    r.on_map_odom(4.5, 0.2, 0.0, 0.0)
+    assert r.state == rd.LOST
+    r = _ready()
+    aligned(r, 3.0)
+    r.on_map_odom(3.0, 0.0, 0.0, 0.0)
+    r.on_map_odom(3.1, 0.35, 0.0, 0.0)  # over 0.30 m
+    assert r.state == rd.LOST
+    r = _ready()
+    r.on_scan_match(3.0, match=0.6, long=0.0)  # poor fit before it
+    r.on_map_odom(3.0, 0.0, 0.0, 0.0)
+    r.on_map_odom(3.1, 0.2, 0.0, 0.0)
+    assert r.state == rd.LOST
+    r = _ready()
+    aligned(r, 3.0)
+    r.on_map_odom(3.0, 0.0, 0.0, 0.0)
+    r.on_map_odom(3.1, 0.2, 0.0, 0.0)
+    r.on_map_odom(3.2, 0.4, 0.0, 0.0)  # a second jump while the first is pending
+    assert r.state == rd.LOST

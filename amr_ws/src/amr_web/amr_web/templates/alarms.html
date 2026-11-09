@@ -10,7 +10,7 @@
   <div id="events" class="al-log"><div class="none">no events yet</div></div>
 </section>
 <section class="al-losses">
-  <h2>Localisation losses <small>why the position was lost · newest first</small></h2>
+  <h2>Localisation losses <small>why the position was lost or corrected · newest first</small></h2>
   <div id="losses" class="al-log"><div class="none">none recorded</div></div>
 </section>
 <section class="al-reports">
@@ -75,7 +75,7 @@ async function losses() {
           `at ${(r.speed_mps || 0).toFixed(2)} m/s`,
           `scan ${pct(sc.on_map)} on the map · ${pct(sc.unmapped)} on unmapped things · ${pct(sc.through)} through walls`,
           r.pose ? `at x ${r.pose[0].toFixed(2)} y ${r.pose[1].toFixed(2)}` : ''].filter(Boolean).join(' · ');
-        return `<div class="al-row lv-error"><span class="al-time">${esc(r.time)}</span><span class="al-lv">${esc(r.code)}</span>` +
+        return `<div class="al-row ${r.code === 'LOC_CORRECTED' ? 'lv-warn' : 'lv-error'}"><span class="al-time">${esc(r.time)}</span><span class="al-lv">${esc(r.code)}</span>` +
           `<span class="al-msg"><span class="al-what">${esc(r.reason)}</span>${esc(nums)}` +
           `<ul class="al-hints">${(r.hints || []).map(h => `<li>${esc(h)}</li>`).join('')}</ul>` +
           `<i class="al-detail">report ${esc(r.name)} · <a href="/run?loss=${encodeURIComponent(r.name)}">Show on map</a></i></span></div>`;

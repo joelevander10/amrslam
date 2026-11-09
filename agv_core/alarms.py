@@ -200,7 +200,12 @@ def _rows() -> tuple[Alarm, ...]:
           "scan/wheels/imu/tf/amcl age over the spec 2.4 limits."),
         a("LOC_JUMP", ERROR, "operator", "The vehicle's position jumped",
           "Set the initial pose on the Run page and confirm the scans line up.",
-          "map->odom correction over the jump trigger since the last accepted pose."),
+          "map->odom correction over the jump trigger since the last accepted pose, not confirmed by "
+          "the scan (over jump_verified_max_m, a poor fit before it, or no fit after it)."),
+        a("LOC_CORRECTED", WARN, "auto", "The position was corrected; the vehicle kept going",
+          "Nothing to do. If it repeats at the same place, see the report on the Alarms page.",
+          "map->odom correction over the jump trigger but within jump_verified_max_m, with the scan "
+          "fitting the map before and after it: kept READY, reported (loc_losses)."),
         a("LOC_GATE_FAILED", ERROR, "engineer", "The position check stopped running",
           "Call the engineer: the map/scan check failed.",
           "Scan-consistency gate or the transform it needs failed; no evidence either way, so LOST."),
