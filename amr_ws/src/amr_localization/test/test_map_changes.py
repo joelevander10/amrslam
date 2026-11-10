@@ -77,3 +77,16 @@ def test_fades_and_saves(tmp_path):
     assert back is not None and back.same_geometry(200, 100, 0.05, 0.0, -2.5) and back.scans == 8
     assert back.new.sum() <= 4.0 + 1e-4  # faded further to now, never grown
     assert mc.load(str(tmp_path / "nope.npz")) is None
+
+
+def test_a_trolley_gone_from_in_front_of_a_machine_counts_with_passed():
+    """2026-11-10: the beam goes past the gone trolley and ends ON the machine behind it - an
+    ON_MAP endpoint, not THROUGH. scan_consistency's `passed` still says the trolley is gone."""
+    cm = mc.ChangeMap(200, 100, 0.05, 0.0, -2.5)
+    f = scan([ON_MAP], [5.0], [2.0], [5.0], [1.0])  # ends on the machine at y 2.0; trolley expected at y 1.0
+    drive(cm, 5, lambda i: (*f, ))
+    assert cm.gone.sum() == 0  # without `passed`: missed
+    cm = mc.ChangeMap(200, 100, 0.05, 0.0, -2.5)
+    for i in range(5):
+        cm.add((0.25 * i, 0.0, 0.0), *f, now=100.0, passed=[True])
+    assert cm.gone.sum() == 5.0 and cm.hit.sum() == 5.0

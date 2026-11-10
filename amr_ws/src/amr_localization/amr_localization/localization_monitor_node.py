@@ -280,7 +280,7 @@ class LocalizationMonitor(Node):
             and match_frac >= self._changes_min_match
         ):
             d = detail
-            self._changes.add((lx, ly, yaw), d["x"], d["y"], d["cls"], d["ex"], d["ey"])
+            self._changes.add((lx, ly, yaw), d["x"], d["y"], d["cls"], d["ex"], d["ey"], passed=d["passed"])
 
     def _save_changes(self) -> None:
         if self._changes is None or not self._changes.dirty:

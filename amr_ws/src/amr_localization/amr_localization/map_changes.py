@@ -83,10 +83,13 @@ class ChangeMap:
         a = abs(math.atan2(math.sin(pose[2] - self._last[2]), math.cos(pose[2] - self._last[2])))
         return d >= MOVE_M or a >= MOVE_RAD
 
-    def add(self, pose, x, y, cls, ex, ey, now: float | None = None) -> bool:
+    def add(self, pose, x, y, cls, ex, ey, now: float | None = None, passed=None) -> bool:
         """Count one classified scan taken at laser `pose` (x, y, yaw). x / y: every beam's
         endpoint; cls: its class; ex / ey: where the map expected the beam to stop (nan = no
-        wall expected). Returns False when skipped (not moved enough since the last one)."""
+        wall expected); passed: the beams that went past that wall (scan_consistency detail).
+        Without it only the THROUGH class counts, which misses a trolley gone from in front of
+        a machine: the beam then ends on the machine. Returns False when skipped (not moved
+        enough since the last one)."""
         if not self.moved_enough(pose):
             return False
         self._last = tuple(pose)
@@ -94,7 +97,7 @@ class ChangeMap:
         x, y, ex, ey = (np.asarray(v, dtype=np.float64) for v in (x, y, ex, ey))
         self._bump(self.hit, x[cls == ON_MAP], y[cls == ON_MAP])
         self._bump(self.new, x[cls == UNMAPPED], y[cls == UNMAPPED])
-        th = cls == THROUGH
+        th = cls == THROUGH if passed is None else np.asarray(passed, dtype=bool)
         self._bump(self.gone, ex[th], ey[th])
         self.scans += 1
         self.updated = time.time() if now is None else now
@@ -237,7 +240,8 @@ def advice(gone: float, new: float, hit: float) -> dict:
                 "kind": "gone",
                 "ratio": round(ratio, 2),
                 "advice": "mapped objects are gone (seen through nearly every time): Re-map area, "
-                "or Erase to unknown if they will not come back",
+                "or Erase to unknown if they will not come back (a mesh fence or glass reads "
+                "like this too: then leave it)",
             }
         if ratio >= GONE_SOMETIMES:
             return {

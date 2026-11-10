@@ -57,8 +57,10 @@ def compare(
     nothing about the pose (dynamic-mapping plan §1.2).
     `detail` (a dict to fill, optional): x, y (every beam's endpoint in the map frame), cls (the
     classes above), ex, ey (where the map expected the beam to stop, nan where it expects no
-    wall: for a THROUGH beam, the mapped obstacle that is gone) and unmapped_frac (returned
-    beams ending on mapped free floor)."""
+    wall: for a THROUGH beam, the mapped obstacle that is gone), passed (a returned beam went
+    past the wall the map expects by more than tol, wherever it ended - also onto a machine
+    behind a trolley that left; the map change layer counts these) and unmapped_frac
+    (returned beams ending on mapped free floor)."""
     ranges = np.asarray(ranges, dtype=np.float64)
     n = len(ranges)
     expected = cast(grid, lx, ly, yaw, geom)  # inf where the map has nothing within range
@@ -109,6 +111,7 @@ def compare(
         e = np.where(np.isfinite(expected), expected, np.nan)
         detail.update(
             x=lx + d * np.cos(a), y=ly + d * np.sin(a), cls=cls, ex=lx + e * np.cos(a), ey=ly + e * np.sin(a),
+            passed=valid & wall_expected & (measured > expected + tol_m),
             unmapped_frac=float(short.sum()) / max(1, int(valid.sum())),
         )
     return match_frac, long_frac
