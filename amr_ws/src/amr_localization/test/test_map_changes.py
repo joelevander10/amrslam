@@ -84,7 +84,7 @@ def test_a_trolley_gone_from_in_front_of_a_machine_counts_with_passed():
     ON_MAP endpoint, not THROUGH. scan_consistency's `passed` still says the trolley is gone."""
     cm = mc.ChangeMap(200, 100, 0.05, 0.0, -2.5)
     f = scan([ON_MAP], [5.0], [2.0], [5.0], [1.0])  # ends on the machine at y 2.0; trolley expected at y 1.0
-    drive(cm, 5, lambda i: (*f, ))
+    drive(cm, 5, lambda i: (*f,))
     assert cm.gone.sum() == 0  # without `passed`: missed
     cm = mc.ChangeMap(200, 100, 0.05, 0.0, -2.5)
     for i in range(5):
