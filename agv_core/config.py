@@ -430,8 +430,8 @@ qr_base.*
     (feedforward) + PI on the encoder speed error, clamped to v_max_v, integral
     clamped to +/-i_max_v and frozen while saturated. Below zero_rad_s the wheel
     is commanded to rest (both coils low, 0 V, brake per brake_on_stop).
-    ff_* come from the bench calibration (qr_calibrate ff; amr-qr-01: the left
-    wheel's 970 r/min/V, 0.25 V). The driver holds speed on its own Hall
+    ff_* come from the bench calibration (qr_calibrate ff; amr-qr-01 2026-11-11, 1.0-3.0 V
+    on blocks: left 946.6 r/min/V from 0.18 V, right 966.0 from 0.21 V -> 946.6 / 0.21). The driver holds speed on its own Hall
     sensors, so the PI is only a gentle trim (kp/ki small); a stiff loop on the
     axle encoders fought it and the vehicle surged. A zero command while driving
     first COASTS (coil kept, 0 V, brake off) for up to 0.3 s, so a steering
