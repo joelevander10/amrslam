@@ -83,6 +83,9 @@ def executor_overrides() -> dict:
             # START once = AUTO, and the last mission loaded on the Run page loads by itself
             # (READY); START again runs it (owner 2026-11-11)
             "auto_load": True,
+            # an in-place turn may wander 0.15 m (default 0.10): 2026-11-11 three start spins
+            # faulted at 0.11-0.14 m (EXEC_TURN_FAILED "turn centre drifted")
+            "centre_drift_m": 0.15,
         }
     return {}
 

@@ -48,7 +48,7 @@ class Limits:
     # the map). It is kept if the next scan comparison after it fits as well, within
     # jump_verify_s; otherwise, or over jump_verified_max_m or jump_angle_rad, the fix is LOST.
     jump_verified_max_m: float = 0.30
-    jump_fit_min: float = 0.8
+    jump_fit_min: float = 0.75  # 0.80 until 2026-11-11: 77-79 % fits in the long aisles stopped the AMR
     jump_verify_s: float = 1.5
     jump_angle_rad: float = math.radians(5.0)
     settle_s: float = 2.0  # no jump and covariance under limits for this long

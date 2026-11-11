@@ -539,6 +539,7 @@ put slow zones on every straight where something can step in.
 | Run `BLOCKED`, lidar stop | Something in the nanoScan3 protective field | Clear the area in front; continues by itself. Stops with nothing there: check the field set (§8) |
 | Run `BLOCKED`, path blocked / controller stop | Nav2 saw something in the path ("collision ahead") | Clear it; it retries by itself until clear |
 | Run `WAITING` | A wait step in the route | Do the job, step clear, press **Continue** (Run page) or **START** |
+| Run `FAULT`, "turn centre drifted" | During a turn in place the AMR slid more than 0.15 m sideways (one wheel started late or slipped) | Check for a hitched trolley, something under a wheel, a slippery spot; put it back on the start, **Continue route** or Start again |
 | Continue refused | AUTO off, not localised, vehicle moved off the wait point, or E-stop | Read the reason under the run state; fix it and press Continue again |
 | Run `FAULT`, "drives did not power up" | No torque within 8 s of START (E-stop, push mode, I/O lost) | Fix it, then START again |
 | Run `FAULT` | Sensor, drive, localisation or a tolerance exceeded | Read the reason, fix it, press **Ack fault** (or **STOP** in MANUAL). Then **Continue route from here** + START to go on from that step (§5a), or Load + START from the route start |
@@ -572,7 +573,7 @@ report's name.
 **Small corrections are not losses.** AMCL keeps correcting the wheel odometry; in a long aisle
 or after a little wheel slip that correction can come in one step. A step over 0.15 m / 5° is
 only a loss when the scan does not back it up. Up to **0.30 m** (and under 5°), when the scan
-fitted the map (≥ 80 % on mapped walls) just before it AND the next scan after it fits too
+fitted the map (≥ 75 % on mapped walls; 80 % until 2026-11-11) just before it AND the next scan after it fits too
 (within 1.5 s), the AMR keeps going: the step is logged as **`LOC_CORRECTED`** (yellow row in
 **Localisation losses**, at most one report every 30 s). Over 0.30 m, over 5°, a poor fit before
 it, or no fit after it is still **`LOC_JUMP`** and stops the AMR. Many `LOC_CORRECTED` rows with
