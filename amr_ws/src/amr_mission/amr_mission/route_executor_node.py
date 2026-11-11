@@ -258,12 +258,14 @@ def checkpoint_mismatch(cp: dict, mission: dict, compiled, passes: int) -> str |
 
 
 # A FollowPath goal must not end where its own path has already been: Nav2's goal checker
-# (SimpleGoalChecker, stateful) latches "position reached" the first time the vehicle is
-# within xy_goal_tolerance of the goal - at the START of a loop that returns to its start -
-# and then reports SUCCEEDED as soon as the heading agrees, metres into the first step
-# (vehicle 2026-11-06: a route closed by a Go home step, every step chained, "endpoint
-# missed: 1.365 m / 1.5 deg" 5 s after the start). Such a chain is split before its last
-# step, so that leg is its own goal (one stop before it).
+# reports SUCCEEDED when the vehicle is within xy_goal_tolerance of the goal with the goal's
+# heading (vehicle 2026-11-06, then a STATEFUL checker: a route closed by a Go home step, every
+# step chained, "endpoint missed: 1.365 m / 1.5 deg" 5 s after the start). Such a chain is
+# split before its last step, so that leg is its own goal (one stop before it). Since
+# 2026-11-11 the checker is stateless (position and heading at once), so only a pass near the
+# goal with about the goal's heading counts: a loop that leaves along its return line in the
+# OTHER direction (the AMR QR's route out of the homepost and back) is one goal again - the
+# owner saw it stop twice a lap, before the last straight and before Go home.
 CHAIN_LOOP_GUARD_M = 0.30
 
 
@@ -284,18 +286,24 @@ def chainable(st: CompiledStep) -> bool:
 
 
 def chain_returns(seq: list[CompiledStep], guard: float = CHAIN_LOOP_GUARD_M) -> bool:
-    """Does the path of `seq` pass within `guard` of its own goal (the last step's end)
-    earlier than its final 3 x guard? Pure."""
-    ex, ey = seq[-1].end[0], seq[-1].end[1]
-    pts: list[tuple[float, float, float]] = []
+    """Does the path of `seq` pass within `guard` of its own goal (the last step's end), with a
+    heading within 90 deg of the goal's, earlier than its final 3 x guard? Pure."""
+    ex, ey, eyaw = seq[-1].end[0], seq[-1].end[1], seq[-1].end[2]
+    pts: list[tuple[float, float, float, float | None]] = []
     s, prev = 0.0, None
     for st in seq:
-        for x, y, *_ in st.samples or [st.start, st.end]:
+        for p in st.samples or [st.start, st.end]:
+            x, y = p[0], p[1]
             if prev is not None:
                 s += math.hypot(x - prev[0], y - prev[1])
-            pts.append((x, y, s))
+            pts.append((x, y, s, p[2] if len(p) > 2 else None))
             prev = (x, y)
-    return any(s - si > 3.0 * guard and math.hypot(x - ex, y - ey) < guard for x, y, si in pts)
+    return any(
+        s - si > 3.0 * guard
+        and math.hypot(x - ex, y - ey) < guard
+        and (yaw is None or abs(wrap(yaw - eyaw)) < math.pi / 2)
+        for x, y, si, yaw in pts
+    )
 
 
 def chain_breaks(steps: list[CompiledStep], guard: float = CHAIN_LOOP_GUARD_M) -> set[int]:

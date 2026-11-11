@@ -25,7 +25,10 @@ controller_server:
                                        # endpoint (Part B2), so the checker fires just before the true end instead
                                        # of hunting a 2.5 cm circle it cannot see; rollback 0.025 with overshoot 0
       yaw_goal_tolerance: 0.035
-      stateful: true
+      stateful: false                  # 2026-11-11: position AND heading at the same moment. Stateful latched the
+                                       # position when a loop passed its goal point the other way round, so every
+                                       # chain whose path crossed its own goal had to be split (a stop there).
+                                       # The executor still stops at the end by itself (along >= length).
     FollowPath:
       plugin: nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController
       desired_linear_vel: 0.60         # = route.VEHICLE_V_MAX, the straights' speed (arcs 0.30, 2026-11-03; 0.85 boost removed 10-02).

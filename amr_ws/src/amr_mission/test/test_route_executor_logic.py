@@ -680,6 +680,7 @@ def test_a_route_that_closes_on_its_start_is_not_one_followpath_goal():
     corners = [(0.0, 0.0), (4.0, 0.0), (4.0, 3.0), (0.0, 3.0), (0.0, 0.0)]
     steps = [_line(f"s{k}", corners[k], corners[k + 1]) for k in range(4)]
     steps[-1].type = "home"
+    steps[-1].end = (0.0, 0.0, 0.0)  # Go home ends ON the start pose, facing as the route starts (+x)
     assert ren.chain_breaks(steps) == {3}
     n = make_node(steps)
     assert [s.id for s in n._chain(0)] == ["s0", "s1", "s2"]
@@ -795,3 +796,23 @@ def test_the_local_costmap_is_cleared_leaving_and_reaching_the_homepost():
     n.phase, n.settle_since = ren.PHASE_SETTLE, n.clock[0] - 60.0
     n._execute(n.clock[0])
     assert n.fsm.state == fsm.DONE and len(cleared) == 2 and "back at the homepost" in n.notes[-1]
+
+
+def test_a_loop_that_leaves_along_its_return_line_the_other_way_is_one_goal():
+    """2026-11-11 (owner): out of the homepost along the bottom line, round the loop, and back
+    along the same line the other way: it stopped before the last straight and before Go
+    home. With the stateless goal checker only a pass near the goal WITH its heading counts."""
+    # start (0, 0) facing -x; rotate 180 first, so the chain leaves along +x
+    out = _line("s2", (0.0, 0.0), (11.5, 0.0))
+    up = _line("s4", (11.5, 0.0), (11.5, 9.0))
+    top = _line("s6", (11.5, 9.0), (95.0, 9.0))
+    down = _line("s8", (95.0, 9.0), (95.0, 0.0))
+    back = _line("s10", (95.0, 0.0), (4.2, 0.0))  # the same line as s2, the other way
+    home = _line("s11", (4.2, 0.0), (0.0, 0.0), typ="home")
+    assert ren.chain_breaks([out, up, top, down, back, home]) == set()
+    # the same loop driven out and back in the SAME direction still splits (a figure of
+    # the 2026-11-06 failure: the goal pose is passed with its heading at the start)
+    same = [_line("a", (0.0, 0.0), (4.0, 0.0)), _line("b", (4.0, 0.0), (4.0, 3.0)),
+            _line("c", (4.0, 3.0), (-1.0, 3.0)), _line("d", (-1.0, 3.0), (-1.0, 0.0)),
+            _line("e", (-1.0, 0.0), (0.0, 0.0))]
+    assert ren.chain_breaks(same) == {4}
