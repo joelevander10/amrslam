@@ -481,8 +481,7 @@ qr_base.*
     keeps the fixed 0.60). It must fit under 95 % of the top speed that
     vehicle.motor_max_rpm gives, so the S-curve is never flattened by the
     wheel limit: 0.80 m/s needs motor_max_rpm >= 2680 (amr-qr-01 2026-11-06: 3000 =
-    0.942 m/s top, 3.30 V of feedforward; v_max_v 10 V, the drivers' full scale;
-    2026-11-11: 0.90 m/s, 95 % of the 0.948 m/s top with wheel_dia_m 0.1811). A straight in a route may be slower (its v_mps).
+    0.942 m/s top, 3.30 V of feedforward; v_max_v 10 V, the drivers' full scale). A straight in a route may be slower (its v_mps).
     Above the speed the 2026-11-05 feedforward calibration covered (2.0 V,
     1690 r/min) re-run `qr_calibrate ff` up to the new voltage on blocks, and
     size the scanner's protective field for the stopping distance.

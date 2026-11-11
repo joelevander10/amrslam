@@ -266,5 +266,19 @@ const flush = () => new Promise(r => setImmediate(r));
   els['btn-undo'].onclick(); els['btn-undo'].onclick();
   await els['btn-save'].onclick(); for (let i = 0; i < 3; i++) await flush();
   out.del_undone = savedSteps.map(s => s.id);
+  // --- a curve's own speed (2026-11-11): the arc row has a speed box like a straight ---
+  vm.runInContext(`route = { route_id: 'arcv', start: { x_m: 0, y_m: 0, yaw_deg: 0 }, repeat_count: 1, limits: {}, steps: [
+            { id: 's1', type: 'straight', to: { x_m: 5, y_m: 0 } },
+            { id: 's2', type: 'arc', direction: 'ccw', angle_deg: 90, radius_m: 2 },
+            { id: 's3', type: 'arc', direction: 'cw', angle_deg: 90, radius_m: 1 }] }; refresh();`, ctx);
+  out.arc_boxes = (els['ed-steps'].innerHTML.match(/class="sv" data-i="/g) || []).length;
+  const setV = (i, v) => els['ed-steps'].listeners.change.forEach(fn => fn({ target: { classList: { contains: c => c === 'sv' }, dataset: { i: String(i) }, value: v } }));
+  setV(1, '0.5'); setV(2, '0.6');
+  out.arc_over_cap = /→0\.4[01]/.test(els['ed-steps'].innerHTML);
+  await els['btn-save'].onclick(); for (let i = 0; i < 3; i++) await flush();
+  out.arc_saved_v = savedSteps.map(s => s.v_mps ?? null);
+  setV(1, '');
+  await els['btn-save'].onclick(); for (let i = 0; i < 3; i++) await flush();
+  out.arc_cleared_v = savedSteps.map(s => s.v_mps ?? null);
   console.log(JSON.stringify(out));
 })().catch(e => { console.log(JSON.stringify({ error: String(e && e.stack || e) })); });
