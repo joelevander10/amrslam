@@ -5,7 +5,7 @@ Day-to-day operation of the AMR QR (profile `amr-qr-01`) once
 [RUNBOOK.md](RUNBOOK.md) §2; the RUNBOOK has the full detail for every page. The
 differences: the AMR QR has **two buttons instead of a selector switch**, no Manual Arm
 switch, no horn, no Reset or Continue button (the Run page has a **Continue** instead), a
-**push mode** for the brakes, and routes run at 0.90 m/s on straights (slower where a straight has its own speed), 0.30 m/s on curves (or each curve's own speed).
+**push mode** for the brakes, and routes run at 0.90 m/s on straights (slower where a straight has its own speed), 0.30 m/s on curves.
 
 The software is gvievo-01 **KYB trackless** (2026-11-03) with the AMR QR hardware on top:
 route **wait steps** with Continue, a **Go home** last step, smooth **S-curve** speed
@@ -306,8 +306,7 @@ everything again:
    saved ones on this map); untick **Snap** or hold Shift to measure exactly where you
    click. A third click starts a new measurement; Esc clears it.
 5. **Speed.** On the AMR QR every straight runs at **0.90 m/s** (`qr_base.route_v_mps`,
-   2026-11-11; 0.80 from 2026-11-06), every arc and the Go home curve at **0.30 m/s** unless
-   it has its own speed, a reverse at 0.30 m/s (never faster: the rear is not scanned), spins
+   2026-11-11; 0.80 from 2026-11-06), every arc and the Go home curve at **0.30 m/s**, a reverse at 0.30 m/s (never faster: the rear is not scanned), spins
    at 0.37 rad/s (`motor_max_rpm` 3000 = 0.95 m/s top, `v_max_v` 10 V; routes run at most at
    95 % of it, so 0.90 is the most there is without a faster motor or another gear / wheel).
    Every speed change is a smooth **S-curve** (start 0.2 m/s², braking 0.25 m/s², jerk

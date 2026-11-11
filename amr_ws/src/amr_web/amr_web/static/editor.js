@@ -490,7 +490,7 @@ function refresh() {
      : s.type === 'home' ? homeRow(i)
                            : `<span class="n">rotate</span><span class="v">${esc(String(s.direction).toUpperCase())} ${esc(s.angle_deg)}<i>°</i></span>`) +
     `<span class="del"><button class="tool" data-del="${i}" title="Delete ${esc(s.id)}: the steps after it keep their shape and follow on from where the route now ends">×</button>` +
-    `<button class="tool" data-del-end="${i}" title="Delete ${esc(s.id)} and every step after it">× to end</button></span>` + '</div>').join('')
+    `<button class="tool" data-del-end="${i}" title="Delete ${esc(s.id)} and every step after it (to the end)">×→</button></span>` + '</div>').join('')
     : '<div class="none">no steps</div>';
   $('ed-repeat').value = route.repeat_count;
   slowList();
