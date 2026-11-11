@@ -80,6 +80,9 @@ def executor_overrides() -> dict:
             # a localisation loss during a run: stop, relocalise where it stands, continue
             # (owner 2026-11-09; route_executor hold "loc"), at most 3 times per run
             "auto_reloc_max": 3,
+            # START once = AUTO, and the last mission loaded on the Run page loads by itself
+            # (READY); START again runs it (owner 2026-11-11)
+            "auto_load": True,
         }
     return {}
 

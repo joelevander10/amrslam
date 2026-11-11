@@ -202,6 +202,10 @@ def _rows() -> tuple[Alarm, ...]:
           "Set the initial pose on the Run page and confirm the scans line up.",
           "map->odom correction over the jump trigger since the last accepted pose, not confirmed by "
           "the scan (over jump_verified_max_m, a poor fit before it, or no fit after it)."),
+        a("AUTO_LOAD_REFUSED", WARN, "operator", "The last mission could not be loaded by itself",
+          "Load a mission on the Run page; it is then loaded by itself each time.",
+          "route_executor auto_load: the remembered mission (last_mission.json) was refused by the "
+          "load checks (another active map, an invalid route, a missing file)."),
         a("LOC_RELOCALIZING", WARN, "auto", "Position lost during the run: finding it again",
           "Keep clear; the AMR finds its position where it stopped and continues by itself.",
           "Route executor hold 'loc' after LOC_JUMP / LOC_SCAN_MISMATCH / LOC_COV_GREW while "

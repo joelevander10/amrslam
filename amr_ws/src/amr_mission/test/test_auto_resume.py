@@ -605,3 +605,65 @@ def test_manual_during_a_relocalisation_hold_aborts_the_run():
     n._panel.mode_auto = False
     tick(n, torque=True, field=True)
     assert n.fsm.state == fsm.IDLE and "manual takeover" in n.fsm.reason
+
+
+# ---- auto_load (owner 2026-11-11): START once = AUTO + the last mission READY -------------
+
+
+def _auto_load_node(tmp_path, auto=True):
+    n = node(start=False)
+    n.fsm.abort("nothing loaded")  # IDLE
+    n.auto_load, n._auto_load_t, n._auto_load_why = True, -1e9, ""
+    n.last_mission_path = str(tmp_path / "last_mission.json")
+    ren.save_last_mission(n.last_mission_path, "loop_a")
+    n._last_mission = ren.load_last_mission(n.last_mission_path)
+    n._panel.mode_auto = auto
+    n.loaded = []
+
+    def load(mid, checkpoint=None):
+        n.loaded.append(mid)
+        n.fsm.load(mid, 1, 1)
+        return True, "READY"
+
+    n._load_mission = load
+    n.notes = []
+    n._note = lambda level, code, text: n.notes.append(code)
+    return n
+
+
+def test_in_auto_the_last_mission_loads_by_itself(tmp_path):
+    n = _auto_load_node(tmp_path, auto=False)
+    run_for(n, 1.0, torque=True, field=True)
+    assert n.loaded == [] and n.fsm.state == fsm.IDLE  # MANUAL: nothing
+    n._panel.mode_auto = True  # START: AUTO
+    tick(n, torque=True, field=True)
+    assert n.loaded == ["loop_a"] and n.fsm.state == fsm.READY and "press START" in n.fsm.reason
+    run_for(n, 6.0, torque=True, field=True)
+    assert n.loaded == ["loop_a"]  # READY: not again
+
+
+def test_auto_load_waits_for_the_prerequisites_and_says_why(tmp_path):
+    n = _auto_load_node(tmp_path)
+    n._loc.state = NOT_READY
+    tick(n, torque=True, field=True)
+    assert n.loaded == [] and "waiting to load loop_a" in n.fsm.reason
+    n._loc.state = LocalizationState.READY
+    run_for(n, 5.1, torque=True, field=True)
+    assert n.loaded == ["loop_a"]
+
+
+def test_a_refused_auto_load_is_said_once(tmp_path):
+    n = _auto_load_node(tmp_path)
+    n._load_mission = lambda mid, checkpoint=None: (False, "refused: mission is for map other rev1")
+    run_for(n, 12.0, torque=True, field=True)
+    assert n.notes == ["AUTO_LOAD_REFUSED"] and "could not load loop_a" in n.fsm.reason
+
+
+def test_no_remembered_mission_or_switched_off_loads_nothing(tmp_path):
+    n = _auto_load_node(tmp_path)
+    n._last_mission = ""
+    run_for(n, 1.0, torque=True, field=True)
+    n.auto_load, n._last_mission = False, "loop_a"
+    run_for(n, 6.0, torque=True, field=True)
+    assert n.loaded == []
+    assert ren.load_last_mission(str(tmp_path / "nope.json")) == ""

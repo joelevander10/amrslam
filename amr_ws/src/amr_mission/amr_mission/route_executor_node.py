@@ -154,11 +154,39 @@ def _yaw(q) -> float:
 
 
 CHECKPOINT_FILE = "route_checkpoint.json"
+LAST_MISSION_FILE = "last_mission.json"  # the mission the operator last loaded (auto_load)
+AUTO_LOAD_RETRY_S = 5.0
 # Localisation losses the automatic relocalisation handles, and those it never touches
 # (amr_localization/relocalize.py RECOVERABLE; kept here so amr_mission needs no amr_localization)
 RELOC_CODES = frozenset({"LOC_JUMP", "LOC_SCAN_MISMATCH", "LOC_COV_GREW", "LOC_LOST"})
 RELOC_NEVER = frozenset({"LOC_STREAM_STALE", "LOC_GATE_FAILED"})
 REJOIN_OK, REJOIN_DONE, REJOIN_FAR = "ok", "done", "far"
+
+
+def load_last_mission(path: str) -> str:
+    """The mission id the operator last loaded, or "" (no file, unreadable)."""
+    if not path:
+        return ""
+    try:
+        with open(path) as fh:
+            mid = json.load(fh).get("mission_id", "")
+    except (OSError, ValueError, AttributeError):
+        return ""
+    return mid if isinstance(mid, str) else ""
+
+
+def save_last_mission(path: str, mission_id: str, log=None) -> None:
+    if not path:
+        return
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w") as fh:
+            json.dump({"mission_id": mission_id, "saved": time.strftime("%Y-%m-%d %H:%M:%S")}, fh)
+        os.replace(tmp, path)
+    except OSError as e:
+        if log is not None:
+            log.warn(f"last mission not saved to {path}: {e}")
 
 
 def load_checkpoint(path: str) -> dict | None:
@@ -412,6 +440,12 @@ class RouteExecutor(Node):
     _reloc_asked_t: float | None = None
     _reloc_future = None
     _reloc_cli = None
+    # auto_load (owner 2026-11-11): in AUTO with no run loaded, load the operator's last mission
+    auto_load = False
+    last_mission_path = ""
+    _last_mission = ""
+    _auto_load_t = -1e9
+    _auto_load_why = ""
 
     def __init__(self) -> None:
         super().__init__("route_executor")
@@ -535,6 +569,10 @@ class RouteExecutor(Node):
         self.declare_parameter("auto_reloc_max", 0)
         self.declare_parameter("auto_reloc_still_s", 1.0)
         self.declare_parameter("auto_reloc_timeout_s", 40.0)
+        # true: in AUTO, with nothing loaded (IDLE / DONE) and every prerequisite holding, the
+        # mission the operator last loaded (Load on the Run page, remembered across restarts) is
+        # loaded by itself: READY, and START runs it. Nothing moves without START.
+        self.declare_parameter("auto_load", False)
         # The pre-move warning after a Start (module docstring); the profile's timing block.
         self.declare_parameter("premove_s", float(vehicle_config.AUTO_START_DELAY_S))
         self.declare_parameter("premove_timeout_s", float(vehicle_config.PREMOVE_TIMEOUT_S))
@@ -546,6 +584,9 @@ class RouteExecutor(Node):
         self.maps_dir = os.path.expanduser(p("maps_dir").value)
         sd = str(p("state_dir").value or "")
         self.checkpoint_path = os.path.join(os.path.expanduser(sd), CHECKPOINT_FILE) if sd else ""
+        self.last_mission_path = os.path.join(os.path.expanduser(sd), LAST_MISSION_FILE) if sd else ""
+        self._last_mission = load_last_mission(self.last_mission_path)
+        self.auto_load = bool(p("auto_load").value)
         self.rejoin_heading = math.radians(float(p("rejoin_heading_deg").value))
         self.fp = fpmod.load(p("footprint_yaml").value or fpmod.default_path())
         self.start_gate_m, self.start_gate_rad = (
@@ -893,6 +934,9 @@ class RouteExecutor(Node):
                 res.accepted, res.message = False, "refused: E-stop active - release it and press Reset first"
                 return res
             res.accepted, res.message = self._load_mission(req.mission_id)
+            if res.accepted and req.mission_id != self._last_mission:
+                self._last_mission = req.mission_id  # what auto_load loads from now on
+                save_last_mission(self.last_mission_path, req.mission_id, self.get_logger())
             return res
 
     def _load_mission(self, mission_id: str, checkpoint: dict | None = None) -> tuple[bool, str]:
@@ -1866,12 +1910,47 @@ class RouteExecutor(Node):
                 # re-checks everything at the Continue press), so the grace timer
                 # must not survive into the next mission and fire on its first tick
                 self._prereq_since = None
+                if state in (fsm.IDLE, fsm.DONE) and not self._emergency(now):
+                    self._auto_load_tick(now)
             if self.fsm.state == fsm.EXECUTING:
                 self._execute(now)
             elif self.fsm.state in (fsm.PAUSED, fsm.BLOCKED):
                 if self.fsm.state == fsm.BLOCKED:
                     self._auto_resume_tick(now)
             self._publish_permit()
+            self._log_state()
+
+    def _auto_load_tick(self, now: float) -> None:
+        """auto_load: in AUTO with nothing loaded, load the operator's last mission (READY;
+        START runs it). Only while every prerequisite holds, so a lapse does not load, unready
+        and load again; a refusal is said once and retried every AUTO_LOAD_RETRY_S."""
+        if not self.auto_load or not self._last_mission or not self._auto():
+            self._auto_load_why = ""
+            return
+        if now - self._auto_load_t < AUTO_LOAD_RETRY_S:
+            return
+        self._auto_load_t = now
+        pre = self._prereqs()
+        if pre:
+            why = f"AUTO: waiting to load {self._last_mission}: {pre}"
+            if why != self._auto_load_why:
+                self._auto_load_why = why
+                self.fsm.reason = why
+                self._log_state()
+            return
+        ok, msg = self._load_mission(self._last_mission)
+        if ok:
+            self._auto_load_why = ""
+            self.fsm.reason = f"{self._last_mission} loaded by itself (AUTO): press START to run it"
+            self.get_logger().info(self.fsm.reason)
+            self._log_state()
+            return
+        why = f"AUTO: could not load {self._last_mission}: {msg} - load a mission on the Run page"
+        if why != self._auto_load_why:
+            self._auto_load_why = why
+            self.fsm.reason = why
+            self.get_logger().warn(why)
+            self._note(Event.WARN, "AUTO_LOAD_REFUSED", why)
             self._log_state()
 
     def _reloc_case(self, state: int, pre: str) -> bool:

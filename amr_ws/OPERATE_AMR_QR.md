@@ -17,7 +17,7 @@ reset of KYB are switched off: the AMR QR has none of that hardware.
 
 | Button | In MANUAL | In AUTO |
 |---|---|---|
-| **START** (green) | switch to **AUTO** (nothing moves) | **Start**: run the loaded route / resume |
+| **START** (green) | switch to **AUTO** (nothing moves); the last mission you loaded loads by itself (READY) | **Start**: run the loaded route / resume |
 | **STOP** | **Reset**: acknowledge a route FAULT | back to **MANUAL** (a running route is aborted) |
 | **E-stop** | motors 0 V + brake | same; the route is held (BLOCKED), continue with START after release |
 
@@ -25,7 +25,11 @@ The USB keypad has the same buttons: **G** = START, **ENTER** = STOP, **E** = E-
 **F1–F6** = Go to POS 1–6 (§2a).
 
 - **After power-up the vehicle is always in MANUAL.**
-- To run a route: START once to switch to AUTO, then START again to start it.
+- To run a route: START once to switch to AUTO, then START again to start it. You **Load** a
+  mission on the Run page only when you want a different one: the last mission you loaded is
+  remembered (also after a restart) and loads by itself whenever the AMR is in AUTO with
+  nothing loaded - after the AUTO press, after a run finished, after an Abort or an
+  acknowledged fault - as soon as localisation is READY.
 - A button already held at power-up, or when the I/O link comes back, does nothing until
   it is released and pressed again.
 - The web page never starts a run by itself. Motion needs either a held jog key in
@@ -406,7 +410,11 @@ Keep the vehicle in **MANUAL** until step 6.
    scan on the walls, press **Confirm: scans align**. Localisation becomes `READY`.
 4. **Position the vehicle** on the route's start with the jog pad (or by pushing it in
    push mode, then **Brakes ON**). It must be within **0.20 m and 10°**.
-5. **Load** the mission, then press **Load (READY)**. Run state becomes `READY`.
+5. **Load** the mission, then press **Load (READY)**. Run state becomes `READY`. Needed only
+   the first time, or to change the mission: from then on the START that switches to AUTO
+   loads it by itself (run state `READY`, "`<mission>` loaded by itself (AUTO): press START
+   to run it"). If it cannot (localisation not READY yet, another map active) the run state
+   says why: "AUTO: waiting to load …" or "could not load …".
 6. **Go.** Clear the area and stay within reach of the E-stop.
    - Press **START** once: the Selector tile shows **AUTO**. The drives go to standby
      (brakes held).
