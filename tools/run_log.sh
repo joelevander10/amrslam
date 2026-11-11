@@ -110,10 +110,23 @@ CPUMON=$!
 echo
 echo "recording to $OUT/bag  -  press Start on the panel when ready, Ctrl-C ONCE when done"
 T0=$(date +%s.%N)
+# Job control on: the recorder runs in its own process group. Without it a background job of
+# a script starts with SIGINT IGNORED, so `kill -INT` never stopped it and the script hung at
+# "stopping the recorder..." (2026-11-11). Its own group also keeps the terminal's Ctrl-C
+# away from it: only the trap below stops it, once, cleanly.
+set -m
 ros2 bag record -s mcap -o "$OUT/bag" -e "$TOPICS" --include-hidden-topics \
     > "$OUT/record.log" 2>&1 &
 REC=$!
-trap 'echo; echo "stopping the recorder..."; kill -INT $REC 2>/dev/null' INT
+set +m
+stop_rec() {
+    echo; echo "stopping the recorder (it closes the bag; up to 20 s)..."
+    kill -INT "$REC" 2>/dev/null
+    for _ in $(seq 40); do kill -0 "$REC" 2>/dev/null || return; sleep 0.5; done
+    echo "the recorder did not stop: terminating it"
+    kill -TERM "$REC" 2>/dev/null
+}
+trap 'stop_rec' INT
 wait $REC
 trap - INT
 wait $REC 2>/dev/null
