@@ -235,7 +235,7 @@
     "runaway_rad_s": 1.0,
     "runaway_s": 0.3,
     "stall_s": 2.0,
-    "route_v_mps": 0.8,
+    "route_v_mps": 0.9,
     "keypad_enabled": true,
     "keypad_name_contains": "XING WEI",
     "keypad_exclude_contains": "AT Translated Set 2",

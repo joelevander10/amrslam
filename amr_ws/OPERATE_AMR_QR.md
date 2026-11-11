@@ -5,7 +5,7 @@ Day-to-day operation of the AMR QR (profile `amr-qr-01`) once
 [RUNBOOK.md](RUNBOOK.md) §2; the RUNBOOK has the full detail for every page. The
 differences: the AMR QR has **two buttons instead of a selector switch**, no Manual Arm
 switch, no horn, no Reset or Continue button (the Run page has a **Continue** instead), a
-**push mode** for the brakes, and routes run at 0.80 m/s on straights (slower where a straight has its own speed), 0.30 m/s on curves.
+**push mode** for the brakes, and routes run at 0.90 m/s on straights (slower where a straight has its own speed), 0.30 m/s on curves (or each curve's own speed).
 
 The software is gvievo-01 **KYB trackless** (2026-11-03) with the AMR QR hardware on top:
 route **wait steps** with Continue, a **Go home** last step, smooth **S-curve** speed
@@ -305,15 +305,17 @@ everything again:
    to a wait point, an arc centre, a step end or a route line (of this route and the
    saved ones on this map); untick **Snap** or hold Shift to measure exactly where you
    click. A third click starts a new measurement; Esc clears it.
-5. **Speed.** On the AMR QR every straight runs at **0.80 m/s** (`qr_base.route_v_mps`,
-   2026-11-06), every arc and the Go home curve at **0.30 m/s**, a reverse at 0.30 m/s (never faster: the rear is not scanned), spins
-   at 0.37 rad/s (`motor_max_rpm` 3000 = 0.94 m/s top, `v_max_v` 10 V; routes run at most at 95 % of it).
+5. **Speed.** On the AMR QR every straight runs at **0.90 m/s** (`qr_base.route_v_mps`,
+   2026-11-11; 0.80 from 2026-11-06), every arc and the Go home curve at **0.30 m/s** unless
+   it has its own speed, a reverse at 0.30 m/s (never faster: the rear is not scanned), spins
+   at 0.37 rad/s (`motor_max_rpm` 3000 = 0.95 m/s top, `v_max_v` 10 V; routes run at most at
+   95 % of it, so 0.90 is the most there is without a faster motor or another gear / wheel).
    Every speed change is a smooth **S-curve** (start 0.2 m/s², braking 0.25 m/s², jerk
-   0.4 m/s³; 2026-11-06): from standstill it reaches 0.80 m/s in about 4.5 s and 1.8 m,
-   slows 0.80 → 0.30 before an arc over about 1.7 m, and stops from 0.80 in about 1.6 m
-   (the executor brakes for the end of a move at 0.2 m/s²). A straight of about 3.5 m
-   between two stops reaches 0.80. **At 0.80 m/s the red protective field must be about
-   1 m long** (§5b).
+   0.4 m/s³; 2026-11-06): from standstill it reaches 0.90 m/s in about 5 s and 2.3 m,
+   slows 0.90 → 0.30 before an arc over about 2 m, and stops from 0.90 in about 2 m
+   (the executor brakes for the end of a move at 0.2 m/s²). A straight of about 4.5 m
+   between two stops reaches 0.90. **At 0.90 m/s the red protective field must be about
+   1.2 m long** (§5b).
 
    **Curve speed** (2026-11-11): each **arc** and the **Go home** S-curve has its own speed box
    in the **Steps** list, like a straight. Empty = 0.30 m/s. Type e.g. 0.50 to take a curve
@@ -520,15 +522,21 @@ The stopped route is forgotten when the run **finishes** (`DONE`) or when a run 
 why - if the map, the route or its steps changed since it stopped; then Load and start from
 the route start.
 
-## 5b. Safety at 0.80 m/s (read before the first fast run)
+## 5b. Safety at 0.90 m/s (read before the first fast run)
 
 The stopping distance grows with the square of the speed. Measured at 0.50 m/s the AMR QR
-stops in about 0.30 m on a red-field stop; at **0.80 m/s** expect **about 0.7 m** (scanner
-response, up to 0.3 s of coasting before the brake, then braking). The red field of 0.50 m is
-**too short** for that: lengthen it in Safety Designer to about **1.0 m** for 0.80 m/s, and
-yellow (slow to half) to about **1.8 m**, then **measure**: drive at a box at 0.80 m/s and
-check the gap left. Until then keep `qr_base.route_v_mps` at 0.50 (profile, restart), or
-put slow zones on every straight where something can step in.
+stops in about 0.30 m on a red-field stop; at 0.80 m/s expect about 0.7 m and at **0.90 m/s
+about 0.9 m** (scanner response, up to 0.3 s of coasting before the brake, then braking). The
+red field of 0.50 m is **too short** for that: lengthen it in Safety Designer to about
+**1.2 m** for 0.90 m/s (1.0 m for 0.80), and yellow (slow to half) to about **2.2 m**, then
+**measure**: drive at a box at 0.90 m/s and check the gap left. Until then keep
+`qr_base.route_v_mps` lower (profile, restart), or put slow zones on every straight where
+something can step in.
+
+The wheel feedforward was calibrated on blocks up to 2.0 V (about 0.57 m/s); 0.90 m/s needs
+about 3.2 V. The speed loop corrects the rest, but run `qr_calibrate ff --wheel both --volts
+1.0,2.0,3.0,3.5 --go` on blocks once and put its numbers in the profile, so the wheels track
+each other at full speed too.
 
 ## 6. When something stops
 
