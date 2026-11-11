@@ -86,12 +86,11 @@ def arc_pose(
     return centre[0] + sign * radius * math.sin(yaw), centre[1] - sign * radius * math.cos(yaw), yaw
 
 
-def arc_speed(lim, radius: float, v_mps: float | None = None) -> float:
-    """An arc's speed: its own v_mps (owner 2026-11-11) or ARC_V_MPS (0.30 m/s, owner
-    2026-11-03), never above the trackless speed, and less where the yaw rate v/R would pass
-    the arc turn ceiling (the mux clamps w to the permit; v alone would run the arc wide)."""
-    v = ARC_V_MPS if v_mps is None else float(v_mps)
-    return min(v, float(lim.linear_mps), ARC_YAW_RATE_RATIO * VEHICLE_ARC_W_MAX * radius)
+def arc_speed(lim, radius: float) -> float:
+    """An arc's speed: ARC_V_MPS (0.30 m/s, owner 2026-11-03, never above the trackless speed),
+    or less so the yaw rate v/R stays under the arc turn ceiling (the mux clamps w to the
+    permit; v alone would run the arc wide)."""
+    return min(ARC_V_MPS, float(lim.linear_mps), ARC_YAW_RATE_RATIO * VEHICLE_ARC_W_MAX * radius)
 
 
 def step_speed(lim, length_m: float, v_mps: float | None = None) -> float:
@@ -240,7 +239,7 @@ def compile_route(route: Route, spacing: float = SAMPLE_SPACING_M) -> CompiledRo
             samples = [arc_pose(centre, r, yaw, sign, theta * k / n) for k in range(n + 1)]
             ex, ey, eyaw = arc_pose(centre, r, yaw, sign, theta)
             end = (ex, ey, wrap(eyaw))
-            v = arc_speed(lim, r, s.v_mps)
+            v = arc_speed(lim, r)
             steps.append(
                 CompiledStep(
                     sid,
@@ -274,11 +273,7 @@ def compile_route(route: Route, spacing: float = SAMPLE_SPACING_M) -> CompiledRo
             if n_samples > MAX_SAMPLES:
                 raise RouteError(f"route too long: more than {MAX_SAMPLES} path samples", sid)
             # a straight runs at the trackless speed, an S-curve at an arc's speed for its tightest radius
-            v = (
-                step_speed(lim, leg.length_m, s.v_mps)
-                if leg.straight
-                else arc_speed(lim, leg.min_radius_m, s.v_mps)
-            )
+            v = step_speed(lim, leg.length_m) if leg.straight else arc_speed(lim, leg.min_radius_m)
             turn = wrap(home[2] - yaw)
             steps.append(
                 CompiledStep(

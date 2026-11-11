@@ -39,9 +39,7 @@ function arcSamples(a, s, n) {  // poses along step s (an arc) from pose a, n+1 
   const sign = s.direction === 'ccw' ? 1 : -1, c = arcCentre(a.x, a.y, a.yaw, s.radius_m, sign), th = s.angle_deg * Math.PI / 180;
   return Array.from({ length: n + 1 }, (_, k) => arcPose(c, s.radius_m, a.yaw, sign, th * k / n));
 }
-// an arc's own speed (v_mps, 2026-11-11) or ARC_V_MPS, capped like compiler.arc_speed
-const arcCap = r => Math.min(SPEED_V, ARC_YAW_RATE_RATIO * VEHICLE_ARC_W_MAX * r);
-const arcSpeed = (r, v) => Math.min(v != null ? +v : ARC_V_MPS, arcCap(r));
+const arcSpeed = r => Math.min(ARC_V_MPS, SPEED_V, ARC_YAW_RATE_RATIO * VEHICLE_ARC_W_MAX * r);
 // The home leg (2026-11-03): mirrors amr_navigation.scurve.home_leg for the preview - a quintic
 // lateral profile in HOME's frame from the route's end pose to the start pose (HOME). The
 // compiler's result is the one validated and driven. Bounds mirror amr_navigation.route HOME_*.
@@ -313,20 +311,17 @@ $('btn-split').onclick = () => {
   if (!Number.isFinite(v)) { log('type where the waypoint goes, in mm from the start of the straight', 'bad'); return; }
   splitStraight(i, v / 1000);
 };
-// The speed box of a straight, an arc or the home leg in the step list (arcs: 2026-11-11).
+// The speed box of a straight in the step list.
 $('ed-steps').addEventListener('change', e => {
   const el = e.target; if (!el.classList || !el.classList.contains('sv')) return;
-  const i = +el.dataset.i, s = route.steps[i]; if (!s || !['straight', 'arc', 'home'].includes(s.type)) return;
+  const s = route.steps[+el.dataset.i]; if (!s || s.type !== 'straight') return;
   if (mainPartStep(s)) { el.value = s.v_mps ?? ''; log(MAIN_PART_MSG(s), 'bad'); return; }
   const v = straightV(el.value);
   if (v === false) { el.value = s.v_mps ?? ''; return; }
   snapshot();
   if (v === null) delete s.v_mps; else s.v_mps = v;
   refresh();
-  if (s.type === 'straight') { log(`${s.id}: ${v === null ? `route speed ${num(SPEED_V, 2)}` : `${num(v, 2)}`} m/s`); return; }
-  const r = s.type === 'arc' ? +s.radius_m : homeLegAt(i).minR, got = s.type === 'home' && homeLegAt(i).straight ? (v ?? SPEED_V) : arcSpeed(r, v);
-  log(`${s.id}: ${v === null ? 'default ' : ''}${num(got, 2)} m/s` + (v !== null && got < v - 1e-9
-    ? ` (asked ${num(v, 2)}: a curve of R ${num(r, 2)} m allows at most ${num(arcCap(r), 2)} m/s, the turn-rate limit)` : ''));
+  log(`${s.id}: ${v === null ? `route speed ${num(SPEED_V, 2)}` : `${num(v, 2)}`} m/s`);
 });
 view.onClick = w => {
   if (view.tool === 'measure') { measureClick(w); return; }
@@ -369,7 +364,7 @@ function addArc(direction) {
   if (!(a >= ARC_MIN_DEG && a <= ARC_MAX_DEG)) { log(`arc angle is ${ARC_MIN_DEG}–${ARC_MAX_DEG}°`, 'bad'); return; }
   const id = nextId();
   if (branchClosed()) return false; snapshot(); route.steps.push({ id, type: 'arc', direction, angle_deg: a, radius_m: r }); refresh();
-  log(`${id}: arc ${direction === 'ccw' ? 'L' : 'R'} ${a}° R ${num(r, 2)} m (${num(arcSpeed(r), 2)} m/s; type another speed in its box in Steps)`);
+  log(`${id}: arc ${direction === 'ccw' ? 'L' : 'R'} ${a}° R ${num(r, 2)} m (${num(arcSpeed(r), 2)} m/s)`);
 }
 // Wait (gls-wait-coding-plan §A.5): stop here until PB Continue or Start - a trolley hitch or
 // release point. Placement rules are the compiler's (never first or last, never two in a row,
@@ -488,14 +483,14 @@ function refresh() {
   branchNote();
   const own = branchOwn();
   $('ed-steps').innerHTML = route.steps.length ? route.steps.map((s, i) => `<div class="row three${bad.has(s.id) ? ' lv-error' : ''}"><span class="k">${esc(s.id)}${own ? (own.has(s.id) ? ' <i>branch</i>' : ' <i>main</i>') : ''}</span>` +
-    (s.type === 'straight' ? `<span class="n">straight ${speedBox(i, s, SPEED_V, SPEED_V, 'm/s: empty = the route speed; lower = a slow zone')}</span><span class="v" title="to ${num(+s.to.x_m, 3)}, ${num(+s.to.y_m, 3)} m">${mm(stepLength(i))}<i>mm</i></span>`
+    (s.type === 'straight' ? `<span class="n">straight <input class="sv" data-i="${i}" type="number" step="0.05" min="${STEP_V_MIN}" max="${num(SPEED_V, 2)}" value="${s.v_mps != null ? num(+s.v_mps, 2) : ''}" placeholder="${num(SPEED_V, 2)}" title="m/s: empty = the route speed; lower = a slow zone" style="width:5.5em"></span><span class="v" title="to ${num(+s.to.x_m, 3)}, ${num(+s.to.y_m, 3)} m">${mm(stepLength(i))}<i>mm</i></span>`
      : s.type === 'reverse' ? `<span class="n">reverse <b title="backs up at half the route speed, at most 0.30 m/s: ${num(REVERSE_V, 2)} m/s">◂${num(REVERSE_V, 2)}</b></span><span class="v">${mm(+s.distance_m)}<i>mm</i></span>`
      : s.type === 'wait' ? `<span class="n">wait</span><span class="v" title="stops until PB Continue or Start">${esc(s.name || '—')}${s.label_id ? ` <i>${esc(s.label_id)}</i>` : ''}</span>`
-     : s.type === 'arc' ? `<span class="n">arc ${s.direction === 'ccw' ? 'L' : 'R'} ${speedBox(i, s, ARC_V_MPS, arcCap(+s.radius_m), `m/s: empty = ${num(ARC_V_MPS, 2)}; at most ${num(arcCap(+s.radius_m), 2)} on R ${num(+s.radius_m, 2)} m (turn-rate limit)`)}</span><span class="v" title="${mm(stepLength(i))} mm of arc">${esc(s.angle_deg)}° R ${num(+s.radius_m, 2)}<i>m</i></span>`
+     : s.type === 'arc' ? `<span class="n">arc ${s.direction === 'ccw' ? 'L' : 'R'} <b title="capped so the yaw rate stays under the turn cap">≤${num(arcSpeed(+s.radius_m), 2)}</b></span><span class="v" title="${mm(stepLength(i))} mm of arc">${esc(s.angle_deg)}° R ${num(+s.radius_m, 2)}<i>m</i></span>`
      : s.type === 'home' ? homeRow(i)
                            : `<span class="n">rotate</span><span class="v">${esc(String(s.direction).toUpperCase())} ${esc(s.angle_deg)}<i>°</i></span>`) +
     `<span class="del"><button class="tool" data-del="${i}" title="Delete ${esc(s.id)}: the steps after it keep their shape and follow on from where the route now ends">×</button>` +
-    `<button class="tool" data-del-end="${i}" title="Delete ${esc(s.id)} and every step after it (to the end)">×→</button></span>` + '</div>').join('')
+    `<button class="tool" data-del-end="${i}" title="Delete ${esc(s.id)} and every step after it">× to end</button></span>` + '</div>').join('')
     : '<div class="none">no steps</div>';
   $('ed-repeat').value = route.repeat_count;
   slowList();
@@ -545,17 +540,10 @@ $('ed-steps').addEventListener('click', e => {
   else if (t.delEnd !== undefined) deleteSteps(+t.delEnd, true);
 });
 function homeRow(i) {
-  const L = homeLegAt(i), s = route.steps[i];
+  const L = homeLegAt(i);
   if (!L.ok) return `<span class="n">home</span><span class="v" title="${esc(L.why)}">cannot reach HOME</span>`;
-  const box = L.straight ? speedBox(i, s, SPEED_V, SPEED_V, 'm/s: empty = the route speed')
-    : speedBox(i, s, ARC_V_MPS, arcCap(L.minR), `m/s: empty = ${num(ARC_V_MPS, 2)}; at most ${num(arcCap(L.minR), 2)} on its tightest R ${num(L.minR, 2)} m`);
-  return `<span class="n">home <b title="${esc(homeText(L))}">${L.straight ? 'straight' : 'S-curve'}</b> ${box}</span><span class="v" title="${esc(homeText(L))}">${mm(L.length)}<i>mm</i></span>`;
-}
-// A step's speed box: empty = `dflt`, the most it can run at = `cap` (shown when typed above).
-function speedBox(i, s, dflt, cap, title) {
-  const v = s.v_mps != null ? +s.v_mps : null, over = v != null && v > cap + 1e-9;
-  return `<input class="sv" data-i="${i}" type="number" step="0.05" min="${STEP_V_MIN}" max="${num(SPEED_V, 2)}" value="${v != null ? num(v, 2) : ''}" ` +
-    `placeholder="${num(Math.min(dflt, cap), 2)}" title="${esc(title)}" style="width:4.6em">` + (over ? ` <b title="runs at ${num(cap, 2)}: ${esc(title)}">→${num(cap, 2)}</b>` : '');
+  const speed = L.straight ? SPEED_V : arcSpeed(L.minR);
+  return `<span class="n">home <b title="${esc(homeText(L))}">${L.straight ? 'straight' : 'S-curve'} ${num(speed, 2)}</b></span><span class="v" title="${esc(homeText(L))}">${mm(L.length)}<i>mm</i></span>`;
 }
 // The areas validation checks (amr_navigation.footprint), drawn from the same polygon + margin.
 // A straight sweeps the grown footprint box along the heading; a turn sweeps it through the

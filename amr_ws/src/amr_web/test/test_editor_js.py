@@ -305,17 +305,3 @@ def test_delete_steps_keeps_the_rest_of_the_route_and_undoes():
     assert out["del_first"] == [["s2", 90], ["s3", [0, 3000]], ["s4", 90], ["s5", [-4000, 3000]]]
     assert out["del_end"] == ["s2"]
     assert out["del_undone"] == ["s1", "s2", "s3", "s4", "s5"]
-
-
-@pytest.mark.skipif(NODE is None, reason="node not installed")
-def test_an_arc_has_its_own_speed_box():
-    """2026-11-11: a curve's speed in the step list; above the turn-rate limit it shows what it
-    will run at; empty = the default 0.30."""
-    harness = pathlib.Path(__file__).with_name("editor_harness.js")
-    r = subprocess.run([NODE, str(harness)], capture_output=True, text=True, timeout=30)
-    out = json.loads(r.stdout.strip().splitlines()[-1])
-    assert "error" not in out, out
-    assert out["arc_boxes"] == 3
-    assert out["arc_over_cap"] is True  # 0.60 typed on R 1 m: runs at 0.41 (v/R limit)
-    assert out["arc_saved_v"] == [None, 0.5, 0.6]
-    assert out["arc_cleared_v"] == [None, None, 0.6]

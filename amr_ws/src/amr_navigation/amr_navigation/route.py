@@ -35,9 +35,6 @@ ARC_MIN_DEG, ARC_MAX_DEG = 45.0, 180.0
 ARC_MIN_RADIUS_M = 1.0
 ARC_YAW_RATE_RATIO = 0.9  # of VEHICLE_ARC_W_MAX: headroom for the controller's corrections
 ARC_V_MPS = 0.30  # every arc (corner) at 0.30 m/s, whatever the straights run at (owner 2026-11-03)
-# An arc - and the home leg - may carry its own speed (owner 2026-11-11): v_mps on the step,
-# STEP_V_MIN..STEP_V_MAX in the file; compiled never above the route speed nor the yaw-rate
-# ceiling ARC_YAW_RATE_RATIO x VEHICLE_ARC_W_MAX x R (compiler.arc_speed). None = ARC_V_MPS.
 # A wait (2026-10-30, gls-wait-coding-plan §A.1) stops at the previous step's end pose until
 # the operator presses PB Continue (or Start): trolley hitch / release points. `name` is what
 # the operator reads ("UBC hitch"); `label_id` names the GLS floor label under the camera
@@ -254,8 +251,7 @@ class Step:
     radius_m: float | None = None  # arc: >= ARC_MIN_RADIUS_M
     name: str = ""  # wait: shown to the operator
     label_id: str | None = None  # wait: the GLS floor label expected there, or None
-    v_mps: float | None = None  # straight: its own lower speed (slow zone), None = the route speed;
-    # arc / home: its own speed, None = ARC_V_MPS (a straight home leg: the route speed)
+    v_mps: float | None = None  # straight: its own lower speed (slow zone), None = the route speed
 
     def to_dict(self) -> dict:
         if self.type == STRAIGHT:
@@ -266,23 +262,20 @@ class Step:
         if self.type == REVERSE:
             return {"id": self.id, "type": REVERSE, "distance_m": self.distance_m}
         if self.type == ARC:
-            d = {
+            return {
                 "id": self.id,
                 "type": ARC,
                 "direction": self.direction,
                 "angle_deg": self.angle_deg,
                 "radius_m": self.radius_m,
             }
-            if self.v_mps is not None:
-                d["v_mps"] = self.v_mps
-            return d
         if self.type == WAIT:
             d = {"id": self.id, "type": WAIT, "name": self.name}
             if self.label_id is not None:
                 d["label_id"] = self.label_id
             return d
         if self.type == HOME:
-            return {"id": self.id, "type": HOME, **({"v_mps": self.v_mps} if self.v_mps is not None else {})}
+            return {"id": self.id, "type": HOME}
         if self.type == ROTATE:
             return {"id": self.id, "type": ROTATE, "direction": self.direction, "angle_deg": self.angle_deg}
         raise RouteError(f"unknown step type {self.type!r}"[:200], self.id)
@@ -297,7 +290,14 @@ class Step:
             to = _field(d, "to", "step", sid)
             x = _float(_field(to, "x_m", "step.to", sid), "step.to.x_m", step_id=sid)
             y = _float(_field(to, "y_m", "step.to", sid), "step.to.y_m", step_id=sid)
-            return Step(sid, STRAIGHT, to=(x, y), v_mps=_step_v(d, sid, "straight"))
+            v = d.get("v_mps")
+            if v is not None:
+                v = _float(v, "step.v_mps", lim=STEP_V_MAX, step_id=sid)
+                if not STEP_V_MIN <= v <= STEP_V_MAX:
+                    raise RouteError(
+                        f"straight v_mps must be in [{STEP_V_MIN:g}, {STEP_V_MAX:g}] m/s, got {v:g}", sid
+                    )
+            return Step(sid, STRAIGHT, to=(x, y), v_mps=v)
         if t == ROTATE:
             direction = _field(d, "direction", "step", sid)
             if direction not in DIRECTIONS:
@@ -327,7 +327,7 @@ class Step:
             r = _float(_field(d, "radius_m", "step", sid), "step.radius_m", lim=1000.0, step_id=sid)
             if r < ARC_MIN_RADIUS_M:
                 raise RouteError(f"arc radius_m must be at least {ARC_MIN_RADIUS_M:g} m, got {r:g}", sid)
-            return Step(sid, ARC, direction=direction, angle_deg=a, radius_m=r, v_mps=_step_v(d, sid, "arc"))
+            return Step(sid, ARC, direction=direction, angle_deg=a, radius_m=r)
         if t == WAIT:
             name = d.get("name", "")
             if not isinstance(name, str) or len(name) > WAIT_NAME_MAX:
@@ -337,19 +337,8 @@ class Step:
                 raise RouteError(f"wait label_id must look like x0100y0000, got {label!r}"[:200], sid)
             return Step(sid, WAIT, name=name, label_id=label)
         if t == HOME:
-            return Step(sid, HOME, v_mps=_step_v(d, sid, "home"))
+            return Step(sid, HOME)
         raise RouteError(f"unknown step type {t!r}"[:200], sid)
-
-
-def _step_v(d: dict, sid: str, kind: str) -> float | None:
-    """A step's own speed (v_mps), checked: None, or STEP_V_MIN..STEP_V_MAX m/s."""
-    v = d.get("v_mps")
-    if v is None:
-        return None
-    v = _float(v, "step.v_mps", lim=STEP_V_MAX, step_id=sid)
-    if not STEP_V_MIN <= v <= STEP_V_MAX:
-        raise RouteError(f"{kind} v_mps must be in [{STEP_V_MIN:g}, {STEP_V_MAX:g}] m/s, got {v:g}", sid)
-    return v
 
 
 @dataclass

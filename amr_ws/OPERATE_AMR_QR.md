@@ -317,14 +317,6 @@ everything again:
    between two stops reaches 0.90. **At 0.90 m/s the red protective field must be about
    1.2 m long** (§5b).
 
-   **Curve speed** (2026-11-11): each **arc** and the **Go home** S-curve has its own speed box
-   in the **Steps** list, like a straight. Empty = 0.30 m/s. Type e.g. 0.50 to take a curve
-   faster, or 0.20 to take it slower. A curve can never go faster than the route speed, nor
-   faster than its radius allows: v / R stays under 0.405 rad/s (R 1 m: 0.40 m/s, R 2 m:
-   0.80 m/s). If you type more, the row shows **→** the speed it will really run at. The AMR
-   slows down before a curve only to the curve's speed, so a faster curve also saves the
-   slow-down before it. Validate, **Save revision**, **Create mission** again.
-
    **Slow zone on an existing route** (no redrawing): **Load saved** the route, type the speed
    under **Slow zone on map** (e.g. 0.30), press the button and click **A** on the route
    (where the AMR must already be slow), then **B** (where it may speed up again). The
