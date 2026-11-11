@@ -291,6 +291,15 @@ everything again:
      start). The route then always closes, so a **repeat count** above 1 works without
      hand-tuning the last straight. If it cannot be built, the log says why and how far
      back to end the route. A Wait may come right before it.
+   - **Delete a step**: in the **Steps** list, **×** on its row deletes that step. The steps
+     after it keep their shape: each straight keeps its **length** and the rest of the route
+     simply follows on from where it now ends (so deleting a turn turns the rest of the route
+     with it). **× to end** deletes that step and every step after it, to draw the end again.
+     **Undo** brings deleted steps back. A whole route: **Clear steps**. On a POS route only
+     its own branch steps can be deleted (the main part is the main route's: change it there,
+     then **Rebase on newest main**); a closed branch needs its rejoin undone first. After
+     deleting, **Validate** again: a route whose end moved may no longer close at its start
+     (fix it with the last straight, or end it with **Go home**).
 4. **Measure** (view only, never changes the route): press **Measure**, click point A,
    then point B. The panel and the map show the distance, ΔX and ΔY in mm. A click snaps
    to a wait point, an arc centre, a step end or a route line (of this route and the

@@ -481,14 +481,16 @@ function refresh() {
   if (!lastResult) showResult(null);
   view._linePreview = null;  // the route changed: a preview made for the old end pose is void
   branchNote();
-  const own = route.branch ? new Set(route.branch.rejoin_after ? route.branch.steps : route.steps.slice(route.steps.findIndex(s => s.id === route.branch.leave_after) + 1).map(s => s.id)) : null;
+  const own = branchOwn();
   $('ed-steps').innerHTML = route.steps.length ? route.steps.map((s, i) => `<div class="row three${bad.has(s.id) ? ' lv-error' : ''}"><span class="k">${esc(s.id)}${own ? (own.has(s.id) ? ' <i>branch</i>' : ' <i>main</i>') : ''}</span>` +
     (s.type === 'straight' ? `<span class="n">straight <input class="sv" data-i="${i}" type="number" step="0.05" min="${STEP_V_MIN}" max="${num(SPEED_V, 2)}" value="${s.v_mps != null ? num(+s.v_mps, 2) : ''}" placeholder="${num(SPEED_V, 2)}" title="m/s: empty = the route speed; lower = a slow zone" style="width:5.5em"></span><span class="v" title="to ${num(+s.to.x_m, 3)}, ${num(+s.to.y_m, 3)} m">${mm(stepLength(i))}<i>mm</i></span>`
      : s.type === 'reverse' ? `<span class="n">reverse <b title="backs up at half the route speed, at most 0.30 m/s: ${num(REVERSE_V, 2)} m/s">◂${num(REVERSE_V, 2)}</b></span><span class="v">${mm(+s.distance_m)}<i>mm</i></span>`
      : s.type === 'wait' ? `<span class="n">wait</span><span class="v" title="stops until PB Continue or Start">${esc(s.name || '—')}${s.label_id ? ` <i>${esc(s.label_id)}</i>` : ''}</span>`
      : s.type === 'arc' ? `<span class="n">arc ${s.direction === 'ccw' ? 'L' : 'R'} <b title="capped so the yaw rate stays under the turn cap">≤${num(arcSpeed(+s.radius_m), 2)}</b></span><span class="v" title="${mm(stepLength(i))} mm of arc">${esc(s.angle_deg)}° R ${num(+s.radius_m, 2)}<i>m</i></span>`
      : s.type === 'home' ? homeRow(i)
-                           : `<span class="n">rotate</span><span class="v">${esc(String(s.direction).toUpperCase())} ${esc(s.angle_deg)}<i>°</i></span>`) + '</div>').join('')
+                           : `<span class="n">rotate</span><span class="v">${esc(String(s.direction).toUpperCase())} ${esc(s.angle_deg)}<i>°</i></span>`) +
+    `<span class="del"><button class="tool" data-del="${i}" title="Delete ${esc(s.id)}: the steps after it keep their shape and follow on from where the route now ends">×</button>` +
+    `<button class="tool" data-del-end="${i}" title="Delete ${esc(s.id)} and every step after it">× to end</button></span>` + '</div>').join('')
     : '<div class="none">no steps</div>';
   $('ed-repeat').value = route.repeat_count;
   slowList();
@@ -498,6 +500,45 @@ function refresh() {
   pick.value = route.steps.some(s => s.id === keep) ? keep : '';
   view.draw();
 }
+// The steps that belong to this POS route itself (its branch), or null for a plain route.
+function branchOwn() {
+  if (!route.branch) return null;
+  return new Set(route.branch.rejoin_after ? route.branch.steps
+    : route.steps.slice(route.steps.findIndex(s => s.id === route.branch.leave_after) + 1).map(s => s.id));
+}
+// Delete step i (or i and every step after it). A straight stores its END POINT, so the
+// straights after a deleted step are re-anchored to keep their LENGTH along the new heading:
+// the rest of the route keeps its shape and follows on from where the route now ends
+// (a turn, reverse, arc and wait are relative already; the home leg goes to HOME as before).
+// A POS route's main part is its main route's and is not deleted here; a closed branch first
+// needs its rejoin undone (it would no longer meet the main route).
+function deleteSteps(i, toEnd) {
+  const s = route.steps[i]; if (!s) return;
+  const own = branchOwn();
+  if (own && !own.has(s.id)) {
+    log(`${s.id} is part of the main route ${route.branch.main_route_id}: change it on the main route, then load this POS route and Rebase on newest main`, 'bad');
+    return;
+  }
+  if (own && branchClosed()) return;
+  const n = toEnd ? route.steps.length - i : 1;
+  const later = route.steps.slice(i + n).map((t, k) => t.type === 'straight' ? stepLength(i + n + k) : null);
+  snapshot();
+  const gone = route.steps.splice(i, n).map(t => t.id);
+  later.forEach((L, k) => {
+    if (L === null) return;
+    const j = i + k, a = poseAfter(j);
+    route.steps[j] = { ...route.steps[j], to: { x_m: a.x + Math.cos(a.yaw) * L, y_m: a.y + Math.sin(a.yaw) * L } };
+  });
+  if (route.branch) route.branch.steps = route.branch.steps.filter(id => !gone.includes(id));
+  refresh();
+  log(n === 1 ? `${s.id} deleted${later.some(L => L !== null) ? ': the straights after it keep their length' : ''} (Undo brings it back)`
+    : `${gone.join(', ')} deleted (Undo brings them back)`);
+}
+$('ed-steps').addEventListener('click', e => {
+  const t = e.target && e.target.dataset; if (!t) return;
+  if (t.del !== undefined) deleteSteps(+t.del, false);
+  else if (t.delEnd !== undefined) deleteSteps(+t.delEnd, true);
+});
 function homeRow(i) {
   const L = homeLegAt(i);
   if (!L.ok) return `<span class="n">home</span><span class="v" title="${esc(L.why)}">cannot reach HOME</span>`;

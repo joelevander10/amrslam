@@ -309,6 +309,10 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline:2px 
 .row .v i { font:400 1.1rem var(--mono); color:var(--ink-3); font-style:normal; margin-left:.6rem; }
 .row .n { color:var(--ink-2); overflow-wrap:anywhere; }
 .list > .row.three { grid-template-columns:minmax(0,.7fr) minmax(0,1.3fr) minmax(0,1fr); }
+/* route editor steps: a 4th column with Delete / Delete to end (2026-11-11) */
+#ed-steps > .row.three { grid-template-columns:minmax(0,.7fr) minmax(0,1.3fr) minmax(0,1fr) auto; }
+#ed-steps .del { display:flex; gap:.25rem; justify-content:flex-end; }
+#ed-steps .del .tool { padding:.1rem .45rem; }
 .list > .row.head { font:600 1.05rem var(--mono); color:var(--ink-3); text-transform:uppercase; letter-spacing:.1em; }
 
 /* ---- alarm / event rows: a left bar AND a text label, never colour alone ---- */

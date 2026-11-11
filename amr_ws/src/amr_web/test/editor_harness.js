@@ -248,5 +248,23 @@ const flush = () => new Promise(r => setImmediate(r));
   theView.onClick([1.0, 0.0]); theView.onClick([5.0, 0.0]);       // a new zone on s1
   await els['btn-save'].onclick(); for (let i = 0; i < 3; i++) await flush();
   out.zone_again = savedSteps.map(s => [s.id, s.v_mps ?? null]);
+  // --- delete steps (2026-11-11): the straights after keep their length; to the end; undo ---
+  vm.runInContext(`route = { route_id: 'del', start: { x_m: 0, y_m: 0, yaw_deg: 0 }, repeat_count: 1, limits: {}, steps: [
+            { id: 's1', type: 'straight', to: { x_m: 5, y_m: 0 } },
+            { id: 's2', type: 'rotate', direction: 'ccw', angle_deg: 90 },
+            { id: 's3', type: 'straight', to: { x_m: 5, y_m: 3 } },
+            { id: 's4', type: 'rotate', direction: 'ccw', angle_deg: 90 },
+            { id: 's5', type: 'straight', to: { x_m: 1, y_m: 3 } }] }; refresh();`, ctx);
+  const del = (key, i) => els['ed-steps'].listeners.click.forEach(fn => fn({ target: { dataset: { [key]: String(i) } } }));
+  out.del_buttons = (els['ed-steps'].innerHTML.match(/data-del="/g) || []).length;
+  del('del', 0);                                                  // drop the first 5 m straight
+  await els['btn-save'].onclick(); for (let i = 0; i < 3; i++) await flush();
+  out.del_first = savedSteps.map(s => [s.id, s.to ? [Math.round(s.to.x_m * 1000), Math.round(s.to.y_m * 1000)] : s.angle_deg]);
+  del('delEnd', 1);                                                // s3 and everything after it
+  await els['btn-save'].onclick(); for (let i = 0; i < 3; i++) await flush();
+  out.del_end = savedSteps.map(s => s.id);
+  els['btn-undo'].onclick(); els['btn-undo'].onclick();
+  await els['btn-save'].onclick(); for (let i = 0; i < 3; i++) await flush();
+  out.del_undone = savedSteps.map(s => s.id);
   console.log(JSON.stringify(out));
 })().catch(e => { console.log(JSON.stringify({ error: String(e && e.stack || e) })); });

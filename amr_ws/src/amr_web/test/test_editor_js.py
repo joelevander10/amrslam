@@ -288,3 +288,20 @@ def test_editor_slow_zone_list_changes_removes_and_adds_again():
     assert all(v is None for _sid, v in out["zone_removed"]) and "no slow zones" in out["zone_list_after"]
     assert out["tool_still_on"] == "slowzone"
     assert out["zone_again"][:3] == [["s1", None], ["s6", 0.4], ["s7", None]]
+
+
+@pytest.mark.skipif(NODE is None, reason="node not installed")
+def test_delete_steps_keeps_the_rest_of_the_route_and_undoes():
+    """2026-11-11: x deletes one step - the straights after it keep their length from the new
+    end; "x to end" deletes it and everything after; Undo brings them back."""
+    harness = pathlib.Path(__file__).with_name("editor_harness.js")
+    r = subprocess.run([NODE, str(harness)], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    assert "error" not in out, out
+    assert out["del_buttons"] == 5
+    # s1 (5 m east) gone: the turn now happens at the start, s3 goes 3 m north from (0, 0)
+    # and s5 4 m west from (0, 3)
+    assert out["del_first"] == [["s2", 90], ["s3", [0, 3000]], ["s4", 90], ["s5", [-4000, 3000]]]
+    assert out["del_end"] == ["s2"]
+    assert out["del_undone"] == ["s1", "s2", "s3", "s4", "s5"]
