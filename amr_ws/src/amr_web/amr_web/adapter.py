@@ -278,7 +278,8 @@ class RosAdapter(Node):
             QoSProfile(depth=2, reliability=QoSReliabilityPolicy.BEST_EFFORT),
             callback_group=g,
         )
-        self.create_timer(0.2, self._live_pose, callback_group=g)
+        # 10 Hz (2026-11-12, was 5): the Run page draws and follows the AMR from this pose
+        self.create_timer(0.1, self._live_pose, callback_group=g)
         self.create_subscription(
             MappingState, "/amr/mapping_state", self._on_mapping, LATCHED, callback_group=g
         )

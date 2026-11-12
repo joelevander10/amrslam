@@ -248,11 +248,21 @@ view.overlays.push((c, v) => {
     v.text(x, y, `lost ${loss.time.slice(11)}`, INK.stop);
   }
 });
+// Where to draw (and follow) the AMR (2026-11-12): the live pose - read from TF on the robot 10
+// times a second and fetched by pollLive 8 times a second - while it is fresh and on this map;
+// else the executor's pose, which comes only with the 2 Hz state (up to ~1 s, 0.8 m, behind).
+function amrPose() {
+  const lp = typeof livePose !== 'undefined' ? livePose : null, p = lp && lp.pose, m = lastState && lastState.mode;
+  if (p && view.meta && p.frame === (view.meta.frame_id || 'map') && m && lp.generation === m.generation &&
+      typeof ageSince === 'function' && ageSince(p) < 0.6) return [p.x, p.y, p.yaw];
+  const r = lastState && lastState.run;
+  return r && r.pose_valid ? [r.pose_x, r.pose_y, r.pose_yaw] : null;
+}
 view.overlays.push((c, v) => {
   if (v._preview) v.arrow(v._preview.x, v._preview.y, v._preview.yaw, 1.0, INK.preview);
   if (!viewIsActive()) return;  // executor pose and route preview are in the ACTIVE map's coordinates
-  const r = lastState && lastState.run;
-  if (r && r.pose_valid) { v.arrow(r.pose_x, r.pose_y, r.pose_yaw, 0.8, INK.accent); if (footprint) v.footprint(r.pose_x, r.pose_y, r.pose_yaw, footprint.polygon, alpha(INK.accent, 0.55)); }
+  const ap = amrPose();
+  if (ap) { v.arrow(ap[0], ap[1], ap[2], 0.8, INK.accent); if (footprint) v.footprint(ap[0], ap[1], ap[2], footprint.polygon, alpha(INK.accent, 0.55)); }
   if (preview) preview.steps.forEach(s => {
     if (s.type === 'straight') v.line(s.start[0], s.start[1], s.end[0], s.end[1], INK.route, 2);
     else if (s.type === 'reverse') { v.dashed([s.start.slice(0, 2), s.end.slice(0, 2)], INK.route); v.dot(s.end[0], s.end[1], INK.route, 4); }
@@ -299,12 +309,9 @@ $('run-mission').onchange = async e => {
   await loadMissions();
 })();
 
-// Follow the AMR (2026-11-12): the view keeps the AMR in the middle while it drives (the
-// executor's pose, on the active map only). Pan by hand to look elsewhere; FOLLOW brings it back.
-view.enableFollow(() => {
-  const r = lastState && lastState.run;
-  return viewIsActive() && r && r.pose_valid ? [r.pose_x, r.pose_y] : null;
-});
+// Follow the AMR (2026-11-12): the view keeps the AMR in the middle while it drives (amrPose,
+// on the active map only). Pan by hand to look elsewhere; FOLLOW brings it back.
+view.enableFollow(() => { const p = viewIsActive() ? amrPose() : null; return p ? [p[0], p[1]] : null; });
 
 // Wheel encoders, measured (2026-11-12): speed and counts per wheel, so a wheel that lags, slips
 // or stops counting shows at once. 5 Hz display copy of /wheel_states.
@@ -326,5 +333,5 @@ onState(st => wheelTiles(st.wheels));
 
 // live scan over the viewed map: meaningful only when the viewed map IS the active one
 liveOverlay(view);
-pollLive(view, { map: false });
+pollLive(view, { map: false, poseHz: 8 });  // the AMR moves 10 cm between two fetches at 0.8 m/s
 jogpad(document.getElementById('jog-run'), { compact: true });
