@@ -450,7 +450,7 @@ def test_stray_or_misaligned_dynamic_files_are_refused(tmp_path):
 # ---- map rotation (2026-11-05): straighten a map onto a reference line ----------------------
 
 
-def test_derive_rotation_turns_the_map_masks_and_start_mark_and_drops_the_pose_graph(tmp_path):
+def test_derive_rotation_turns_the_map_masks_and_start_mark_and_keeps_the_pose_graph(tmp_path):
     import json  # noqa: PLC0415
     import math  # noqa: PLC0415
 
@@ -461,7 +461,11 @@ def test_derive_rotation_turns_the_map_masks_and_start_mark_and_drops_the_pose_g
     path, rev, new = mb.derive_rotation(maps, "line_section", 2, math.radians(90), note="wall along X")
     m = mb.verify(path)
     assert rev == 3 and (m.width, m.height) == (g2.height, g2.width)  # a quarter turn swaps them
-    assert "posegraph.posegraph" not in m.files and "posegraph.data" not in m.files
+    # the pose graph stays, with the turn between its frame and the map's (2026-11-12)
+    assert "posegraph.posegraph" in m.files and "posegraph.data" in m.files
+    assert m.software[mb.SLAM_FRAME_KEY] == 90.0
+    _m, stem, theta = mb.continue_base(maps, "line_section", 3)
+    assert stem.endswith(os.path.join("rev3", "posegraph")) and math.isclose(theta, math.pi / 2)
     assert {"dynamic.pgm", "dynamic.yaml", "edits.json"} <= set(m.files)
     # the start mark turns with the map: (x, y, yaw) -> (-y, x, yaw + 90 deg)
     s0, s1 = parent.start, m.start
@@ -510,8 +514,8 @@ def test_continue_needs_a_pose_graph_and_a_start_mark(tmp_path):
     maps = str(tmp_path / "maps")
     os.makedirs(maps)
     _publish(tmp_path, maps, small_grid(), 1)
-    m, stem = mb.continue_base(maps, "line_section", 1)
-    assert m.revision == 1 and stem.endswith(os.path.join("rev1", "posegraph"))
+    m, stem, theta = mb.continue_base(maps, "line_section", 1)
+    assert m.revision == 1 and stem.endswith(os.path.join("rev1", "posegraph")) and theta == 0.0
     _publish(tmp_path, maps, small_grid(), 2, posegraph=False)
     with pytest.raises(mb.BundleError, match="no SLAM pose graph"):
         mb.continue_base(maps, "line_section", 2)
@@ -565,3 +569,25 @@ def test_marks_move_onto_the_bigger_map(tmp_path):
     assert int((gridio.read(str(stage / "dynamic.yaml")).data >= 65).sum()) == 6
     assert mb.load_edits(str(stage))["ops"] == [{"op": "continue_mapping"}]
     assert mb.load_edits(str(stage))["parent"] == {"revision": 4, "sha256": "abc"}
+
+
+def test_continue_base_finds_the_pose_graph_of_a_revision_rotated_before_it_was_kept(tmp_path):
+    """Revisions rotated before 2026-11-12 dropped the pose graph: continue_base follows the
+    edits.json parents to the one that has it and adds up the rotations on the way."""
+    import json  # noqa: PLC0415
+    import math  # noqa: PLC0415
+
+    maps = str(tmp_path / "maps")
+    os.makedirs(maps)
+    _publish(tmp_path, maps, small_grid(), 1)  # surveyed: pose graph, frame 0
+    doc = {"parent": {"revision": 1, "sha256": "x"}, "ops": [{"op": "rotate", "angle_deg": -7.5}]}
+    ed = tmp_path / "edits.json"
+    ed.write_text(json.dumps(doc))
+    mb.derive_revision(maps, "line_section", 1, {"edits.json": str(ed)}, drop=mb.POSEGRAPH)  # rev2, old style
+    dyn = [{"op": "dynamic", "polygon": _rect(-0.5, -0.3, 0.0, 0.0)}]
+    mb.derive_edit(maps, "line_section", 2, dyn)  # rev3: an edit of the old-style rotated rev2
+    m, stem, theta = mb.continue_base(maps, "line_section", 3)
+    assert m.revision == 3 and stem.endswith(os.path.join("rev1", "posegraph"))
+    assert math.isclose(theta, math.radians(-7.5))
+    assert mb.pose_graph_revision(maps, "line_section", 3) == 1  # the Maps page offers Continue
+    assert mb.pose_graph_revision(maps, "line_section", 1) == 1

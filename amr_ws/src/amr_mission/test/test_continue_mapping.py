@@ -74,6 +74,7 @@ def _session(maps):
 
     sv._set = _set
     sv._continue_from = lambda map_id, rev: MappingSession._continue_from(sv, map_id, rev)
+    sv._theta = lambda: MappingSession._theta(sv)
     sv._pause_slam = lambda p: None
     sv.event = lambda *_a: None
     sv._save_home = lambda *_a: ""
@@ -174,3 +175,54 @@ def test_a_continued_save_carries_its_own_scans_for_re_map_area(tmp_path, monkey
         assert e3["ops"][0]["op"] == "remap" and info["changed_cells"] == changed
     _p, rot, _g = mb.derive_rotation(maps, "line_section", 2, math.radians(10))
     assert mb.load_survey_scan(mb.revision_dir(maps, "line_section", rot)) is None
+
+
+def test_a_rotated_revision_is_continued_in_its_pose_graphs_frame_and_saved_in_its_own(tmp_path, monkeypatch):
+    """2026-11-12: the operator rotated the map, then needs Continue mapping (Re-map area).
+    slam_toolbox gets the mark turned back into the pose graph's frame; the save turns SLAM's
+    map, the closure and the survey scan forward into the rotated frame."""
+    import math  # noqa: PLC0415
+
+    from amr_maps import rotate as maprot  # noqa: PLC0415
+    from amr_maps import survey_scan  # noqa: PLC0415
+
+    maps = _base(tmp_path)
+    _p, rot, g_rot = mb.derive_rotation(maps, "line_section", 1, math.radians(90))
+    m_rot = mb.verify(mb.revision_dir(maps, "line_section", rot))
+    sv = _session(maps)
+    req = StartSurvey.Request()
+    req.map_id, req.continue_revision = "line_section", rot
+    res = MappingSession._srv_start(sv, req, StartSurvey.Response())
+    assert res.accepted, res.message
+    ((_client, dreq),) = sv.calls
+    # the mark in the graph's frame is the ORIGINAL survey mark (0.25, 0, 0.5)
+    assert math.isclose(dreq.initial_pose.x, 0.25, abs_tol=1e-9)
+    assert math.isclose(dreq.initial_pose.y, 0.0, abs_tol=1e-9)
+    assert math.isclose(dreq.initial_pose.theta, 0.5, abs_tol=1e-9)
+    assert sv._start.x_m == m_rot.start["x_m"] and math.isclose(sv._theta(), math.pi / 2)
+    # back at the mark as SLAM sees it: the closure is ~0 in the rotated frame too
+    sv._pose_in_map = lambda: (0.26, 0.0, 0.5)
+    MappingSession._srv_returned(sv, None, types.SimpleNamespace(success=False, message=""))
+    assert math.isclose(sv._review.dx_m, 0.0, abs_tol=1e-6)
+    assert math.isclose(sv._review.dy_m, 0.01, abs_tol=1e-6)
+    n = 181
+    r = np.full(n, 0.6, dtype=np.float32)
+    sv._keyframes.append(survey_scan.Keyframe(0.5, 0.0, 0.0, -math.pi / 2, math.pi / (n - 1), r))
+    # SLAM's map (graph frame) sees a new obstacle at (0.98, 0.0): in the rotated map (0.0, 0.98)
+    slam = Grid(np.full((20, 50), -1, dtype=np.int8), GridMeta(0.05, -1.0, -0.5))
+    slam.data[5:15, 5:45] = 0
+    slam.data[10, 39] = 100
+    monkeypatch.setattr(msn.gridio, "from_occupancy_grid_msg", lambda _m: slam)
+    msg = types.SimpleNamespace(header=types.SimpleNamespace(frame_id="map"))
+    sv._wait_for_map = lambda after, timeout: msg
+    out = MappingSession._srv_save(sv, SaveMap.Request(note="after rotate"), SaveMap.Response())
+    assert out.ok, out.message
+    m2, g2 = mb.load(maps, "line_section", out.revision)
+    assert m2.software[mb.SLAM_FRAME_KEY] == 90.0 and m2.start["x_m"] == m_rot.start["x_m"]
+    wx, wy = maprot.rotate_point(-1.0 + 39.5 * 0.05, -0.5 + 10.5 * 0.05, math.pi / 2)
+    assert g2.data[g2.world_to_cell(wx, wy)] == 100  # SLAM's new cell, turned into the rotated frame
+    assert mb.load_survey_scan(mb.revision_dir(maps, "line_section", out.revision)) is not None
+    # and the result can be continued again, straight from its own pose graph
+    _m, stem, theta = mb.continue_base(maps, "line_section", out.revision)
+    assert stem.endswith(os.path.join(f"rev{out.revision}", "posegraph"))
+    assert math.isclose(theta, math.pi / 2)

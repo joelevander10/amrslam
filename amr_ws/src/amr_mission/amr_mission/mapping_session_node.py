@@ -41,6 +41,7 @@ from tf2_ros import Buffer, TransformListener
 from amr_interfaces.msg import Event, GlsReading, MappingState, WheelStates
 from amr_interfaces.srv import SaveMap, StartSurvey
 from amr_maps import grid as gridio
+from amr_maps import rotate as maprot
 from amr_maps import survey_scan
 from amr_mission import label_record
 from amr_mission import map_bundle as mb
@@ -114,6 +115,10 @@ class MappingSession(Node):
         self._map_t: float | None = None
         self._slam_paused = False
         self._base: tuple[mb.Manifest, str] | None = None  # continue mapping: (base manifest, its dir)
+        # Continue mapping a ROTATED revision (2026-11-12): SLAM maps in the pose graph's frame;
+        # the revision's map frame is that frame turned by this (rad). 0 for every other survey.
+        # self._start / self._review are in the REVISION's frame, SLAM's poses are turned into it.
+        self._slam_theta = 0.0
         # Re-map area (2026-11-09): a continued survey's own scans, one per KEYFRAME_M / _RAD of
         # laser motion, made into survey_scan at save (amr_maps.survey_scan)
         self._keyframes: list[survey_scan.Keyframe] = []
@@ -307,7 +312,11 @@ class MappingSession(Node):
             m.revision = self._revision
             m.description = self._description
             if self._start is not None:
-                m.start = Pose2D(x=self._start.x_m, y=self._start.y_m, theta=self._start.yaw_rad)
+                # drawn on the live SLAM map: in SLAM's frame
+                sx, sy, syaw = maprot.rotate_pose(
+                    self._start.x_m, self._start.y_m, self._start.yaw_rad, -self._theta()
+                )
+                m.start = Pose2D(x=sx, y=sy, theta=syaw)
             if self._review is not None:
                 m.closure_available = True
                 m.closure_dx_m = self._review.dx_m
@@ -335,11 +344,11 @@ class MappingSession(Node):
             self._set(self._state, res.message)
             return res
         x, y, yaw = self._pose_in_map()
-        base, desc = None, req.description
+        base, desc, theta = None, req.description, 0.0
         cont = int(getattr(req, "continue_revision", 0) or 0)
         if cont:
             try:
-                base, x, y, yaw = self._continue_from(req.map_id, cont)
+                base, x, y, yaw, theta = self._continue_from(req.map_id, cont)
             except Exception as e:  # noqa: BLE001 - say why, nothing was started
                 res.accepted, res.message = False, f"cannot continue {req.map_id} rev{cont}: {e}"
                 self._set(self._state, res.message)
@@ -356,9 +365,15 @@ class MappingSession(Node):
             self._review, self._saved_path, self._revision = None, "", 0
             self._home = home
             self._base = base
+            self._slam_theta = theta
             self._keyframes, self._last_kf = [], None
         seen = f"; HOME label {home.label_id} seen" if home else f"; mapping without a HOME label ({why})"
         what = f"continuing '{req.map_id}' rev{cont} (its map loaded)" if base else ""
+        if base and abs(theta) > 1e-9:
+            what += (
+                f"; the live map shows it as first surveyed "
+                f"(turned {math.degrees(-theta):+.1f} deg against the rotated map)"
+            )
         what = what or f"surveying '{req.map_id}'"
         self._set(
             MappingState.MAPPING,
@@ -371,17 +386,28 @@ class MappingSession(Node):
         """Continue mapping (2026-11-06): load revision's pose graph into slam_toolbox with the
         vehicle on that revision's survey start mark (START_AT_GIVEN_POSE: the first scans are
         matched against the graph nodes near it, then mapping goes on in the SAME frame). The
-        start reference is that mark itself. Returns ((manifest, dir), x, y, yaw)."""
-        manifest, stem = mb.continue_base(self.maps_dir, map_id, revision)
+        start reference is that mark itself. Returns ((manifest, dir), x, y, yaw, theta).
+
+        A rotated revision (2026-11-12): its pose graph is in the frame before the rotation
+        (theta, mb.continue_base); the mark is turned back into that frame for slam_toolbox, and
+        the save turns SLAM's map and scans forward into the revision's frame."""
+        manifest, stem, theta = mb.continue_base(self.maps_dir, map_id, revision)
         s = manifest.start
+        gx, gy, gyaw = maprot.rotate_pose(float(s["x_m"]), float(s["y_m"]), float(s["yaw_rad"]), -theta)
         req = DeserializePoseGraph.Request()
         req.filename = stem
         req.match_type = getattr(DeserializePoseGraph.Request, "START_AT_GIVEN_POSE", 2)
-        req.initial_pose = Pose2D(x=float(s["x_m"]), y=float(s["y_m"]), theta=float(s["yaw_rad"]))
+        req.initial_pose = Pose2D(x=gx, y=gy, theta=gyaw)
         self._call(self._deserialize, req)
-        self.get_logger().info(f"{map_id} rev{revision}: pose graph loaded, vehicle on its survey start mark")
+        turned = f" (pose graph frame turned {math.degrees(theta):+.2f} deg)" if abs(theta) > 1e-9 else ""
+        self.get_logger().info(
+            f"{map_id} rev{revision}: pose graph loaded, vehicle on its survey start mark{turned}"
+        )
         base = (manifest, mb.revision_dir(self.maps_dir, map_id, revision))
-        return base, float(s["x_m"]), float(s["y_m"]), float(s["yaw_rad"])
+        return base, float(s["x_m"]), float(s["y_m"]), float(s["yaw_rad"]), theta
+
+    def _theta(self) -> float:
+        return float(getattr(self, "_slam_theta", 0.0) or 0.0)
 
     def _srv_returned(self, _req, res: Trigger.Response):
         if self._state not in (MappingState.MAPPING, MappingState.RETURN_REVIEW):
@@ -391,7 +417,7 @@ class MappingSession(Node):
         if problems:
             res.success, res.message = False, "not ready: " + "; ".join(problems)
             return res
-        x, y, yaw = self._pose_in_map()
+        x, y, yaw = maprot.rotate_pose(*self._pose_in_map(), self._theta())  # into the revision's frame
         s = self._start
         review = mb.ReturnReview(x - s.x_m, y - s.y_m, _wrap(yaw - s.yaw_rad))
         with self._lock:
@@ -410,6 +436,7 @@ class MappingSession(Node):
             return res
         with self._lock:
             self._start, self._review, self._home, self._base = None, None, None, None
+            self._slam_theta = 0.0
             self._keyframes, self._last_kf = [], None
         self._set(MappingState.IDLE, "survey aborted; relaunch mapping for a clean graph")
         res.success, res.message = True, self._message
@@ -488,13 +515,25 @@ class MappingSession(Node):
             # new area comes from SLAM; its dynamic / keepout marks move onto the bigger map
             base, base_dir = self._base
             _m, base_grid = mb.load(self.maps_dir, self._map_id, base.revision)
-            grid = mb.merge_continued(base_grid, grid)
+            theta = self._theta()
+            # a rotated base: SLAM mapped in the pose graph's frame, turn it into the revision's
+            grid = mb.merge_continued(base_grid, maprot.turn(grid, theta))
             scan = None
             if self._keyframes:
-                scan = survey_scan.rasterize(grid.meta, grid.width, grid.height, list(self._keyframes))
+                frames = list(self._keyframes)
+                if abs(theta) > 1e-9:
+                    frames = [
+                        survey_scan.Keyframe(
+                            *maprot.rotate_pose(f.x, f.y, f.yaw, theta), f.angle_min, f.angle_inc, f.ranges
+                        )
+                        for f in frames
+                    ]
+                scan = survey_scan.rasterize(grid.meta, grid.width, grid.height, frames)
                 self.get_logger().info(f"survey scan: {len(self._keyframes)} keyframes")
             mb.stage_continued(stage, base_dir, base, grid, req.note, scan)
             software["continued_from"] = {"revision": int(base.revision), "sha256": base.sha256}
+            if abs(theta) > 1e-9:
+                software[mb.SLAM_FRAME_KEY] = round(math.degrees(theta), 6)  # the new pose graph's frame
         review = mb.ReturnReview(**{**asdict(self._review), "note": req.note})
         manifest = mb.Manifest(
             map_id=self._map_id,

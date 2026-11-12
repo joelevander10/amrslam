@@ -123,6 +123,16 @@ def rotate_grid(grid: Grid, theta: float, outside: int = -1) -> Grid:
     return Grid(_resample(grid.data, grid.meta, meta, w, h, theta, outside), meta)
 
 
+def turn(grid: Grid, theta: float, outside: int = -1) -> Grid:
+    """rotate_grid for a FRAME change (2026-11-12: a continued survey of a rotated revision maps
+    in its pose graph's frame): any angle, no operator limits; ~0 returns the grid unchanged."""
+    theta = wrap(float(theta))
+    if abs(theta) < 1e-9:
+        return grid
+    meta, w, h = rotated_meta(grid, theta)
+    return Grid(_resample(grid.data, grid.meta, meta, w, h, theta, outside), meta)
+
+
 def rotate_like(mask: Grid, like: Grid, theta: float) -> Grid:
     """A mask aligned with the parent map, rotated onto `like` (the rotated map's geometry)."""
     data = _resample(mask.data, mask.meta, like.meta, like.width, like.height, check_angle(theta), 0)

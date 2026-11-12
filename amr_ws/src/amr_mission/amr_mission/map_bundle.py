@@ -406,6 +406,16 @@ def derive_edit(
 
 
 POSEGRAPH = ("posegraph.posegraph", "posegraph.data")
+# manifest.software key (2026-11-12): this revision's map frame is its pose graph's frame turned
+# by this many degrees (+ = ccw), as after "Rotate map". Absent = 0: surveyed in its own frame.
+SLAM_FRAME_KEY = "slam_frame_deg"
+
+
+def slam_frame_rad(m: Manifest) -> float:
+    try:
+        return math.radians(float((m.software or {}).get(SLAM_FRAME_KEY, 0.0)))
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def derive_rotation(
@@ -414,8 +424,10 @@ def derive_rotation(
     """A NEW revision: this one turned by theta (rad, + = ccw) about its frame origin
     (amr_maps.rotate) - the map, the dynamic and keepout masks and the survey start mark move
     together; the return-to-start review vector turns with them. The slam_toolbox pose graph is
-    NOT carried: it holds the old frame, and nothing in the rotated revision may disagree with
-    the map. edits.json records the parent and the angle. Returns (path, revision, new grid).
+    carried UNCHANGED (2026-11-12) with the angle in manifest.software[SLAM_FRAME_KEY], so the
+    rotated revision can still be continued (continue_base turns between the two frames); the
+    survey scan is dropped (a grid in the old frame). edits.json records the parent and the
+    angle. Returns (path, revision, new grid).
     Routes stay on the revision they were drawn on: a route for the rotated map is drawn on it."""
     theta = maprot.check_angle(theta)
     src_dir = revision_dir(maps_dir, map_id, from_revision)
@@ -449,14 +461,16 @@ def derive_rotation(
         with open(os.path.join(tmp, EDITS), "w") as fh:
             json.dump(doc, fh, indent=1)
         extra[EDITS] = os.path.join(tmp, EDITS)
+        frame = math.degrees(maprot.wrap(slam_frame_rad(parent) + theta))
         changes = {
             "origin": [new.meta.origin_x, new.meta.origin_y, 0.0],
             "width": new.width,
             "height": new.height,
             "start": {**s, "x_m": sx, "y_m": sy, "yaw_rad": syaw},
             "review": r,
+            "software": {**(parent.software or {}), SLAM_FRAME_KEY: round(frame, 6)},
         }
-        drop = POSEGRAPH + SURVEY_SCAN_FILES  # both hold the old frame
+        drop = SURVEY_SCAN_FILES  # a grid in the old frame; the pose graph stays (SLAM_FRAME_KEY)
         path, revision = derive_revision(maps_dir, map_id, from_revision, extra, drop, changes)
     return path, revision, new
 
@@ -589,22 +603,62 @@ def now_iso() -> str:
 # included), new cells come from SLAM, and the dynamic / keepout marks move onto the bigger map.
 
 
-def continue_base(maps_dir: str, map_id: str, revision: int) -> tuple[Manifest, str]:
-    """The revision a continued survey starts from: verified, with its slam_toolbox pose graph
-    and a survey start mark. Returns (manifest, pose graph path stem for deserialize_map)."""
+def pose_graph_revision(maps_dir: str, map_id: str, revision: int) -> int | None:
+    """The revision whose pose graph a continued survey of `revision` would load: itself, or for
+    a revision rotated before 2026-11-12 the nearest ancestor (edits.json parents) that has one.
+    None when there is none. Files only, no hashing (the Maps page asks for every revision)."""
+    seen, cur = set(), int(revision)
+    while cur not in seen and len(seen) <= 100:
+        seen.add(cur)
+        d = revision_dir(maps_dir, map_id, cur)
+        if not os.path.isdir(d):
+            return None
+        if all(os.path.isfile(os.path.join(d, n)) for n in POSEGRAPH):
+            return cur
+        try:
+            parent = ((load_edits(d) or {}).get("parent") or {}).get("revision")
+        except BundleError:
+            return None
+        if not isinstance(parent, int):
+            return None
+        cur = parent
+    return None
+
+
+def continue_base(maps_dir: str, map_id: str, revision: int) -> tuple[Manifest, str, float]:
+    """The revision a continued survey starts from: verified, with a survey start mark and a
+    slam_toolbox pose graph. Returns (manifest, pose graph path stem for deserialize_map, theta):
+    the revision's map frame is the pose graph's frame turned by theta (rad, + = ccw; 0 unless
+    the map was rotated). A revision rotated before 2026-11-12 carries no pose graph: the nearest
+    ancestor that does (edits.json parents) is used, with the rotations in between added up."""
     rev_dir = revision_dir(maps_dir, map_id, revision)
     if not os.path.isdir(rev_dir):
         raise BundleError(f"no such map revision: {map_id} rev{revision}")
     m = verify(rev_dir)
-    if not all(os.path.isfile(os.path.join(rev_dir, n)) for n in POSEGRAPH):
-        raise BundleError(
-            f"{map_id} rev{revision} has no SLAM pose graph (a rotated revision has none): "
-            "continue from the revision before the rotation, then rotate again"
-        )
     s = m.start or {}
     if not all(isinstance(s.get(k), (int, float)) for k in ("x_m", "y_m", "yaw_rad")):
         raise BundleError(f"{map_id} rev{revision} has no survey start mark to start from")
-    return m, os.path.join(rev_dir, "posegraph")
+    theta, cur_dir, cur, seen = 0.0, rev_dir, m, {int(revision)}
+    while not all(os.path.isfile(os.path.join(cur_dir, n)) for n in POSEGRAPH):
+        doc = load_edits(cur_dir) or {}
+        parent = (doc.get("parent") or {}).get("revision")
+        if not isinstance(parent, int) or parent in seen or len(seen) > 100:
+            raise BundleError(
+                f"{map_id} rev{revision} has no SLAM pose graph, and none of the revisions it was "
+                "made from has one: start a new survey"
+            )
+        seen.add(parent)
+        for op in doc.get("ops") or []:
+            if isinstance(op, dict) and op.get("op") == "rotate":
+                theta += math.radians(float(op.get("angle_deg", 0.0)))
+        cur_dir = revision_dir(maps_dir, map_id, parent)
+        if not os.path.isdir(cur_dir):
+            raise BundleError(
+                f"{map_id} rev{revision} has no SLAM pose graph and rev{parent} it came from is gone"
+            )
+        cur = verify(cur_dir)
+    theta = maprot.wrap(theta + slam_frame_rad(cur))
+    return m, os.path.join(cur_dir, "posegraph"), theta
 
 
 def _place(data: np.ndarray, src: gridio.GridMeta, dst: gridio.GridMeta, w: int, h: int, outside: int):

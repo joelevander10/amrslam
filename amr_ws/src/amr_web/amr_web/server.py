@@ -445,7 +445,9 @@ def create_app(
                             "start": m.start,
                             "review": m.review,
                             "routes": store.list_routes(maps_dir, map_id),
-                            "continuable": all(n in m.files for n in mb.POSEGRAPH),
+                            # its own pose graph, or (rotated before 2026-11-12) an ancestor's
+                            "continuable": all(n in m.files for n in mb.POSEGRAPH)
+                            or mb.pose_graph_revision(maps_dir, map_id, r) is not None,
                             "dynamic_cells": ex["dynamic_cells"],
                             "edits": _edits_summary(ex["edits"]),
                         }

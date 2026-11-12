@@ -170,9 +170,11 @@ plugged in or replugged while running); the journal says `USB keypad connected: 
 
 ### 3b. Continue mapping: add a new area to a saved map
 
-1. Maps page, the revision to extend: **Continue mapping** (only revisions that keep their
-   SLAM pose graph show it: every surveyed or edited revision; not a **Rotate map** revision -
-   continue from the one before the rotation, then rotate again).
+1. Maps page, the revision to extend: **Continue mapping**. Every surveyed, edited, re-mapped
+   **and rotated** revision shows it (2026-11-12). A rotated revision is continued in the
+   orientation it was first surveyed in: the live map during the drive looks turned the old
+   way, and the save turns everything into the rotated orientation again - the new revision
+   lines up with the rotated one, so Re-map area works on it.
 2. The Survey session box says **Continue mapping … from `<map>` rev N**. Put the AMR **on that
    map's survey mark, facing as when it was mapped**, standing still, then press **Continue
    `<map>` rev N (start survey)**. SLAM loads the saved map and goes on from the mark.
@@ -211,7 +213,9 @@ drag a line along a long, straight wall. The angle that lays that wall exactly a
 (the nearest one, at most 45°) appears in **Rotate by**; you can also type an angle (+ =
 counter-clockwise). **Save rotated revision** turns the map, its dynamic / keepout areas and
 the survey start mark together about the map origin. Save or clear any area edits first.
-The rotated revision has no slam pose graph (it described the old orientation). Routes stay
+The rotated revision keeps the slam pose graph and remembers the angle, so it can still be
+continued (§3b) and re-mapped (§3d). Revisions rotated before 2026-11-12 continue from the pose
+graph of the revision before the rotation, found by themselves. Routes stay
 on the revision they were drawn on: draw the routes for the rotated map on it, then Use it
 on the Run page and set the initial pose as usual.
 
