@@ -489,16 +489,21 @@ def test_the_adapter_reports_measured_wheel_speed_as_body_speed(monkeypatch):
 
     def msg(left, right, valid=True):
         return SimpleNamespace(
-            left_vel_rad_s=left, right_vel_rad_s=right, left_valid=valid, right_valid=valid
+            left_vel_rad_s=left, right_vel_rad_s=right, left_valid=valid, right_valid=valid,
+            left_pos_rad=20.0, right_pos_rad=-3.0, left_counts=1234, right_counts=-56, counts_valid=valid,
         )
 
     a._on_wheels(msg(5.0, 3.0))
     assert a._wheels["v_mps"] == pytest.approx(0.4)
     assert (a._wheels["left_mps"], a._wheels["right_mps"]) == (pytest.approx(0.5), pytest.approx(0.3))
+    # the Run page's encoder tiles: raw counters and the distance each wheel rolled
+    assert (a._wheels["left_counts"], a._wheels["right_counts"]) == (1234, -56)
+    assert (a._wheels["left_m"], a._wheels["right_m"]) == (pytest.approx(2.0), pytest.approx(-0.3))
     a._on_wheels(msg(-2.0, -2.0))
     assert a._wheels["v_mps"] == pytest.approx(-0.2), "reverse is negative"
     a._on_wheels(msg(9.0, 9.0, valid=False))
     assert a._wheels["valid"] is False and a._wheels["v_mps"] is None
+    assert a._wheels["left_counts"] is None and a._wheels["left_m"] is None
 
 
 def test_one_run_tab_and_maps_routes_live_under_run(tmp_path):

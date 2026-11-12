@@ -256,6 +256,10 @@ everything again:
 2. **Edit areas** on rev N+1 → **Re-map area**: **Re-map box** and drag boxes over the changed
    stretch (or use a `C` area's **Re-map box**). Let each box reach into machines or walls
    that did **not** change: they are what the alignment is checked against.
+   **By numbers:** type two opposite corners (**x from / to**, **y from / to**, metres) and press
+   **Add box by numbers**. The map shows the pointer's x / y in its top-left corner (a tap shows
+   it on the touch panel). Each box in the list shows its corners; **✎** puts them back in the
+   number fields to adjust them (the box is taken off the list until you Add it again).
 3. **Preview**: the server checks that the new scans line up with the map around the boxes
    (at least 60 % of the fixed structure there seen again in place, and no shift of a few cm
    fitting better) and shows **Show after**: the map as it will be. A survey that slipped is
@@ -414,6 +418,13 @@ or `rm -rf ~/amr_maps/.trash` to free the space.
 ## 5. Run the route (Run page)
 
 Keep the vehicle in **MANUAL** until step 6.
+
+**The map follows the AMR.** While the AMR has a position on the active map, the view keeps it in
+the middle (about 20 m across) - you do not need to drag the map after it. **FOLLOW** (beside +,
+− and FIT) is lit while it does. Drag the map, FIT or a double-click stop following so you can
+look elsewhere; press **FOLLOW** to come back to the AMR. **Wheels** (Map & pose tab and Mission
+tab) shows each encoder: speed in m/s, the raw counter and the distance rolled since the base
+started, the body speed and **R − L** in mm/s (0 when driving straight; it should not jump).
 
 1. **Activate the map.** Under **View / activate**, pick `<id> rev N`, then press **Use
    this map on the vehicle**. Mode becomes `NAVIGATION`.

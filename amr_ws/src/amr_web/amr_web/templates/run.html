@@ -56,6 +56,9 @@
       {% endif %}
       {% endif %}
       <div class="sep"></div>
+      <h3>Wheels <small>encoders · measured</small></h3>
+      <div id="enc-loc" class="tel-grid"></div>
+      <div class="sep"></div>
       <h3>Jog <small>selector MANUAL</small></h3>
       <div id="jog-run"></div>
       {% if qr %}<div class="sep"></div><div data-push-mode></div>{% endif %}
@@ -82,6 +85,8 @@
       <p id="run-emg" class="note bad" hidden></p>
       <div id="run-state" class="tel-grid" style="margin-top:1rem"></div>
       <p id="run-reason" class="note"></p>
+      <h3>Wheels <small>encoders · measured</small></h3>
+      <div id="enc-run" class="tel-grid"></div>
       <div class="warn-box" style="margin-top:1rem"><b>Motion starts only from the physical panel</b>{% if destinations %} or a <b>Go to</b> button{% endif %}: selector AUTO, then Start. Pause / abort / prepare-resume below; Start confirms a prepared resume.</div>
       <div class="bar"><button id="btn-run-resume" class="big">Prepare resume</button></div>
     </div>
@@ -99,7 +104,7 @@
   </aside>
   <div class="canvas-wrap">
     <canvas id="run-canvas" width="900" height="600"></canvas>
-    <div id="run-hint" class="hint">Drag = pan, +/− or wheel = zoom, fit = whole map. Initial pose: press the position, drag towards the heading, release.</div>
+    <div id="run-hint" class="hint">Drag = pan, +/− or wheel = zoom, fit = whole map, follow = keep the AMR in the middle. Initial pose: press the position, drag towards the heading, release.</div>
   </div>
 </section>
 {% endblock %}

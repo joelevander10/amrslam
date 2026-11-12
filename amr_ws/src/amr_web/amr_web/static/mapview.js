@@ -39,6 +39,7 @@ class MapView {
       const dx = e.offsetX - this._drag.x, dy = e.offsetY - this._drag.y;
       if (Math.abs(dx) + Math.abs(dy) > 3) this._drag.moved = true;
       if (this.onDrag && this._drag.btn === 0 && this.tool && !this.panTools.has(this.tool)) { this.onDrag(this.screenToWorld(this._drag.x, this._drag.y), this.screenToWorld(e.offsetX, e.offsetY), false); this.draw(); return; }
+      if (this._drag.moved && this.follow) this.setFollowing(false);  // a pan by hand stops following
       this.ox += dx; this.oy += dy; this._drag.x = e.offsetX; this._drag.y = e.offsetY; this._keepVisible(); this.draw();
     });
     const up = e => {
@@ -55,7 +56,7 @@ class MapView {
     canvas.addEventListener('pointerup', up);
     canvas.addEventListener('pointercancel', () => { this._drag = null; this.draw(); });
     canvas.addEventListener('pointerleave', () => { this._drag = null; if (this.onHover) { this.onHover(null); this.draw(); } });
-    canvas.addEventListener('dblclick', e => { e.preventDefault(); this.fit(); this.draw(); });
+    canvas.addEventListener('dblclick', e => { e.preventDefault(); this.setFollowing(false); this.fit(); this.draw(); });
     canvas.addEventListener('contextmenu', e => e.preventDefault());
     this._zoomButtons();
     this._resize(); window.addEventListener('resize', () => { this._resize(); this.draw(); });
@@ -71,8 +72,39 @@ class MapView {
     const centre = f => this.zoomAt(this.canvas.width / 2, this.canvas.height / 2, f);
     mk('+', '', () => centre(1.3));
     mk('−', '', () => centre(1 / 1.3));
-    mk('fit', 'fit', () => { this.fit(); this.draw(); });
+    mk('fit', 'fit', () => { this.setFollowing(false); this.fit(); this.draw(); });
     wrap.appendChild(box);
+    this._zoomBox = box;
+  }
+  // Follow (Run page, 2026-11-12): keep a moving world point - the AMR - in the middle of the
+  // view, so nobody has to drag the map after it. getPoint() returns [x, y] or null (no pose:
+  // the view stays put). Zoom +/- keeps following; a pan by hand, fit or double-click stops it;
+  // the FOLLOW button starts it again. While a tool is active (initial pose) the view holds still.
+  enableFollow(getPoint, on = true) {
+    this._followGet = getPoint;
+    if (this._zoomBox && !this._followBtn) {
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'fit follow';
+      b.textContent = 'follow'; b.title = 'Keep the AMR in the middle of the view';
+      b.onclick = () => { this.setFollowing(!this.follow); this.draw(); };
+      this._zoomBox.appendChild(b); this._followBtn = b;
+    }
+    this.setFollowing(on);
+  }
+  setFollowing(on) {
+    this.follow = !!on && !!this._followGet;
+    this._followZoomed = false;  // the next centring may zoom in once from the whole-map view
+    if (this._followBtn) this._followBtn.classList.toggle('on', this.follow);
+  }
+  _centreOnFollow() {
+    if (!this.follow || !this.img || !this.meta || this.tool || this._drag) return;
+    const p = this._followGet(); if (!p) return;
+    if (!this._followZoomed) {  // from the whole-map view, zoom in to about 20 m across
+      this._followZoomed = true;
+      const fit = this._fitScale || this.scale, want = Math.min(this.canvas.width, this.canvas.height) * this.meta.resolution / 20;
+      if (this.scale < want) this.scale = Math.min(fit * 40, Math.max(fit, want));
+    }
+    const [u, v] = this.worldToPixel(p[0], p[1]);
+    this.ox = this.canvas.width / 2 - u * this.scale; this.oy = this.canvas.height / 2 - v * this.scale;
   }
   _resize() { const r = this.canvas.getBoundingClientRect(); this.canvas.width = Math.max(200, r.width); this.canvas.height = Math.max(200, r.height); }
   // Returns false when a later load() superseded this one while it was in flight: the
@@ -88,7 +120,7 @@ class MapView {
     const dyn = data.dynamic_cells > 0 ? await new Promise((res) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => res(null); i.src = `/api/maps/${mapId}/${rev}/dynamic.png?s=${data.sha256.slice(0, 8)}`; }) : null;
     if (this._loadToken !== token) return false;
     this.meta = data; this.img = im; this.dyn = dyn ? hatchMask(dyn, INK.preview) : null;
-    this.fit(); this.draw();
+    this.fit(); this._followZoomed = false; this.draw();
     return true;
   }
   // Live grid (unified plan §6.4): metadata and image share one snapshot id; the
@@ -146,6 +178,7 @@ class MapView {
   draw() {
     const c = this.ctx; c.fillStyle = INK.paper; c.fillRect(0, 0, this.canvas.width, this.canvas.height);
     if (!this.img) return;
+    this._centreOnFollow();
     c.imageSmoothingEnabled = false;
     const w = this.img.width * this.scale, h = this.img.height * this.scale;
     c.drawImage(this.img, this.ox, this.oy, w, h);

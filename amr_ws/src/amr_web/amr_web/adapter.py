@@ -514,6 +514,14 @@ class RosAdapter(Node):
             "right_mps": float(m.right_vel_rad_s) * r if valid else None,
             # body speed of a differential drive: the mean of the two rims, + = forward
             "v_mps": 0.5 * (float(m.left_vel_rad_s) + float(m.right_vel_rad_s)) * r if valid else None,
+            # per wheel, for the Run page's encoder tiles (2026-11-12): validity, the raw
+            # counter (driver terms) and the distance it has rolled since the base started
+            "left_valid": bool(m.left_valid),
+            "right_valid": bool(m.right_valid),
+            "left_counts": int(m.left_counts) if m.counts_valid else None,
+            "right_counts": int(m.right_counts) if m.counts_valid else None,
+            "left_m": float(m.left_pos_rad) * r if (m.left_valid and r is not None) else None,
+            "right_m": float(m.right_pos_rad) * r if (m.right_valid and r is not None) else None,
         }
         with self._lock:
             self._wheels, self._wheels_t = d, self._now()

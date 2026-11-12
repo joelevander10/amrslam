@@ -299,6 +299,31 @@ $('run-mission').onchange = async e => {
   await loadMissions();
 })();
 
+// Follow the AMR (2026-11-12): the view keeps the AMR in the middle while it drives (the
+// executor's pose, on the active map only). Pan by hand to look elsewhere; FOLLOW brings it back.
+view.enableFollow(() => {
+  const r = lastState && lastState.run;
+  return viewIsActive() && r && r.pose_valid ? [r.pose_x, r.pose_y] : null;
+});
+
+// Wheel encoders, measured (2026-11-12): speed and counts per wheel, so a wheel that lags, slips
+// or stops counting shows at once. 5 Hz display copy of /wheel_states.
+function wheelTiles(w) {
+  const rows = !w ? [['Encoders', '–', 'no wheel data', 'warn', 'key']] : (() => {
+    const stale = w.age_s > 1.0, side = k => {
+      const ok = w[`${k}_valid`] && !stale, mps = w[`${k}_mps`];
+      return [k === 'left' ? 'Left wheel' : 'Right wheel', ok ? `${num(mps, 3)} m/s` : (stale ? 'STALE' : 'INVALID'),
+        `${w[`${k}_counts`] ?? '–'} counts · ${num(w[`${k}_m`], 2)} m`, ok ? '' : 'bad'];
+    };
+    const dv = w.left_mps != null && w.right_mps != null ? w.right_mps - w.left_mps : null;
+    return [side('left'), side('right'),
+      ['Body', `${num(w.v_mps, 3)} m/s`, dv === null ? '—' : `R − L ${num(dv * 1000, 0)} mm/s`, stale ? 'warn' : ''],
+      ['Encoders', stale ? 'STALE' : (w.valid ? 'OK' : 'INVALID'), `${num(w.age_s, 2)} s old`, stale || !w.valid ? 'warn' : '']];
+  })();
+  tiles('enc-loc', rows); tiles('enc-run', rows);
+}
+onState(st => wheelTiles(st.wheels));
+
 // live scan over the viewed map: meaningful only when the viewed map IS the active one
 liveOverlay(view);
 pollLive(view, { map: false });

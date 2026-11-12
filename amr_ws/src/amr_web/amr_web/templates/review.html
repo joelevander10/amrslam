@@ -43,6 +43,15 @@
       <button id="tool-remap" class="tool" title="Drag a box over the stretch that changed: inside it the map becomes what the latest Continue mapping drive saw">Re-map box</button>
       <button id="btn-remap-clear" class="tool">Clear boxes</button>
     </div>
+    {# By numbers (2026-11-12): two opposite corners in map metres (the cursor read-out and a
+       box's row give them). ✎ on a box puts its corners back here to adjust it. #}
+    <div class="remap-xy">
+      <label class="field">x from m <input id="rv-rm-x0" type="number" step="0.05"></label>
+      <label class="field">x to m <input id="rv-rm-x1" type="number" step="0.05"></label>
+      <label class="field">y from m <input id="rv-rm-y0" type="number" step="0.05"></label>
+      <label class="field">y to m <input id="rv-rm-y1" type="number" step="0.05"></label>
+    </div>
+    <div class="bar" style="margin-top:0"><button id="btn-remap-add" class="tool" title="Add a re-map box with these corners">Add box by numbers</button></div>
     <div id="rv-remap-boxes" class="list"><div class="none">no boxes</div></div>
     <div class="bar">
       <button id="btn-remap-preview" class="tool" disabled>Preview</button>
@@ -62,6 +71,7 @@
   </aside>
   <div class="canvas-wrap">
     <canvas id="rv-canvas" width="900" height="600"></canvas>
+    <div id="rv-xy" class="xy-readout" hidden></div>
     <div id="rv-hint" class="hint">Pick a tool, then drag a rectangle with the left button. Right-drag = pan, +/− or wheel = zoom, fit = whole map. Hatched yellow = dynamic areas already in this revision.</div>
   </div>
 </section>

@@ -100,6 +100,18 @@ view.onDrag = (a, b, done) => {
   log(`edit ${ops.length}: ${TOOLS[view.tool].name} ${mm(w)} × ${mm(h)} mm`);
 };
 view.onHover = () => { view._rect = null; };  // only called while not dragging
+// Where the pointer is, in map metres (2026-11-12): the numbers for a re-map box by numbers.
+// A tap on a touch panel shows it too (pointerdown).
+(() => {
+  const cv = document.getElementById('rv-canvas'), out = $('rv-xy');
+  if (!cv || !out || !cv.addEventListener) return;
+  const show = e => {
+    if (!view.meta) { out.hidden = true; return; }
+    const [x, y] = view.screenToWorld(e.offsetX, e.offsetY);
+    out.textContent = `x ${num(x, 2)}  y ${num(y, 2)} m`; out.hidden = false;
+  };
+  cv.addEventListener('pointermove', show); cv.addEventListener('pointerdown', show);
+})();
 
 view.overlays.push((c, v) => {
   ops.forEach((o, i) => {
@@ -281,23 +293,43 @@ view.overlays.unshift((c, v) => {
 // own scans) saw; the server checks it lines up with the map around the boxes first.
 $('tool-remap').onclick = () => setTool(view.tool === 'remap' ? null : 'remap');
 $('btn-remap-clear').onclick = () => { remapBoxes = []; remapStale(); };
+// A box by numbers (2026-11-12): two opposite corners in map metres, same checks as a drawn box.
+const RM_XY = ['rv-rm-x0', 'rv-rm-x1', 'rv-rm-y0', 'rv-rm-y1'];
+$('btn-remap-add').onclick = () => {
+  const v = RM_XY.map(id => parseFloat($(id).value));
+  if (!v.every(Number.isFinite)) { log('re-map box: fill in x from / to and y from / to (metres)', 'bad'); return; }
+  const poly = rect([v[0], v[2]], [v[1], v[3]]), [w, h] = size(poly);
+  if (w < 0.3 || h < 0.3) { log('re-map box smaller than 0.3 m: not added', 'bad'); return; }
+  remapBoxes.push(poly); remapStale();
+  log(`re-map box R${remapBoxes.length}: x ${num(poly[0][0], 2)} … ${num(poly[1][0], 2)}, y ${num(poly[0][1], 2)} … ${num(poly[2][1], 2)} m`);
+};
 function remapNote() {
   const has = view.meta && view.meta.survey_scan;
   $('rv-remap-note').textContent = has
     ? 'This revision carries the scans of the Continue mapping drive that saved it. Drag Re-map boxes over the stretch that changed (reach into machines or walls that did not change), Preview, then Save.'
     : 'No survey scan in this revision. First, on the Maps page, Continue mapping from it and drive slowly through the changed stretch (and back to the mark, Save). Then open the revision that saves here and draw the boxes.';
-  $('tool-remap').disabled = !has;
+  $('tool-remap').disabled = !has; $('btn-remap-add').disabled = !has;
 }
 function remapStale() {
   remapAfter = null; remapCheck = null; $('rv-remap-after').checked = false;
   $('rv-remap-check').textContent = ''; $('rv-remap-check').classList.toggle('bad', false);
   $('rv-remap-boxes').innerHTML = remapBoxes.length ? remapBoxes.map((b, i) => {
     const [w, h] = size(b);
-    return `<div class="row three"><span class="k">R${i + 1}</span><span class="n">re-map</span><span class="v">${num(w, 2)} × ${num(h, 2)}<i>m</i> <button class="tool" data-rm="${i}" title="remove this box">×</button></span></div>`;
+    const xy = `x ${num(b[0][0], 2)} … ${num(b[1][0], 2)} · y ${num(b[0][1], 2)} … ${num(b[2][1], 2)}`;
+    return `<div class="row three"><span class="k">R${i + 1}</span><span class="n" title="${xy} m">${xy}</span><span class="v">${num(w, 2)} × ${num(h, 2)}<i>m</i> <button class="tool" data-rm-edit="${i}" title="put its corners in the boxes above to change them (removes it here)">✎</button><button class="tool" data-rm="${i}" title="remove this box">×</button></span></div>`;
   }).join('') : '<div class="none">no boxes</div>';
   remapButtons(); view.draw();
 }
-$('rv-remap-boxes').onclick = e => { const i = e.target && e.target.dataset ? e.target.dataset.rm : undefined; if (i === undefined) return; remapBoxes.splice(+i, 1); remapStale(); };
+$('rv-remap-boxes').onclick = e => {
+  const d = e.target && e.target.dataset ? e.target.dataset : {};
+  if (d.rmEdit !== undefined) {  // back into the number boxes, to adjust and Add again
+    const b = remapBoxes[+d.rmEdit]; if (!b) return;
+    [b[0][0], b[1][0], b[0][1], b[2][1]].forEach((v, k) => { $(RM_XY[k]).value = v.toFixed(2); });
+    remapBoxes.splice(+d.rmEdit, 1); remapStale(); return;
+  }
+  if (d.rm === undefined) return;
+  remapBoxes.splice(+d.rm, 1); remapStale();
+};
 function remapButtons() {
   const has = !!(view.meta && view.meta.survey_scan);
   $('btn-remap-preview').disabled = saving || !has || !remapBoxes.length;

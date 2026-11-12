@@ -484,6 +484,11 @@ canvas { width:100%; height:100%; display:block; cursor:crosshair; touch-action:
 }
 .canvas-zoom button:hover { border-color:var(--accent-2); color:var(--accent-2); }
 .canvas-zoom button.fit { font-size:1rem; letter-spacing:.06em; text-transform:uppercase; }
+.canvas-zoom button.follow { font-size:.85rem; }
+.xy-readout { position:absolute; top:.8rem; left:.8rem; pointer-events:none; font:500 1.05rem var(--mono);
+  color:var(--ink); background:var(--surface); border:1px solid var(--rule); padding:.2rem .6rem; }
+.remap-xy { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0 .6rem; }
+.canvas-zoom button.on { background:var(--accent-wash); border-color:var(--accent-2); color:var(--accent-2); }
 .turns { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:.5rem; margin-top:.5rem; }
 .maps-cols { display:grid; grid-template-columns:repeat(auto-fit,minmax(36rem,1fr)); gap:1.2rem; }
 

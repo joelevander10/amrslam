@@ -33,7 +33,7 @@ async function apiGet(url) {
   if (m) return { status: 200, data: { compiled: { route: m[1], steps: [] }, route: { start: { x_m: m[1] === 'r1' ? 1.5 : 7.0, y_m: 2.0, yaw_deg: 90 } } } };
   return { status: 404, data: {} };
 }
-class MapView { constructor() { this.overlays = []; this.meta = null; } draw() {} async load() {} }
+class MapView { constructor() { this.overlays = []; this.meta = null; } draw() {} async load() {} enableFollow(get) { this._followGet = get; } }
 const ctx = {
   console, JSON, Math, Promise,
   document: { getElementById: el, querySelectorAll: () => [], createElement: () => ({ value: '', textContent: '' }) },
