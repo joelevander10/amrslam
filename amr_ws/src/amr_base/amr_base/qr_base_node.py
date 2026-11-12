@@ -690,6 +690,12 @@ class QrBaseNode(Node):
             valid = e is not None and now - e[0] <= config.QR_ENC_TIMEOUT_S and e[3] is not None
             pos = e[2] if e is not None else 0.0
             vel = e[3] if (e is not None and e[3] is not None) else 0.0
+            # Both wheels AT THE STAMP (2026-11-12): the two TPDOs arrive at different times,
+            # and pairing the newer wheel's reading with the older one's made the odometry
+            # see one wheel move a whole period in the gap between them (speed and turn-rate
+            # spikes). Carry the older reading forward by its own speed to `newest`.
+            if valid and e is not None:
+                pos += vel * min(max(0.0, newest - e[0]), 0.1)
             setattr(m, f"{name}_pos_rad", float(pos))
             setattr(m, f"{name}_vel_rad_s", float(vel) if valid else 0.0)
             setattr(m, f"{name}_valid", bool(valid))

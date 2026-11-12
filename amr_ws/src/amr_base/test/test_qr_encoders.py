@@ -2,11 +2,13 @@
 
 import math
 import struct
+import time
 
 import can
 import pytest
 
 from amr_base import canopen
+from amr_base import qr_encoders as qe
 from amr_base.qr_encoders import (
     FALLBACK_RANGE,
     SDO,
@@ -235,3 +237,42 @@ def test_a_wheel_scale_reports_the_turn_of_a_nominal_wheel_over_the_same_ground(
     assert small.counts == nominal.counts
     assert math.isclose(small.rad, 0.9854 * nominal.rad, rel_tol=1e-12)
     assert math.isclose(small.rad_s, 0.9854 * nominal.rad_s, rel_tol=1e-12)
+
+
+def test_frame_time_uses_the_kernel_stamp_of_the_frame():
+    """A TPDO is timed when it arrived, not when the bus thread got to it (2026-11-12)."""
+    msg = can.Message(arbitration_id=0x181, data=struct.pack("<I", 10))
+    assert qe.frame_time(msg, clock=lambda: 50.0) == 50.0  # no stamp (tests): now
+    msg.timestamp = 1000.0
+    t = qe.frame_time(msg, clock=lambda: 50.0, wall=lambda: 1000.012)
+    assert abs(t - 49.988) < 1e-9  # arrived 12 ms before the thread handled it
+    msg.timestamp = 3.5  # another time base (not wall clock): not believed
+    assert qe.frame_time(msg, clock=lambda: 50.0, wall=lambda: 1000.0) == 50.0
+    msg.timestamp = 990.0  # 10 s old: not believed either
+    assert qe.frame_time(msg, clock=lambda: 50.0, wall=lambda: 1000.0) == 50.0
+
+
+def test_tpdo_readings_carry_the_frame_stamp():
+    t = [100.0]
+    bus = type("B", (), {})()
+    bus.rx = []
+    bus.recv = lambda timeout=None: bus.rx.pop(0) if bus.rx else None
+    bus.send = lambda m: None
+    pair = qe.EncoderPair(
+        canopen.Router(bus),
+        1,
+        2,
+        CPR,
+        RANGE,
+        False,
+        False,
+        "tpdo",
+        20,
+        log=lambda s: None,
+        clock=lambda: t[0],
+    )
+    m = can.Message(arbitration_id=0x181, data=struct.pack("<I", 1234))
+    m.timestamp = time.time() - 0.008
+    bus.rx.append(m)
+    pair.router.recv(timeout=0.0)
+    assert pair.left.raw == 1234 and 99.98 < pair.left.t < 99.995  # 8 ms before "now" (100.0)

@@ -48,6 +48,27 @@ NMT_START = 0x01
 SUB_INHIBIT, SUB_EVENT = 3, 5
 
 TPDO, SDO = "tpdo", "sdo"
+FRAME_AGE_MAX_S = 0.5  # a frame timestamp further back (or ahead) than this is not believed
+
+
+def frame_time(msg, clock=time.monotonic, wall=time.time) -> float:
+    """When a CAN frame ARRIVED, on `clock`'s time base (2026-11-12).
+
+    SocketCAN stamps every frame in the kernel (python-can Message.timestamp, wall-clock
+    seconds). Stamping a TPDO when this Python thread got round to it instead gave the
+    readings the thread's scheduling jitter (a few ms against a 20 ms TPDO period); the
+    odometry divides position increments by those stamps, so its speed spiked (to 2+ m/s
+    at 0.8 m/s) and, integrated by the EKF, over-read the distance and turned the heading:
+    the "ahead -" localisation corrections. A frame without a believable stamp (0 in
+    tests, another interface's own time base) falls back to `clock()` now."""
+    ts = float(getattr(msg, "timestamp", 0.0) or 0.0)
+    now = clock()
+    if ts <= 0.0:
+        return now
+    age = wall() - ts
+    if -0.05 <= age <= FRAME_AGE_MAX_S:
+        return now - max(0.0, age)
+    return now
 
 
 class Unwrapper:
@@ -283,7 +304,7 @@ class EncoderPair:
         def handle(msg) -> None:
             raw = decode_position(msg.data)
             if raw is not None:
-                enc.feed(raw, self.clock(), TPDO)
+                enc.feed(raw, frame_time(msg, self.clock), TPDO)
 
         return handle
 

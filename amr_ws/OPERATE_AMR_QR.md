@@ -579,6 +579,10 @@ fitted the map (≥ 75 % on mapped walls; 80 % until 2026-11-11) just before it 
 it, or no fit after it is still **`LOC_JUMP`** and stops the AMR. Many `LOC_CORRECTED` rows with
 the correction **along the path in the same direction** (always ahead -, or always ahead +)
 mean the wheel scale is off: check the wheel diameter / gear ratio in the vehicle profile.
+A loss report whose speed is far above the route speed (1.2 - 2.2 m/s at 0.8 m/s) is the
+odometry, not the AMR: until 2026-11-12 encoder readings were timed when the software got to
+them, and that jitter made the odometry speed spike and over-read the distance. They are now
+timed by the CAN frame's own arrival stamp, and both wheels are aligned to the same moment.
 The limits are `jump_verified_max_m`, `jump_fit_min`, `jump_verify_s` in
 `amr_localization/readiness.py`.
 
