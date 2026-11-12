@@ -17,6 +17,11 @@ new instance of this launch; nothing here is reused across maps.
                        localization monitor) stays the reviewed map. Opt-in until the
                        plain-vs-blanked AMCL comparison has been measured on the
                        vehicle (plan Increment 4). Env default: AMR_LOC_BLANK_DYNAMIC.
+    smooth_pose:=false
+                       AMCL stops broadcasting map->odom; pose_smoother_node broadcasts a
+                       smoothed one that works each correction in over a second or two
+                       (amr_localization/pose_smoother.py: the wobble where dynamic areas
+                       leave few beams, 2026-11-12). Env default: AMR_LOC_SMOOTH_POSE.
 """
 
 import os
@@ -180,6 +185,7 @@ def _compose(context):
 
     dynamic_yaml = os.path.join(rev_dir, "dynamic.yaml") if "dynamic.yaml" in manifest.files else ""
     blank = cfg("blank_dynamic").perform(context).lower() == "true" and bool(dynamic_yaml)
+    smooth = cfg("smooth_pose").perform(context).lower() == "true"
 
     actions = required(
         Node(
@@ -215,11 +221,22 @@ def _compose(context):
             executable="amcl",
             name="amcl",
             output="screen",
-            parameters=[params],
+            # smooth_pose: map->odom comes from pose_smoother_node only (one publisher)
+            parameters=[params, {"tf_broadcast": not smooth}],
             remappings=amcl_remap,
         ),
         "amcl",
     )
+    if smooth:
+        actions += required(
+            Node(
+                package="amr_localization",
+                executable="pose_smoother_node",
+                name="pose_smoother",
+                output="screen",
+            ),
+            "pose_smoother",
+        )
     actions.append(
         TimerAction(
             period=3.0,
@@ -303,6 +320,7 @@ def _compose(context):
     print(
         f"[navigation_layer] map {map_id} rev{revision} bundle {manifest.sha256[:12]} ({map_yaml})"
         + (f", dynamic areas{' (AMCL blanked)' if blank else ''}" if dynamic_yaml else "")
+        + (", map->odom smoothed" if smooth else "")
     )
     return actions
 
@@ -320,6 +338,9 @@ def generate_launch_description() -> LaunchDescription:
                 "blank_dynamic", default_value=os.environ.get("AMR_LOC_BLANK_DYNAMIC", "false")
             ),
             DeclareLaunchArgument("loc_min_occupied_cells", default_value="500"),
+            DeclareLaunchArgument(
+                "smooth_pose", default_value=os.environ.get("AMR_LOC_SMOOTH_POSE", "false")
+            ),
             OpaqueFunction(function=_compose),
         ]
     )

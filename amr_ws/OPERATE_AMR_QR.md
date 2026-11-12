@@ -582,6 +582,17 @@ mean the wheel scale is off: check the wheel diameter / gear ratio in the vehicl
 The limits are `jump_verified_max_m`, `jump_fit_min`, `jump_verify_s` in
 `amr_localization/readiness.py`.
 
+**Corrections are worked in smoothly (2026-11-12).** The AMR steers by its position on the map.
+AMCL used to move that position at once at every update (every 5 cm); where most of the scan is
+blanked - dynamic areas with trolleys on both sides - each update shifted it a few cm and a
+fraction of a degree back and forth, and the AMR wobbled chasing it. With
+`AMR_LOC_SMOOTH_POSE=true` (`amr.env`, on for the AMR QR) a correction is now worked in over
+about 1 - 3 s of driving (a 0.18 m one in about 3.5 s), and AMCL's jitter is damped about five
+times. Losses, `LOC_CORRECTED` and the scan check still look at AMCL itself, unsmoothed. Standing
+still the AMR takes AMCL's position at once, so endpoint checks and relocalisation are as
+before. If you ever need the old behaviour: set it to `false` and restart the service. The
+layer log prints `working in a correction: ... still to go` when one is larger than 0.10 m / 2°.
+
 **Lost during a run: it finds itself again and continues (2026-11-09).** When the position is
 lost during a route because of a jump (`LOC_JUMP`), the scan passing through walls
 (`LOC_SCAN_MISMATCH`) or AMCL becoming unsure (`LOC_COV_GREW`), the AMR does not FAULT at once:

@@ -81,7 +81,7 @@ cp "$REPO/profiles/${AGV_PROFILE:-agv-01}.json" "$OUT/profile.json" 2>/dev/null
 # (map->odom; odom->base is small beside it) and the readiness state.
 TOPICS='^/amr/(mux_state|panel_state|io|events|mode_state|control_lease|run_state|localization_state)$'
 TOPICS+='|^/(cmd_wheel_vel|wheel_states|drives/status|drives/torque|imu/data|odom_raw|output_paths|rosout|diagnostics)$'
-TOPICS+='|^/(amcl_pose|tf)$'
+TOPICS+='|^/(amcl_pose|tf)$|^/amr/localization/map_odom_raw$'
 
 # CPU and temperature beside the bag: pidstat per process every 5 s, the package
 # temperature every 5 s. Both stop with the recorder.

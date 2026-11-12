@@ -356,6 +356,25 @@ def test_blank_dynamic_serves_amcl_a_derived_map_on_map_loc(tmp_path, monkeypatc
     assert np.array_equal(loc.data[~dyn], ref.data[~dyn])  # and nothing else changed
 
 
+def test_smooth_pose_moves_map_odom_from_amcl_to_the_smoother(tmp_path, monkeypatch):
+    _, rev = _bundle_with_dynamic(tmp_path)
+    monkeypatch.setenv("AMR_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.delenv("AMR_LOC_SMOOTH_POSE", raising=False)  # the AMR QR's amr.env sets it
+    plain = compose("navigation_layer.launch.py", maps_dir=str(tmp_path), map_id="sim_factory", revision=rev)
+    amcl = [_param_dict(p) for p in plain["params"]["amcl"] if isinstance(p, dict)]
+    assert amcl[-1]["tf_broadcast"] is True and "pose_smoother_node" not in plain["exes"]
+    c = compose(
+        "navigation_layer.launch.py",
+        maps_dir=str(tmp_path),
+        map_id="sim_factory",
+        revision=rev,
+        smooth_pose="true",
+    )
+    assert set(c["exes"]) == NAV_EXES | {"pose_smoother_node"}  # one map->odom publisher
+    amcl = [_param_dict(p) for p in c["params"]["amcl"] if isinstance(p, dict)]
+    assert amcl[-1]["tf_broadcast"] is False
+
+
 def test_blank_dynamic_refuses_a_map_with_nothing_fixed_left(tmp_path, monkeypatch):
     _, rev = _bundle_with_dynamic(tmp_path, big=True)
     monkeypatch.setenv("AMR_STATE_DIR", str(tmp_path / "state"))

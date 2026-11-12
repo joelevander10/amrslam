@@ -269,6 +269,13 @@ What a dynamic area does:
   showing `/map`. A map without dynamic areas is used as it is. The
   navigation layer refuses to start if fewer than 500 occupied cells remain
   outside the dynamic areas: shrink them, or set it back to `false`.
+- **Smoothed map->odom**: with `AMR_LOC_SMOOTH_POSE=true` (the AMR QR since
+  2026-11-12) AMCL does not broadcast map->odom; `pose_smoother_node` does,
+  working each correction in over a second or two so the controller does not
+  chase AMCL's jitter where blanked areas leave few beams (the wobble).
+  AMCL's own map->odom is on `/amr/localization/map_odom_raw`; the
+  localization monitor judges AMCL by it. Parameters (time constant, rate
+  limits, snap limits) are the node's; see `amr_localization/pose_smoother.py`.
 - The rear blind spot is unchanged: a dynamic area behind the vehicle is not
   seen during a reverse.
 

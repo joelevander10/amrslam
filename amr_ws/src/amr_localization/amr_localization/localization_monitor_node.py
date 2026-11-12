@@ -17,6 +17,11 @@ for an automatic relocalisation the executor asked for (relocalize.py's conditio
 
 /initialpose is only observed here; AMCL subscribes to it itself. The
 executor (T7) faults if one arrives during a segment.
+
+With smooth_pose (navigation_layer, 2026-11-12) TF map->odom is pose_smoother_node's smoothed
+one, which works a correction in over a second or two. This node judges AMCL itself: the
+map->odom samples (jumps) and the scan comparison use AMCL's own map->odom from
+/amr/localization/map_odom_raw; TF map->odom is still what its age is taken from.
 """
 
 from __future__ import annotations
@@ -29,7 +34,7 @@ import numpy as np
 import rclpy
 from agv_core import alarms
 from amr_maps.raycast import ScanGeometry
-from geometry_msgs.msg import PoseWithCovarianceStamped
+from geometry_msgs.msg import PoseWithCovarianceStamped, TransformStamped
 from nav_msgs.msg import OccupancyGrid
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
@@ -142,6 +147,8 @@ class LocalizationMonitor(Node):
         self._changes_min_match = float(p("changes_min_match").value)
         self._own_initialpose = 0  # /initialpose messages we published and have not seen back
         self._pose_now: tuple[float, float, float] | None = None
+        # AMCL's own map->odom when pose_smoother_node broadcasts a smoothed one (None: TF's)
+        self._raw_map_odom: tuple[float, float, float] | None = None
         self._rec = lr.Recorder()
         self._unmapped: float | None = None
         self._state_dir = os.path.expanduser(str(p("state_dir").value))
@@ -170,6 +177,9 @@ class LocalizationMonitor(Node):
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.create_subscription(PoseWithCovarianceStamped, "/amcl_pose", self._on_amcl, 10)
         self.create_subscription(PoseWithCovarianceStamped, "/initialpose", self._on_initialpose, RELIABLE_1)
+        self.create_subscription(
+            TransformStamped, "/amr/localization/map_odom_raw", self._on_raw_map_odom, 10
+        )
         self.create_subscription(LaserScan, "/scan", self._on_scan, SENSOR_DATA)
         # the map comparison runs on the gated scan: its odom transform already exists, so the
         # lookup below never has to wait (a 50 ms wait on every raw scan starved this node's
@@ -251,12 +261,17 @@ class LocalizationMonitor(Node):
         try:
             # At the scan's own stamp: during a turn the latest transform is a few
             # degrees ahead of the scan, which throws every long beam off the map.
-            tr = self.tf_buffer.lookup_transform("map", msg.header.frame_id, msg.header.stamp)
+            if self._raw_map_odom is None:
+                tr = self.tf_buffer.lookup_transform("map", msg.header.frame_id, msg.header.stamp)
+            else:  # AMCL's pose, not the smoothed one the controller steers by
+                tr = self.tf_buffer.lookup_transform("odom", msg.header.frame_id, msg.header.stamp)
         except Exception:  # noqa: BLE001 - not localised yet, or the stamp is not covered
             return  # no comparison: readiness lets the previous result expire
         q = tr.transform.rotation
         yaw = math.atan2(2.0 * q.w * q.z, 1.0 - 2.0 * q.z * q.z)
         lx, ly = tr.transform.translation.x, tr.transform.translation.y
+        if self._raw_map_odom is not None:
+            lx, ly, yaw = rd._apply(self._raw_map_odom, (lx, ly, yaw))
         ranges = np.asarray(msg.ranges, dtype=np.float64)
         n = len(ranges)
         max_r = min(msg.range_max, self._match_max_range)
@@ -308,6 +323,14 @@ class LocalizationMonitor(Node):
         stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9  # its scan's time (Q07)
         self.rd.on_amcl_pose(self._now(), c[0], c[7], c[35], stamp if stamp > 0.0 else None)
 
+    def _on_raw_map_odom(self, msg: TransformStamped) -> None:
+        q = msg.transform.rotation
+        self._raw_map_odom = (
+            msg.transform.translation.x,
+            msg.transform.translation.y,
+            math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z)),
+        )
+
     def _on_initialpose(self, _msg: PoseWithCovarianceStamped) -> None:
         if self._own_initialpose > 0:
             self._own_initialpose -= 1
@@ -339,9 +362,12 @@ class LocalizationMonitor(Node):
                 )
             except Exception:  # noqa: BLE001
                 pass
-            self.rd.on_map_odom(t, tr.transform.translation.x, tr.transform.translation.y, yaw, odom_base)
+            mo = (tr.transform.translation.x, tr.transform.translation.y, yaw)
+            if self._raw_map_odom is not None:
+                mo = self._raw_map_odom  # judge AMCL, not the smoothing (TF gave the age)
+            self.rd.on_map_odom(t, mo[0], mo[1], mo[2], odom_base)
             if odom_base is not None:
-                pose = rd._apply((tr.transform.translation.x, tr.transform.translation.y, yaw), odom_base)
+                pose = rd._apply(mo, odom_base)
                 self._pose_now = pose
         except Exception:  # noqa: BLE001 - no transform yet is a normal state
             pass
