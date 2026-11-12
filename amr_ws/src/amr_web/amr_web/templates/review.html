@@ -22,6 +22,11 @@
       <button id="tool-unknown" class="tool" title="Safe erase: the cells become unknown, which blocks routes unless they are in a dynamic area">Erase to unknown</button>
       <button id="tool-free" class="tool" title="Operator assertion: you know this is open floor">Paint free</button>
     </div>
+    <div class="bar">
+      {# like the rectangles above (2026-11-12): always drawable; applying it needs a revision
+         saved by Continue mapping (Re-map area, below) #}
+      <button id="tool-remap" class="tool" title="Drag a box over the stretch that changed: inside it the map becomes what the latest Continue mapping drive saw (Re-map area, below)">Re-map box</button>
+    </div>
     <p id="rv-tool-note" class="note"></p>
     <div class="bar">
       <button id="btn-rv-undo" class="tool">Undo</button><button id="btn-rv-redo" class="tool">Redo</button><button id="btn-rv-clear" class="danger">Clear edits</button>
@@ -40,7 +45,6 @@
     <h3>Re-map area <small>replace boxes with the latest survey</small></h3>
     <p id="rv-remap-note" class="note"></p>
     <div class="bar" style="margin-top:0">
-      <button id="tool-remap" class="tool" title="Drag a box over the stretch that changed: inside it the map becomes what the latest Continue mapping drive saw">Re-map box</button>
       <button id="btn-remap-clear" class="tool">Clear boxes</button>
     </div>
     {# By numbers (2026-11-12): two opposite corners in map metres (the cursor read-out and a

@@ -253,8 +253,11 @@ everything again:
    changed stretch** (both directions if you can), come back to the mark, Returned to start,
    Save. That saves rev N+1 **with the drive's own scans** (`survey_scan`): what the floor looks
    like now. (rev N+1's map itself is still the old one where it had cells.)
-2. **Edit areas** on rev N+1 → **Re-map area**: **Re-map box** and drag boxes over the changed
-   stretch (or use a `C` area's **Re-map box**). Let each box reach into machines or walls
+2. **Edit areas** on rev N+1: **Re-map box** (under Draw, with Dynamic area and the other
+   rectangles) and drag boxes over the changed stretch (or use a `C` area's **Re-map box**).
+   You may also draw them **before** the drive, on rev N: re-map boxes belong to the map, not
+   to one revision, and are still there when you open rev N+1 (also after a page reload);
+   Preview and Save only work on a revision with the drive's scans. Let each box reach into machines or walls
    that did **not** change: they are what the alignment is checked against.
    **By numbers:** type two opposite corners (**x from / to**, **y from / to**, metres) and press
    **Add box by numbers**. The map shows the pointer's x / y in its top-left corner (a tap shows

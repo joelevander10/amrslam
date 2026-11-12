@@ -45,7 +45,7 @@ function setTool(t) {
   Object.keys(TOOLS).forEach(k => TOOLS[k].btn.classList.toggle('on', k === t));
   $('tool-align').classList.toggle('on', t === 'align');
   $('tool-remap').classList.toggle('on', t === 'remap');
-  $('rv-tool-note').textContent = t && TOOLS[t] ? TOOLS[t].note : '';
+  $('rv-tool-note').textContent = t && TOOLS[t] ? TOOLS[t].note : t === 'remap' ? remapToolNote() : '';
   view.draw();
 }
 Object.keys(TOOLS).forEach(k => { TOOLS[k].btn.onclick = () => setTool(view.tool === k ? null : k); });
@@ -79,7 +79,7 @@ view.onDrag = (a, b, done) => {
     view._rect = null;
     const [w, h] = size(poly);
     if (w < 0.3 || h < 0.3) { log('re-map box smaller than 0.3 m: ignored', 'warn'); return; }
-    remapBoxes.push(poly); remapStale(); return;
+    remapBoxes.push(poly); remapStale(); remapAdded(poly); return;
   }
   if (view.tool === 'align' && view.meta) {
     refLine = [a, b];
@@ -121,8 +121,8 @@ view.overlays.push((c, v) => {
     v.text(o.polygon[3][0], o.polygon[3][1], String(i + 1), st.stroke);
   });
   if (v._rect && v.tool && TOOLS[v.tool]) { const st = style(v.tool); v.fillPolygon(v._rect, st.fill, null); v.dashed(v._rect, st.stroke); }
-  if (v._rect && v.tool === 'remap') v.dashed(v._rect, INK.accent);
-  remapBoxes.forEach((b, i) => { v.polygon(b, INK.accent); v.text(b[3][0], b[3][1], `R${i + 1}`, INK.accent); });
+  if (v._rect && v.tool === 'remap') { v.fillPolygon(v._rect, alpha(INK.accent, 0.18), null); v.dashed(v._rect, INK.accent); }
+  remapBoxes.forEach((b, i) => { v.fillPolygon(b, alpha(INK.accent, 0.18), INK.accent); v.text(b[3][0], b[3][1], `R${i + 1}`, INK.accent); });
   if (refLine) {
     // the wall as drawn, and dashed: where the rotation will lay it (turned about the origin)
     const [p, q] = refLine, t = rotDeg() * Math.PI / 180, c = Math.cos(t), s = Math.sin(t);
@@ -205,7 +205,7 @@ async function selectMap(value) {
   [mapId, mapRev] = value.split('/'); mapRev = +mapRev;
   mapToken += 1; const c = mapToken;
   ops = []; history = []; future = []; view._rect = null; $('rv-msg').textContent = '';
-  changes = null; remapBoxes = []; remapStale();
+  changes = null; remapBoxes = remapRestore(mapId); remapStale();  // the map's boxes, any revision
   refLine = null; $('rv-rot-deg').value = '0'; refresh();
   const loaded = await view.load(mapId, mapRev);
   if (!loaded || c !== mapToken) return;
@@ -300,15 +300,31 @@ $('btn-remap-add').onclick = () => {
   if (!v.every(Number.isFinite)) { log('re-map box: fill in x from / to and y from / to (metres)', 'bad'); return; }
   const poly = rect([v[0], v[2]], [v[1], v[3]]), [w, h] = size(poly);
   if (w < 0.3 || h < 0.3) { log('re-map box smaller than 0.3 m: not added', 'bad'); return; }
-  remapBoxes.push(poly); remapStale();
-  log(`re-map box R${remapBoxes.length}: x ${num(poly[0][0], 2)} … ${num(poly[1][0], 2)}, y ${num(poly[0][1], 2)} … ${num(poly[2][1], 2)} m`);
+  remapBoxes.push(poly); remapStale(); remapAdded(poly);
 };
+// Every new box: say where it is and, on a revision without a survey scan, what is still needed.
+function remapAdded(poly) {
+  log(`re-map box R${remapBoxes.length}: x ${num(poly[0][0], 2)} … ${num(poly[1][0], 2)}, y ${num(poly[0][1], 2)} … ${num(poly[2][1], 2)} m`);
+  if (!(view.meta && view.meta.survey_scan)) log('kept for this map: to apply it, Continue mapping through that stretch (Maps page), then open the new revision here - the boxes are still there', 'warn');
+}
+function remapToolNote() {
+  return view.meta && view.meta.survey_scan
+    ? 'Drag a box over the stretch that changed, reaching into machines or walls that did not. Then Preview and Save under Re-map area.'
+    : 'Drag a box over the stretch that changed. This revision has no survey scan yet, so the box is kept for this map until you open the revision a Continue mapping drive saves; Preview and Save work there.';
+}
+// Re-map boxes belong to the MAP, not one revision (2026-11-12): draw them first, do the
+// Continue mapping drive, open the revision it saved - they are still there (also after a reload).
+const remapKey = id => `amr.remap.${id}`;
+function remapStore() { try { if (mapId) localStorage.setItem(remapKey(mapId), JSON.stringify(remapBoxes)); } catch (e) { /* no storage */ } }
+function remapRestore(id) {
+  try { const v = JSON.parse(localStorage.getItem(remapKey(id)) || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; }
+}
 function remapNote() {
   const has = view.meta && view.meta.survey_scan;
   $('rv-remap-note').textContent = has
     ? 'This revision carries the scans of the Continue mapping drive that saved it. Drag Re-map boxes over the stretch that changed (reach into machines or walls that did not change), Preview, then Save.'
-    : 'No survey scan in this revision. First, on the Maps page, Continue mapping from it and drive slowly through the changed stretch (and back to the mark, Save). Then open the revision that saves here and draw the boxes.';
-  $('tool-remap').disabled = !has; $('btn-remap-add').disabled = !has;
+    : 'No survey scan in this revision: you can draw the boxes now (Re-map box above, or by numbers), they stay with this map. To apply them, on the Maps page Continue mapping from this revision and drive slowly through the changed stretch (back to the mark, Save), then open the revision that saves here: Preview and Save work there.';
+  if (view.tool === 'remap') $('rv-tool-note').textContent = remapToolNote();
 }
 function remapStale() {
   remapAfter = null; remapCheck = null; $('rv-remap-after').checked = false;
@@ -318,7 +334,7 @@ function remapStale() {
     const xy = `x ${num(b[0][0], 2)} … ${num(b[1][0], 2)} · y ${num(b[0][1], 2)} … ${num(b[2][1], 2)}`;
     return `<div class="row three"><span class="k">R${i + 1}</span><span class="n" title="${xy} m">${xy}</span><span class="v">${num(w, 2)} × ${num(h, 2)}<i>m</i> <button class="tool" data-rm-edit="${i}" title="put its corners in the boxes above to change them (removes it here)">✎</button><button class="tool" data-rm="${i}" title="remove this box">×</button></span></div>`;
   }).join('') : '<div class="none">no boxes</div>';
-  remapButtons(); view.draw();
+  remapStore(); remapButtons(); view.draw();
 }
 $('rv-remap-boxes').onclick = e => {
   const d = e.target && e.target.dataset ? e.target.dataset : {};
@@ -333,6 +349,7 @@ $('rv-remap-boxes').onclick = e => {
 function remapButtons() {
   const has = !!(view.meta && view.meta.survey_scan);
   $('btn-remap-preview').disabled = saving || !has || !remapBoxes.length;
+  $('btn-remap-preview').title = has ? '' : 'needs a revision saved by Continue mapping (see the note above)';
   $('rv-remap-after').disabled = !remapAfter;
   const ok = remapCheck && remapCheck.ok !== false;
   $('btn-remap-save').disabled = saving || !has || !remapBoxes.length || !ok || ops.length > 0;
@@ -365,6 +382,7 @@ $('btn-remap-save').onclick = async () => {
     log(data.message);
     if (c !== mapToken) return;
     $('rv-note').value = '';
+    remapBoxes = []; remapStale();  // applied: they are done
     await fillMapSelect($('rv-map'));
     $('rv-map').value = shown = `${forMap}/${data.revision}`;
     await selectMap(shown);
