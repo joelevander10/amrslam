@@ -104,9 +104,7 @@
       {"name": "POS 1", "di": null, "route_id": "pos1"},
       {"name": "POS 2", "di": null, "route_id": "pos2"},
       {"name": "POS 3", "di": null, "route_id": "pos3"},
-      {"name": "POS 4", "di": null, "route_id": "pos4"},
-      {"name": "POS 5", "di": null, "route_id": "pos5"},
-      {"name": "POS 6", "di": null, "route_id": "pos6"}
+      {"name": "POS 4", "di": null, "route_id": "pos4"}
     ]
   },
   "horn": {
@@ -235,7 +233,8 @@
     "runaway_rad_s": 1.0,
     "runaway_s": 0.3,
     "stall_s": 2.0,
-    "route_v_mps": 0.8,
+    "route_v_mps": 0.7,
+    "arc_v_mps": 0.4,
     "keypad_enabled": true,
     "keypad_name_contains": "XING WEI",
     "keypad_exclude_contains": "AT Translated Set 2",

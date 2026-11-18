@@ -34,7 +34,7 @@ ARC = "arc"
 ARC_MIN_DEG, ARC_MAX_DEG = 45.0, 180.0
 ARC_MIN_RADIUS_M = 1.0
 ARC_YAW_RATE_RATIO = 0.9  # of VEHICLE_ARC_W_MAX: headroom for the controller's corrections
-ARC_V_MPS = 0.30  # every arc (corner) at 0.30 m/s, whatever the straights run at (owner 2026-11-03)
+ARC_V_MPS_DEFAULT = 0.30  # every arc (corner) at 0.30 m/s, whatever the straights run at (owner 2026-11-03)
 # An arc - and the home leg - may carry its own speed (owner 2026-11-11): v_mps on the step,
 # STEP_V_MIN..STEP_V_MAX in the file; compiled never above the route speed nor the yaw-rate
 # ceiling ARC_YAW_RATE_RATIO x VEHICLE_ARC_W_MAX x R (compiler.arc_speed). None = ARC_V_MPS.
@@ -105,6 +105,22 @@ def route_speed() -> float:
 
 
 ROUTE_V_MPS = route_speed()
+
+
+def arc_speed_default() -> float:
+    """Arcs and the Go home curve without a speed of their own: qr_base.arc_v_mps on the AMR QR
+    (owner 2026-11-18: 0.40), else ARC_V_MPS_DEFAULT. No profile (a dev box): the default."""
+    try:
+        from agv_core import config  # noqa: PLC0415 - optional, as in route_speed
+
+        if config.PLATFORM == config.PLATFORM_QR:
+            return float(config.QR_ARC_V_MPS)
+    except Exception:  # noqa: BLE001
+        pass
+    return ARC_V_MPS_DEFAULT
+
+
+ARC_V_MPS = arc_speed_default()
 
 
 def top_speed_cap(v: float) -> float:

@@ -486,6 +486,11 @@ qr_base.*
     1690 r/min) re-run `qr_calibrate ff` up to the new voltage on blocks, and
     size the scanner's protective field for the stopping distance.
 
+    arc_v_mps: the speed of every arc (corner) and of the Go home curve that has no
+    speed of its own (amr_navigation.route.arc_speed_default; gvievo-01 keeps 0.30).
+    Never above route_v_mps; compiled lower where the turn rate v / R would pass the
+    arc ceiling (0.40 m/s needs R >= 1 m). amr-qr-01 2026-11-18: 0.70 straights, 0.40 arcs.
+
     USB keypad (keypad_*, amr_base qr_keypad): the KIM2A / Kayaba wireless
     keypad on the QR PC. W/A/S/D and the arrows are a second pendant (hold to
     drive, MANUAL only, pendant speeds and S-curve; W+A etc. curve); G is the
@@ -757,6 +762,8 @@ _QR_SCHEMA = {
         "stall_s":               ("QR_STALL_S", float),
         # route speed on straights (amr_navigation.route.route_speed)
         "route_v_mps":             ("QR_ROUTE_V_MPS", float),
+        # arc / go-home speed (amr_navigation.route.arc_speed_default)
+        "arc_v_mps":               ("QR_ARC_V_MPS", float),
         # USB keypad on the QR PC (amr_base qr_keypad)
         "keypad_enabled":          ("QR_KEYPAD_ENABLED", bool),
         "keypad_name_contains":    ("QR_KEYPAD_NAME_CONTAINS", str),
@@ -1403,6 +1410,9 @@ def _validate_qr(ns, check):
     check(0.1 <= g("QR_ROUTE_V_MPS") <= top + 0.005,
           f"qr_base.route_v_mps ({g('QR_ROUTE_V_MPS'):g}) must be in 0.1..{top:.2f} m/s - 95 % of the "
           f"top speed vehicle.motor_max_rpm gives; raise motor_max_rpm (and calibrate) to go faster")
+    check(0.1 <= g("QR_ARC_V_MPS") <= g("QR_ROUTE_V_MPS") + 1e-9,
+          f"qr_base.arc_v_mps ({g('QR_ARC_V_MPS'):g}) must be in 0.1..route_v_mps "
+          f"({g('QR_ROUTE_V_MPS'):g}) m/s")
 
     # -- encoders ------------------------------------------------------------
     check(g("QR_ENC_COUNTS_PER_REV") > 0, "qr_base.enc_counts_per_rev must be > 0")

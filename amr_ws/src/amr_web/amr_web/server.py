@@ -27,7 +27,7 @@ from typing import Any, Protocol
 import numpy as np
 from agv_core import alarms as catalogue
 from amr_navigation.compiler import compile_route
-from amr_navigation.route import VEHICLE_V_MAX, Route, RouteError, branch_problem
+from amr_navigation.route import ARC_V_MPS, VEHICLE_V_MAX, Route, RouteError, branch_problem
 from amr_navigation.validate import Issue, load_dynamic, load_keepout, validate
 from flask import Flask, Response, jsonify, redirect, render_template, request, session
 
@@ -354,7 +354,9 @@ def create_app(
 
     @app.get("/editor")
     def page_editor():
-        return render_template("editor.html", page="run", sub="editor", trackless_v=VEHICLE_V_MAX)
+        return render_template(
+            "editor.html", page="run", sub="editor", trackless_v=VEHICLE_V_MAX, arc_v=ARC_V_MPS
+        )
 
     @app.get("/review")
     def page_review():

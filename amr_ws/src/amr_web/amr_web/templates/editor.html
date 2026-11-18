@@ -71,7 +71,7 @@
     <div class="sep"></div>
     <h3>Limits</h3>
     <label class="field">Repeat count <input id="ed-repeat" type="number" min="1" max="100" value="1"></label>
-    <p class="note">Speed <b id="ed-speed" data-v="{{ '%.2f' % trackless_v }}">{{ '%.2f' % trackless_v }}</b> m/s — the vehicle's trackless speed, not a route setting. Reverse runs at half; arcs at 0.30 m/s, a tight arc slower still. A straight can be slower (its speed box in the step list): a slow zone.</p>
+    <p class="note">Speed <b id="ed-speed" data-v="{{ '%.2f' % trackless_v }}" data-arc="{{ '%.2f' % arc_v }}">{{ '%.2f' % trackless_v }}</b> m/s — the vehicle's trackless speed, not a route setting. Reverse runs at half (at most 0.30); arcs at {{ '%.2f' % arc_v }} m/s, a tight arc slower still. A straight can be slower (its speed box in the step list): a slow zone.</p>
     <div class="bar">
       <button id="btn-validate" class="big">Validate</button>
       <button id="btn-save" class="big run">Save revision</button>

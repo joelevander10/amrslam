@@ -51,9 +51,11 @@ def test_qr_profile():
     config.load(config.profile_path("amr-qr-01"))
     try:
         check("amr-qr-01 is platform qr_analog", config.PLATFORM == config.PLATFORM_QR)
-        check("no GLS camera; POS 1..6 are web destinations (no pushbuttons) on routes pos1..pos6",
+        check("no GLS camera; POS 1..4 are web destinations (no pushbuttons) on routes pos1..pos4",
               not config.GLS_ENABLED and config.PANEL_DESTINATIONS
-              == tuple((f"POS {i}", None, f"pos{i}") for i in range(1, 7)))
+              == tuple((f"POS {i}", None, f"pos{i}") for i in range(1, 5)))
+        check("routes: 0.70 m/s straights, 0.40 m/s arcs (owner 2026-11-18)",
+              (config.QR_ROUTE_V_MPS, config.QR_ARC_V_MPS) == (0.7, 0.4))
         # effective track from the 2026-11-05 spin test (wheels 0.37652 m apart, see config notes)
         check("track and wheel are the QR's", (config.TRACK_M, config.WHEEL_DIA_M) == (0.4289, 0.1811))
         check("the right motor is mirrored (QR wiring)", config.INVERT_RIGHT and not config.INVERT_LEFT)
@@ -91,6 +93,7 @@ def test_qr_profile():
     qr_refuses("analog and digital modules on one address are refused", qb(ao_ip="192.168.1.40"),
                "copy-paste")
     qr_refuses("E-stop on the START input is refused", qb(di_estop=1), "collides")
+    qr_refuses("arcs faster than the straights are refused", qb(arc_v_mps=0.75), "arc_v_mps")
     qr_refuses("an unknown encoder mode is refused", qb(enc_mode="canopen"), "enc_mode")
     qr_refuses("an encoder timeout under 3 event periods is refused", qb(enc_timeout_s=0.03), "event periods")
     qr_refuses("a coil hold shorter than two DIO scans is refused", qb(coil_hold_s=0.04), "coil_hold_s")

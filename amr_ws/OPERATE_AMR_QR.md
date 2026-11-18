@@ -5,7 +5,7 @@ Day-to-day operation of the AMR QR (profile `amr-qr-01`) once
 [RUNBOOK.md](RUNBOOK.md) §2; the RUNBOOK has the full detail for every page. The
 differences: the AMR QR has **two buttons instead of a selector switch**, no Manual Arm
 switch, no horn, no Reset or Continue button (the Run page has a **Continue** instead), a
-**push mode** for the brakes, and routes run at 0.80 m/s on straights (slower where a straight has its own speed), 0.30 m/s on curves (or each curve's own speed).
+**push mode** for the brakes, and routes run at 0.70 m/s on straights (slower where a straight has its own speed), 0.40 m/s on curves (or each curve's own speed; 2026-11-18).
 
 The software is gvievo-01 **KYB trackless** (2026-11-03) with the AMR QR hardware on top:
 route **wait steps** with Continue, a **Go home** last step, smooth **S-curve** speed
@@ -22,7 +22,7 @@ reset of KYB are switched off: the AMR QR has none of that hardware.
 | **E-stop** | motors 0 V + brake | same; the route is held (BLOCKED), continue with START after release |
 
 The USB keypad has the same buttons: **G** = START, **ENTER** = STOP, **E** = E-stop, and
-**F1–F6** = Go to POS 1–6 (§2a).
+**F1–F4** = Go to POS 1–4 (§2a).
 
 - **After power-up the vehicle is always in MANUAL.**
 - To run a route: START once to switch to AUTO, then START again to start it. You **Load** a
@@ -118,13 +118,13 @@ plugged in or replugged while running); the journal says `USB keypad connected: 
 | **ENTER** | the **STOP** button: AUTO → MANUAL (aborts a running route); in MANUAL = Reset |
 | **Q** | switch MANUAL ↔ AUTO |
 | **E** | **keypad E-stop** (latched). **ENTER** releases it; that press does nothing else |
-| **F1** … **F6** | go to **POS 1** … **POS 6**: the same as **Go to POS n** on the Run page (§4b) |
+| **F1** … **F4** | go to **POS 1** … **POS 4**: the same as **Go to POS n** on the Run page (§4b). F5 / F6 do nothing (4 POS since 2026-11-18) |
 
 - Driving keys work in **MANUAL only**, like the panel pendant: 0.50 m/s straight,
   0.39 rad/s spin, soft S-curve start and stop. Releasing every key stops the vehicle.
 - A held key outranks the web jog. After any E-stop, let go of every key once before it
   drives again.
-- **F1–F6** work in **AUTO** (press **Q** or hold **G** first) with no run under way and the
+- **F1–F4** work in **AUTO** (press **Q** or hold **G** first) with no run under way and the
   position confirmed: the AMR loads the newest saved mission of that POS route and starts it
   (pre-move warning, start gate), exactly as the Run page POS button. In MANUAL, during a run,
   or with no saved mission for that POS, the press is refused and "What happened" says why
@@ -316,8 +316,9 @@ everything again:
    to a wait point, an arc centre, a step end or a route line (of this route and the
    saved ones on this map); untick **Snap** or hold Shift to measure exactly where you
    click. A third click starts a new measurement; Esc clears it.
-5. **Speed.** On the AMR QR every straight runs at **0.80 m/s** (`qr_base.route_v_mps`,
-   2026-11-06), every arc and the Go home curve at **0.30 m/s** unless
+5. **Speed.** On the AMR QR every straight runs at **0.70 m/s** (`qr_base.route_v_mps`,
+   2026-11-18; 0.80 before), every arc and the Go home curve at **0.40 m/s** (`qr_base.arc_v_mps`,
+   2026-11-18; 0.30 before) unless
    it has its own speed, a reverse at 0.30 m/s (never faster: the rear is not scanned), spins
    at 0.37 rad/s (`motor_max_rpm` 3000 = 0.94 m/s top, `v_max_v` 10 V; routes run at most at 95 % of it).
    Every speed change is a smooth **S-curve** (start 0.2 m/s², braking 0.25 m/s², jerk
@@ -328,7 +329,7 @@ everything again:
    1 m long** (§5b).
 
    **Curve speed** (2026-11-11): each **arc** and the **Go home** S-curve has its own speed box
-   in the **Steps** list, like a straight. Empty = 0.30 m/s. Type e.g. 0.50 to take a curve
+   in the **Steps** list, like a straight. Empty = the profile's arc speed (0.40 m/s). Type e.g. 0.50 to take a curve
    faster, or 0.20 to take it slower. A curve can never go faster than the route speed, nor
    faster than its radius allows: v / R stays under 0.405 rad/s (R 1 m: 0.40 m/s, R 2 m:
    0.80 m/s). If you type more, the row shows **→** the speed it will really run at. The AMR
@@ -362,7 +363,7 @@ everything again:
    the step or the start pose away.
 7. **Save revision**, then **Create mission from saved revision**.
 
-## 4b. POS routes: one main route, six stop points (POS 1 .. POS 6)
+## 4b. POS routes: one main route, four stop points (POS 1 .. POS 4)
 
 Every POS uses the **same main route and homepost**; only its **branch** differs: it leaves
 the main route at a junction, drives to its stop point, waits there, comes back and joins the
@@ -372,7 +373,7 @@ main route again, which takes it home.
    **Go home**. Mark each junction as a step end (split a straight with **Speed waypoint**
    where a branch should leave). Save it.
 2. **For each POS, the quick way** (Routes page, section **Branch**): pick **Main route**
-   `main rev N`, type the **Route id** (`pos1` … `pos6`) and the **Wait** name (e.g. `POS 1`),
+   `main rev N`, type the **Route id** (`pos1` … `pos4`) and the **Wait** name (e.g. `POS 1`),
    choose how it comes back (**turn round, forward** or **reverse** ≤ 2 m), press **Stop point
    on map** and **click where the AMR must stop** (its centre). The map shows the main route,
    the junction and the stop point as you move the mouse. The branch is made for you: it leaves
@@ -386,7 +387,7 @@ main route again, which takes it home.
    **Or draw it by hand**, on the Routes page, section **Branch**:
    1. **Main route**: pick `main rev N`. **Leave after**: the main step whose end is the
       junction. **Start branch** - the draft is now main up to there.
-   2. Type the **Route id** `pos1` (… `pos6`: the Go-to buttons use these names).
+   2. Type the **Route id** `pos1` (… `pos4`: the Go-to buttons use these names).
    3. Draw the branch with the normal tools: turn, drive to the stop point, add a **Wait**
       (name it, e.g. `POS 1`), then come back - turn round and drive back, or **Reverse**
       (≤ 2 m) - to the junction **with the main route's heading** there.
@@ -402,7 +403,7 @@ main route again, which takes it home.
 **Go to POS n** (Run page, Mission tab): selector **AUTO**, AMR on the homepost, no run under
 way; one press loads the newest mission of route `posN` on the active map and starts it after
 the 2 s warning - exactly like pressing START with that mission loaded. A POS without a
-mission yet is greyed. The USB keypad's **F1 … F6** are the same six buttons (§2a). At the
+mission yet is greyed. The USB keypad's **F1 … F4** are the same four buttons (§2a). The number of POS is `panel.destinations` in the profile (4 since 2026-11-18). At the
 stop point the run WAITS: **Continue** (Run page) or **START**
 sends it on, back along the main route to the homepost.
 
@@ -542,7 +543,8 @@ the route start.
 ## 5b. Safety at 0.80 m/s (read before the first fast run)
 
 The stopping distance grows with the square of the speed. Measured at 0.50 m/s the AMR QR
-stops in about 0.30 m on a red-field stop; at **0.80 m/s** expect **about 0.7 m** (scanner
+stops in about 0.30 m on a red-field stop; at **0.70 m/s** (the route speed since 2026-11-18) expect **about 0.6 m**, at
+**0.80 m/s** **about 0.7 m** (scanner
 response, up to 0.3 s of coasting before the brake, then braking). The red field of 0.50 m is
 **too short** for that: lengthen it in Safety Designer to about **1.0 m** for 0.80 m/s, and
 yellow (slow to half) to about **1.8 m**, then **measure**: drive at a box at 0.80 m/s and
@@ -666,6 +668,6 @@ real stop.
   The analog drives have no torque feedback, so a stop the scanner's OSSD makes in
   hardware is seen as a stall (see AMR_QR.md §5 no. 8).
 - **No Manual Arm switch, no horn, no pendant, no Reset / Continue / destination push buttons,
-  no GLS floor camera** (`gls.enabled: false`; POS 1–6 are the Run page buttons and keypad
-  F1–F6), no RFID and no tape mode (both removed
+  no GLS floor camera** (`gls.enabled: false`; POS 1–4 are the Run page buttons and keypad
+  F1–F4), no RFID and no tape mode (both removed
   from the code in KYB trackless).

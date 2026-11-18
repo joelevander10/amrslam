@@ -30,8 +30,10 @@ const MIN_STRAIGHT_M = 0.05;
 const REVERSE_MAX_M = 2.0;  // amr_navigation.route.REVERSE_MAX_M: the rear is outside the scanner's field
 const REVERSE_V = Math.min(SPEED_V / 2, 0.30);  // compiler: REVERSE_SPEED_RATIO, capped at REVERSE_V_MAX_MPS
 const ARC_MIN_R = 1.0, ARC_MIN_DEG = 45, ARC_MAX_DEG = 180;  // amr_navigation.route ARC_* bounds
-// mirrors amr_navigation compiler.arc_speed: 0.30 m/s (ARC_V_MPS), lowered so v/R <= 0.9 x VEHICLE_ARC_W_MAX
-const ARC_V_MPS = 0.30, ARC_YAW_RATE_RATIO = 0.9, VEHICLE_ARC_W_MAX = 0.45;
+// mirrors amr_navigation compiler.arc_speed: route.ARC_V_MPS (the profile's arc speed, rendered into the
+// page as #ed-speed data-arc; 0.30 without one), lowered so v/R <= 0.9 x VEHICLE_ARC_W_MAX
+const ARC_V_MPS = +((document.getElementById('ed-speed') || {}).dataset || {}).arc || 0.30;
+const ARC_YAW_RATE_RATIO = 0.9, VEHICLE_ARC_W_MAX = 0.45;
 // Same construction as compiler.arc_centre / arc_pose: the circle to the left for +1 (ccw).
 function arcCentre(x, y, yaw, r, sign) { return [x - sign * r * Math.sin(yaw), y + sign * r * Math.cos(yaw)]; }
 function arcPose(c, r, yaw0, sign, phi) { const yaw = yaw0 + sign * phi; return { x: c[0] + sign * r * Math.sin(yaw), y: c[1] - sign * r * Math.cos(yaw), yaw }; }
