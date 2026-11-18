@@ -15,14 +15,14 @@ plt.rcParams.update({"font.family": "DejaVu Sans", "font.size": 9})
 
 L = {
     "en": {
-        "front": "FRONT", "lidar": "Safety laser scanner\n(SICK nanoScan3)", "estop": "E-stop\n(red)",
+        "front": "FRONT", "lidar": "Safety laser scanner\n(SICK nanoScan3)", "estop": "E-stop (red),\nat the front",
         "panel": "START / STOP\nbuttons", "wheelL": "Drive wheel L\n+ encoder", "wheelR": "Drive wheel R\n+ encoder",
         "caster": "caster", "pc": "PC + I/O\nmodules", "dims": "1.18 m × 0.675 m (top view, schematic)",
         "start": "START", "stop": "STOP", "estop1": "E-STOP",
         "start_m": "MANUAL: go to AUTO\nAUTO: start / continue", "stop_m": "MANUAL: reset a fault\nAUTO: back to MANUAL\n(aborts the run)",
         "estop_m": "Stops the motors at once,\nbrakes on. Twist to release.\nIn a run: START continues.",
         "kp": "USB keypad", "arrows": "arrows", "kp_drive": "drive (hold) - MANUAL only", "kp_g": "= START", "kp_enter": "= STOP",
-        "kp_q": "MANUAL ⇄ AUTO", "kp_e": "keypad stop (ENTER releases)", "kp_f": "Go to POS 1-6 (AUTO)",
+        "kp_q": "MANUAL ⇄ AUTO", "kp_e": "keypad stop (ENTER releases)", "kp_f": "Go to POS 1-4 (AUTO)",
         "manual": "MANUAL", "auto": "AUTO", "s1": "START", "s2": "STOP", "pwr": "power on",
         "manual_d": "drive by hand\n(web jog / keypad)", "auto_d": "the route drives\nthe AMR",
         "idle": "no mission", "ready": "READY\nmission loaded", "exec": "EXECUTING\ndriving", "done": "DONE",
@@ -50,14 +50,14 @@ L = {
         "side": "left column:\nMap & pose / Mission\nbuttons and tiles", "foot": "Pause · Abort · Ack fault\n(always visible)",
     },
     "id": {
-        "front": "DEPAN", "lidar": "Laser scanner safety\n(SICK nanoScan3)", "estop": "E-stop\n(merah)",
+        "front": "DEPAN", "lidar": "Laser scanner safety\n(SICK nanoScan3)", "estop": "E-stop (merah),\ndi depan",
         "panel": "Tombol START /\nSTOP", "wheelL": "Roda penggerak kiri\n+ encoder", "wheelR": "Roda penggerak kanan\n+ encoder",
         "caster": "caster", "pc": "PC + modul\nI/O", "dims": "1,18 m × 0,675 m (tampak atas, skema)",
         "start": "START", "stop": "STOP", "estop1": "E-STOP",
         "start_m": "MANUAL: pindah ke AUTO\nAUTO: mulai / lanjut", "stop_m": "MANUAL: reset fault\nAUTO: kembali ke MANUAL\n(run dibatalkan)",
         "estop_m": "Motor langsung berhenti,\nrem aktif. Putar untuk lepas.\nSaat run: START melanjutkan.",
         "kp": "Keypad USB", "arrows": "panah", "kp_drive": "jalan (tahan) - hanya MANUAL", "kp_g": "= START", "kp_enter": "= STOP",
-        "kp_q": "MANUAL ⇄ AUTO", "kp_e": "stop keypad (lepas dengan ENTER)", "kp_f": "Ke POS 1-6 (AUTO)",
+        "kp_q": "MANUAL ⇄ AUTO", "kp_e": "stop keypad (lepas dengan ENTER)", "kp_f": "Ke POS 1-4 (AUTO)",
         "manual": "MANUAL", "auto": "AUTO", "s1": "START", "s2": "STOP", "pwr": "dinyalakan",
         "manual_d": "jalan manual\n(jog web / keypad)", "auto_d": "route yang\nmenjalankan AMR",
         "idle": "tanpa misi", "ready": "READY\nmisi dimuat", "exec": "EXECUTING\nberjalan", "done": "DONE",
@@ -117,13 +117,13 @@ def overview(t, out):
     ax.add_patch(Rectangle((cx - 1, cy + 9), 6, 3, fc=INK, ec=INK))
     for px, py in ((cx - 15, cy - 7), (cx - 15, cy + 7), (cx + 13, cy - 7), (cx + 13, cy + 7)):
         ax.add_patch(Circle((px, py), 1.1, fc=GRAY, ec=INK))
-    ax.add_patch(Circle((cx - 10, cy + 5), 1.7, fc=CRIT, ec=INK))
+    ax.add_patch(Circle((cx + 10, cy + 2), 1.7, fc=CRIT, ec=INK))
     ax.add_patch(Rectangle((cx - 13, cy - 6), 6, 3.2, fc="#cfe0f6", ec=INK2))
     ax.add_patch(Rectangle((cx - 4, cy - 3), 10, 6, fc="white", ec=INK2, ls="--"))
     ax.text(cx + 1, cy, t["pc"], ha="center", va="center", fontsize=7.2, color=INK2)
     ax.annotate("", (cx + 26, cy), (cx + 19, cy), arrowprops=dict(arrowstyle="-|>", color=BLUE, lw=2))
     ax.text(cx + 27, cy, t["front"], va="center", fontsize=10, color=BLUE, fontweight="bold")
-    lab = [(t["lidar"], (cx + 20, cy + 3), (52, 33)), (t["estop"], (cx - 10, cy + 6.5), (8, 33)),
+    lab = [(t["lidar"], (cx + 21, cy + 3), (62, 31)), (t["estop"], (cx + 10, cy + 3.6), (45, 33)),
            (t["panel"], (cx - 13, cy - 5), (7, 8)), (t["wheelL"], (cx + 2, cy + 12), (30, 33)),
            (t["wheelR"], (cx + 4, cy - 12), (56, 4)), (t["caster"], (cx - 15, cy - 8), (22, 3.5))]
     for txt, p, q in lab:
@@ -144,7 +144,7 @@ def panel(t, out):
         ax.text(x, 21, desc, ha="center", va="center", fontsize=6.4, color=INK)
     kx = 43
     ax.text(kx + 14, 41.5, t["kp"], ha="center", fontsize=9, fontweight="bold")
-    keys = {"F1": (0, 36), "F2": (4.2, 36), "F3": (8.4, 36), "F4": (12.6, 36), "F5": (16.8, 36), "F6": (21, 36),
+    keys = {"F1": (0, 36), "F2": (4.2, 36), "F3": (8.4, 36), "F4": (12.6, 36),
             "Q": (0, 31), "W": (4.2, 31), "E": (8.4, 31), "A": (0, 26.5), "S": (4.2, 26.5), "D": (8.4, 26.5),
             "G": (14, 26.5), "ENTER": (19, 26.5)}
     col = {"W": BLUE, "A": BLUE, "S": BLUE, "D": BLUE, "G": GOOD, "ENTER": "#3d3d3a", "E": CRIT, "Q": ORANGE}
@@ -154,7 +154,7 @@ def panel(t, out):
         ax.add_patch(FancyBboxPatch((kx + x, y - 1.8), w, 3.6, boxstyle="round,pad=0,rounding_size=0.5", fc=c, ec=INK, lw=0.8))
         ax.text(kx + x + w / 2, y, k, ha="center", va="center", fontsize=6.4, color="white" if c not in (YELLOW, GRAY) else INK, fontweight="bold")
     leg = [(BLUE, "W A S D / " + t["arrows"] + ": " + t["kp_drive"]), (GOOD, "G " + t["kp_g"]), ("#3d3d3a", "ENTER " + t["kp_enter"]),
-           (ORANGE, "Q: " + t["kp_q"]), (CRIT, "E: " + t["kp_e"]), (YELLOW, "F1-F6: " + t["kp_f"])]
+           (ORANGE, "Q: " + t["kp_q"]), (CRIT, "E: " + t["kp_e"]), (YELLOW, "F1-F4: " + t["kp_f"])]
     for i, (c, s_) in enumerate(leg):
         y = 19 - i * 3.0
         ax.add_patch(Rectangle((kx, y - 0.8), 1.6, 1.6, fc=c, ec=INK, lw=0.5))

@@ -4,7 +4,7 @@ META = {
     "lang": "en",
     "title": "AMR New Gen (AMR QR-01)",
     "subtitle": "Operation, Maintenance and Troubleshooting Manual",
-    "edition": "Edition 1.0 · November 2026 · software: AMR SLAM New Gen (profile amr-qr-01)",
+    "edition": "Edition 1.1 · November 2026 · software: AMR SLAM New Gen (profile amr-qr-01)",
     "fill_title": "Fill in for this vehicle",
     "fill": [("Web page address", "http://______________________:5001"), ("Wi-Fi network", ""),
              ("Engineer / contact", ""), ("Phone", ""), ("Map in use (map id, revision)", "")],
@@ -31,7 +31,7 @@ A(("warn", "<b>The red E-stop button is the real stop.</b> Know where it is befo
 A(("bul", [
     "Stay out of the path of a moving AMR, and never ride on it.",
     "The scanner only looks <b>forward</b>. When the AMR reverses (short reverse steps in some routes) it does not see behind it.",
-    "At 0.8 m/s the AMR needs about <b>0.7 m to stop</b>. Do not step in front of it at the last moment.",
+    "At 0.7 m/s the AMR needs about <b>0.6 m to stop</b>. Do not step in front of it at the last moment.",
     "A stopped AMR may <b>start again by itself</b>: after something leaves the scanner field, after it found its position again, "
     "or after a 2-second warning when someone presses START. The AMR has no horn - watch it.",
     "Before you put your hands near the wheels, press the E-stop.",
@@ -45,7 +45,7 @@ A(("table", ["Word", "Meaning"], [
     ["Route", "A path drawn on the map: straights, curves, turns, wait points."],
     ["Mission", "A route ready to run on one map revision. The operator loads and runs missions."],
     ["Homepost", "The start point of a route, marked on the floor. The AMR starts and ends there."],
-    ["POS 1-6", "The six stop points (stations). Each POS route goes from the homepost to its stop point and back."],
+    ["POS 1-4", "The four stop points (stations). Each POS route goes from the homepost to its stop point and back."],
     ["Localisation", "The AMR knowing where it is on the map. It must read <b>READY</b> before a mission can run."],
     ["MANUAL / AUTO", "MANUAL: you drive it by hand. AUTO: the mission drives it."],
     ["E-stop", "Emergency stop button (red)."],
@@ -55,11 +55,11 @@ A(("table", ["Word", "Meaning"], [
 A(("part", "1", "Operating", "For everyone who works with the AMR"))
 
 A(("h1", "Get to know the AMR", True))
-A(("fig", "overview", "The main parts (schematic top view; positions of buttons and casters are only illustrative).", 0.95))
+A(("fig", "overview", "The main parts (schematic top view). The E-stop is at the front; the positions of the other buttons and the casters are only illustrative.", 0.95))
 A(("table", ["", ""], [
     ["Size", "1.18 m long × 0.675 m wide"],
     ["Drive", "Two driven wheels (left and right) with encoders; casters carry the rest"],
-    ["Speed in a mission", "0.80 m/s on straights, 0.30 m/s in curves (each curve can have its own speed), slower in slow zones"],
+    ["Speed in a mission", "0.70 m/s on straights, 0.40 m/s in curves (each curve can have its own speed), slower in slow zones"],
     ["Speed by hand", "0.10-0.40 m/s from the web page, 0.50 m/s from the USB keypad"],
     ["Sensors", "SICK nanoScan3 safety laser scanner (front), wheel encoders, gyroscope (IMU)"],
     ["Control", "Industrial PC; web page on a tablet, phone or laptop over Wi-Fi; START / STOP buttons; E-stop; USB keypad"],
@@ -91,7 +91,7 @@ A(("table", ["Key", "Does"], [
     ["ENTER", "= STOP button"],
     ["Q", "Switch MANUAL ⇄ AUTO"],
     ["E", "Keypad stop (latched). ENTER releases it. <b>This is a software stop, not the safety E-stop.</b>"],
-    ["F1 ... F6", "Go to POS 1 ... POS 6 (in AUTO, AMR on the homepost, no mission running)"],
+    ["F1 ... F4", "Go to POS 1 ... POS 4 (in AUTO, AMR on the homepost, no mission running). F5 and F6 do nothing"],
 ], [0.2, 0.8]))
 A(("h2", "The web page"))
 A(("p", "Open the address written on the cover (port 5001) in the browser of a tablet, phone or laptop on the AMR's Wi-Fi. "
@@ -167,7 +167,7 @@ A(("h2", "The quick way: POS buttons"))
 A(("steps", [
     "Localisation READY, AMR on the homepost (within 20 cm and 10°), area clear.",
     "Press START once (or Q on the keypad): Selector shows AUTO.",
-    "Press <b>Go to POS n</b> on the Run page (Mission tab) or F1-F6 on the keypad. After a 2-second warning the AMR drives to that POS.",
+    "Press <b>Go to POS n</b> on the Run page (Mission tab) or F1-F4 on the keypad. After a 2-second warning the AMR drives to that POS.",
     "At the POS the mission <b>waits</b> (Run state WAITING, with the wait's name). Do the job (load / unload), step clear, then press "
     "<b>Continue</b> (Run page) or <b>START</b>. The AMR drives back to the homepost.",
 ]))
@@ -313,7 +313,7 @@ A(("table", ["The report says", "Means", "Who / what"], [
     ["Many % \"through mapped walls\"", "Something mapped has gone", "Engineer: re-map that area"],
     ["Correction along the path, scan fitted well", "Odometry drift in a long aisle - normal if small", "Nothing, unless very frequent"],
     ["A sensor went quiet", "Cable or network of that sensor", "Technician: check that sensor's cable"],
-    ["Speed in the report far above 0.8 m/s", "Wheel measurement problem, not real speed", "Engineer: check encoders (Chapter 18)"],
+    ["Speed in the report far above the route speed (0.7 m/s)", "Wheel measurement problem, not real speed", "Engineer: check encoders (Chapter 18)"],
 ], [0.32, 0.34, 0.34]))
 A(("tip", "Write down the time and place when the AMR stops or wobbles. The engineer can find it in the report."))
 
@@ -360,13 +360,13 @@ A(("h1", "Routes, missions and POS", True))
 A(("bul", [
     "<b>Routes</b> page: pick the map revision, type a route id, set the start pose (homepost: survey mark, or <b>Start = AMR here</b>).",
     "Add steps: straight, turn (45/90/180/270), arc (radius ≥ 1 m), short reverse, <b>Wait</b> (named stop), <b>Go home</b> (last step).",
-    "Speeds: straights 0.80 m/s; curves 0.30 m/s unless the curve has its own speed box; slow zones for doors, crossings and walkways.",
+    "Speeds: straights 0.70 m/s; curves 0.40 m/s unless the curve has its own speed box; slow zones for doors, crossings and walkways.",
     "<b>Validate</b> (red = the AMR would touch a wall), <b>Save revision</b>, <b>Create mission from saved revision</b>.",
-    "POS routes: draw the main route once; for each POS use <b>Branch → Stop point on map</b>; route ids pos1 ... pos6 (used by the POS buttons and F1-F6).",
+    "POS routes: draw the main route once; for each POS use <b>Branch → Stop point on map</b>; route ids pos1 ... pos4 (used by the POS buttons and F1-F4). The number of POS is set in the profile (panel.destinations).",
     "Remove maps, routes or missions with the Remove buttons; nothing is erased - it goes to <b>~/amr_maps/.trash</b>.",
 ]))
-A(("warn", "Before a first run at 0.80 m/s check the scanner's red field is long enough (about 1.0 m, yellow about 1.8 m) and test "
-           "the stopping distance against a box."))
+A(("warn", "At 0.70 m/s the AMR needs about 0.6 m to stop. Check the scanner's red field is long enough (about 1.0 m, yellow about 1.8 m) "
+           "and test the stopping distance against a box after any speed or field change."))
 
 A(("h1", "Software updates, restarts and backups", True))
 A(("h2", "Update the software"))
@@ -403,7 +403,7 @@ A(("p", "Before running a tool by hand: <b>source ~/agv_can/amr_ws/install/setup
 A(("h1", "Quick reference card", True))
 A(("table", ["", ""], [
     ["Start a mission", "Position READY · AMR on homepost · START (AUTO) · START (go)"],
-    ["Go to a POS", "AUTO · Go to POS n (web) or F1-F6 · at the POS: Continue / START"],
+    ["Go to a POS", "AUTO · Go to POS n (web) or F1-F4 · at the POS: Continue / START"],
     ["Stop now", "STOP (aborts, MANUAL) · E-stop (holds; release + START continues)"],
     ["Stopped by something in front", "Clear it - continues by itself"],
     ["WAITING", "Do the job, step clear, Continue / START"],

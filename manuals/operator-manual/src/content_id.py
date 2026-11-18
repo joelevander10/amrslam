@@ -4,7 +4,7 @@ META = {
     "lang": "id",
     "title": "AMR New Gen (AMR QR-01)",
     "subtitle": "Buku Panduan Operasi, Perawatan dan Troubleshooting",
-    "edition": "Edisi 1.0 · November 2026 · software: AMR SLAM New Gen (profil amr-qr-01)",
+    "edition": "Edisi 1.1 · November 2026 · software: AMR SLAM New Gen (profil amr-qr-01)",
     "fill_title": "Isi untuk kendaraan ini",
     "fill": [("Alamat halaman web", "http://______________________:5001"), ("Jaringan Wi-Fi", ""),
              ("Engineer / kontak", ""), ("Telepon", ""), ("Peta yang dipakai (map id, revisi)", "")],
@@ -31,7 +31,7 @@ A(("warn", "<b>Tombol E-stop merah adalah stop yang sesungguhnya.</b> Ketahui le
 A(("bul", [
     "Jangan berada di jalur AMR yang sedang bergerak, dan jangan pernah menaikinya.",
     "Scanner hanya melihat ke <b>depan</b>. Saat AMR mundur (langkah mundur pendek di beberapa route), AMR tidak melihat ke belakang.",
-    "Pada 0,8 m/s AMR butuh sekitar <b>0,7 m untuk berhenti</b>. Jangan melangkah ke depannya di saat terakhir.",
+    "Pada 0,7 m/s AMR butuh sekitar <b>0,6 m untuk berhenti</b>. Jangan melangkah ke depannya di saat terakhir.",
     "AMR yang berhenti bisa <b>jalan lagi sendiri</b>: setelah benda keluar dari field scanner, setelah AMR menemukan posisinya lagi, "
     "atau setelah peringatan 2 detik waktu seseorang menekan START. AMR tidak punya klakson - perhatikan AMR.",
     "Sebelum tangan mendekati roda, tekan E-stop.",
@@ -45,7 +45,7 @@ A(("table", ["Istilah", "Arti"], [
     ["Route", "Jalur yang digambar di peta: lurus, belokan, putar di tempat, titik tunggu."],
     ["Mission (misi)", "Route yang siap dijalankan di satu revisi peta. Operator memuat dan menjalankan misi."],
     ["Homepost", "Titik awal route, ditandai di lantai. AMR mulai dan berakhir di sini."],
-    ["POS 1-6", "Enam titik berhenti (stasiun). Tiap route POS berjalan dari homepost ke titik berhentinya lalu kembali."],
+    ["POS 1-4", "Empat titik berhenti (stasiun). Tiap route POS berjalan dari homepost ke titik berhentinya lalu kembali."],
     ["Lokalisasi", "AMR mengetahui posisinya di peta. Harus <b>READY</b> sebelum misi bisa dijalankan."],
     ["MANUAL / AUTO", "MANUAL: AMR dijalankan dengan tangan. AUTO: misi yang menjalankan AMR."],
     ["E-stop", "Tombol berhenti darurat (merah)."],
@@ -55,11 +55,11 @@ A(("table", ["Istilah", "Arti"], [
 A(("part", "1", "Operasi", "Untuk semua orang yang bekerja dengan AMR"))
 
 A(("h1", "Mengenal AMR", True))
-A(("fig", "overview", "Bagian utama (skema tampak atas; letak tombol dan caster hanya ilustrasi).", 0.95))
+A(("fig", "overview", "Bagian utama (skema tampak atas). E-stop ada di depan; letak tombol lain dan caster hanya ilustrasi.", 0.95))
 A(("table", ["", ""], [
     ["Ukuran", "Panjang 1,18 m × lebar 0,675 m"],
     ["Penggerak", "Dua roda penggerak (kiri dan kanan) dengan encoder; caster menahan sisanya"],
-    ["Kecepatan saat misi", "0,80 m/s di lurusan, 0,30 m/s di belokan (tiap belokan bisa punya kecepatan sendiri), lebih pelan di slow zone"],
+    ["Kecepatan saat misi", "0,70 m/s di lurusan, 0,40 m/s di belokan (tiap belokan bisa punya kecepatan sendiri), lebih pelan di slow zone"],
     ["Kecepatan manual", "0,10-0,40 m/s dari halaman web, 0,50 m/s dari keypad USB"],
     ["Sensor", "Laser scanner safety SICK nanoScan3 (depan), encoder roda, giroskop (IMU)"],
     ["Kontrol", "PC industri; halaman web di tablet, HP atau laptop lewat Wi-Fi; tombol START / STOP; E-stop; keypad USB"],
@@ -91,7 +91,7 @@ A(("table", ["Tombol", "Fungsi"], [
     ["ENTER", "= tombol STOP"],
     ["Q", "Ganti MANUAL ⇄ AUTO"],
     ["E", "Stop keypad (terkunci). ENTER melepasnya. <b>Ini stop software, bukan E-stop safety.</b>"],
-    ["F1 ... F6", "Ke POS 1 ... POS 6 (saat AUTO, AMR di homepost, tidak ada misi berjalan)"],
+    ["F1 ... F4", "Ke POS 1 ... POS 4 (saat AUTO, AMR di homepost, tidak ada misi berjalan). F5 dan F6 tidak berfungsi"],
 ], [0.2, 0.8]))
 A(("h2", "Halaman web"))
 A(("p", "Buka alamat yang tertulis di sampul (port 5001) di browser tablet, HP atau laptop yang tersambung ke Wi-Fi AMR. "
@@ -167,7 +167,7 @@ A(("h2", "Cara cepat: tombol POS"))
 A(("steps", [
     "Lokalisasi READY, AMR di homepost (dalam 20 cm dan 10°), area aman.",
     "Tekan START sekali (atau Q di keypad): Selector menunjukkan AUTO.",
-    "Tekan <b>Go to POS n</b> di halaman Run (tab Mission) atau F1-F6 di keypad. Setelah peringatan 2 detik AMR berjalan ke POS tersebut.",
+    "Tekan <b>Go to POS n</b> di halaman Run (tab Mission) atau F1-F4 di keypad. Setelah peringatan 2 detik AMR berjalan ke POS tersebut.",
     "Di POS misi <b>menunggu</b> (status Run WAITING, dengan nama titik tunggunya). Kerjakan tugasnya (muat / bongkar), menjauh, lalu tekan "
     "<b>Continue</b> (halaman Run) atau <b>START</b>. AMR kembali ke homepost.",
 ]))
@@ -313,7 +313,7 @@ A(("table", ["Laporan menulis", "Arti", "Siapa / apa"], [
     ["Banyak % \"through mapped walls\"", "Sesuatu yang dipetakan sudah hilang", "Engineer: re-map area itu"],
     ["Koreksi searah jalur, scan cocok", "Drift odometri di lorong panjang - normal kalau kecil", "Tidak perlu apa-apa, kecuali sangat sering"],
     ["Sensor diam (went quiet)", "Kabel atau jaringan sensor itu", "Teknisi: cek kabel sensor tersebut"],
-    ["Kecepatan di laporan jauh di atas 0,8 m/s", "Masalah pengukuran roda, bukan kecepatan sebenarnya", "Engineer: cek encoder (Bab 18)"],
+    ["Kecepatan di laporan jauh di atas kecepatan route (0,7 m/s)", "Masalah pengukuran roda, bukan kecepatan sebenarnya", "Engineer: cek encoder (Bab 18)"],
 ], [0.32, 0.34, 0.34]))
 A(("tip", "Catat jam dan tempat saat AMR berhenti atau bergoyang. Engineer bisa menemukannya di laporan."))
 
@@ -360,13 +360,13 @@ A(("h1", "Route, misi dan POS", True))
 A(("bul", [
     "Halaman <b>Routes</b>: pilih revisi peta, ketik route id, set start pose (homepost: survey mark, atau <b>Start = AMR here</b>).",
     "Tambahkan langkah: lurus, putar (45/90/180/270), arc (radius ≥ 1 m), mundur pendek, <b>Wait</b> (titik berhenti bernama), <b>Go home</b> (langkah terakhir).",
-    "Kecepatan: lurusan 0,80 m/s; belokan 0,30 m/s kecuali belokan punya kotak kecepatan sendiri; slow zone untuk pintu, persimpangan dan jalur pejalan kaki.",
+    "Kecepatan: lurusan 0,70 m/s; belokan 0,40 m/s kecuali belokan punya kotak kecepatan sendiri; slow zone untuk pintu, persimpangan dan jalur pejalan kaki.",
     "<b>Validate</b> (merah = AMR akan menyentuh dinding), <b>Save revision</b>, <b>Create mission from saved revision</b>.",
-    "Route POS: gambar main route sekali; untuk setiap POS pakai <b>Branch → Stop point on map</b>; route id pos1 ... pos6 (dipakai tombol POS dan F1-F6).",
+    "Route POS: gambar main route sekali; untuk setiap POS pakai <b>Branch → Stop point on map</b>; route id pos1 ... pos4 (dipakai tombol POS dan F1-F4). Jumlah POS diatur di profil (panel.destinations).",
     "Hapus peta, route atau misi dengan tombol Remove; tidak ada yang benar-benar terhapus - dipindah ke <b>~/amr_maps/.trash</b>.",
 ]))
-A(("warn", "Sebelum run pertama pada 0,80 m/s pastikan field merah scanner cukup panjang (sekitar 1,0 m, kuning sekitar 1,8 m) dan uji "
-           "jarak berhenti terhadap sebuah kotak."))
+A(("warn", "Pada 0,70 m/s AMR butuh sekitar 0,6 m untuk berhenti. Pastikan field merah scanner cukup panjang (sekitar 1,0 m, kuning sekitar 1,8 m) "
+           "dan uji jarak berhenti terhadap sebuah kotak setiap kali kecepatan atau field diubah."))
 
 A(("h1", "Update software, restart dan backup", True))
 A(("h2", "Update software"))
@@ -403,7 +403,7 @@ A(("p", "Sebelum menjalankan tool secara manual: <b>source ~/agv_can/amr_ws/inst
 A(("h1", "Kartu ringkas", True))
 A(("table", ["", ""], [
     ["Menjalankan misi", "Posisi READY · AMR di homepost · START (AUTO) · START (jalan)"],
-    ["Ke POS", "AUTO · Go to POS n (web) atau F1-F6 · di POS: Continue / START"],
+    ["Ke POS", "AUTO · Go to POS n (web) atau F1-F4 · di POS: Continue / START"],
     ["Berhenti sekarang", "STOP (batal, MANUAL) · E-stop (ditahan; lepas + START untuk lanjut)"],
     ["Berhenti karena benda di depan", "Singkirkan - lanjut sendiri"],
     ["WAITING", "Kerjakan tugas, menjauh, Continue / START"],
